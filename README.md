@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Planning / Harness Engineering`
+当前状态：`Foundation MVP / Mock Pipeline`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -99,11 +99,13 @@ AShareAgent
 
 后端：
 
-- Python
-- FastAPI
-- SQLite
+- Python 3.12
+- Typer CLI
+- PostgreSQL
+- SQLAlchemy / Alembic
 - AKShare provider
 - Mock provider
+- OpenAI / DeepSeek LLM adapter
 - pytest
 - ruff
 - pyright
@@ -120,6 +122,7 @@ AShareAgent
 - GitHub Actions
 - pre-commit
 - `.env.example`
+- `uv`
 - `AGENTS.md`
 - `docs/`
 
@@ -127,7 +130,7 @@ AShareAgent
 
 ### Phase 0: Harness Engineering
 
-- [ ] 建立后端工程骨架。
+- [x] 建立后端工程骨架。
 - [ ] 建立前端工程骨架。
 - [x] 创建根目录 `AGENTS.md`，定义开发 Agent 必须遵守的编码、测试和安全规则。
 - [x] 创建 `CONTEXT.md`，记录当前状态、停靠点和关键决定。
@@ -135,19 +138,20 @@ AShareAgent
 - [x] 创建 `docs/safety.md`，记录 PaperTrader 边界和真实交易禁用规则。
 - [x] 创建 `docs/data-contracts.md`，记录核心 domain models 和 provider 契约。
 - [x] 创建 `docs/research-log.md`，记录外部调研结论。
-- [ ] 配置 ruff、pyright、pytest、pre-commit 和 GitHub Actions。
+- [x] 配置 ruff、pyright、pytest。
+- [ ] 配置 pre-commit 和 GitHub Actions。
 
 ### Phase 1: Minimal Pipeline
 
-- [ ] 定义统一 `DataProvider` 接口。
-- [ ] 实现 `MockProvider`，用于无外网测试和固定回放。
-- [ ] 实现最小 `AKShareProvider`，只接入第一批必要 A 股数据。
-- [ ] 实现公告规则分析基线。
-- [ ] 实现候选股票评分规则。
-- [ ] 实现风险过滤规则。
-- [ ] 实现 PaperTrader 的模拟买入、模拟卖出、滑点估算和持仓记录。
-- [ ] 实现 ReviewAgent 的收盘复盘和基础策略统计。
-- [ ] 用 Mock 数据跑通完整 pipeline integration test。
+- [x] 定义统一 `DataProvider` 接口。
+- [x] 实现 `MockProvider`，用于无外网测试和固定回放。
+- [x] 实现最小 `AKShareProvider`，只接入第一批必要 A 股数据。
+- [x] 实现公告规则分析基线。
+- [x] 实现候选股票评分规则。
+- [x] 实现风险过滤规则。
+- [x] 实现 PaperTrader 的模拟买入、模拟卖出、滑点估算和持仓记录。
+- [x] 实现 ReviewAgent 的收盘复盘和基础策略统计。
+- [x] 用 Mock 数据跑通完整 pipeline integration test。
 
 ### Phase 2: Read-only Web Console
 
@@ -167,9 +171,57 @@ AShareAgent
 
 ## 开发入口
 
-项目尚未 scaffold，具体安装、运行、测试和本地开发命令会在工程骨架建立后补充。
+安装依赖：
 
-在命令补齐前，README 只作为团队内部工程入口和设计约束，不代表当前已有可运行程序。
+```bash
+uv sync
+```
+
+本地配置：
+
+```bash
+cp .env.example .env
+```
+
+`.env` 已被 `.gitignore` 忽略。使用 OpenAI 验证时，写入：
+
+```bash
+ASHARE_PROVIDER=mock
+ASHARE_LLM_PROVIDER=openai
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_API_KEY=你的 key
+```
+
+普通离线测试使用：
+
+```bash
+ASHARE_LLM_PROVIDER=mock
+```
+
+运行 CLI：
+
+```bash
+uv run ashare pre-market --trade-date 2026-04-29
+uv run ashare intraday-watch --trade-date 2026-04-29
+uv run ashare post-market-review --trade-date 2026-04-29
+```
+
+验证：
+
+```bash
+uv run pytest
+uv run ruff check
+uv run pyright
+```
+
+PostgreSQL 迁移：
+
+```bash
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare \
+  uv run alembic upgrade head
+```
+
+迁移只创建 `ashare_agent` schema 和本项目表，不主动删除已有对象。
 
 ## 文档导航
 

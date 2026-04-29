@@ -1,0 +1,11 @@
+assets:
+  - symbol: "510300"
+    name: "沪深300ETF"
+    asset_type: "ETF"
+  - symbol: "159915"
+    name: "创业板ETF"
+    asset_type: "ETF"
+  - symbol: "600000"
+    name: "浦发银行"
+    asset_type: "STOCK"
+    enabled: true

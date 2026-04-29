@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：文档基线阶段。项目还没有后端代码、前端代码或可运行 pipeline。
+当前状态：已落地 Python 后端骨架、Mock pipeline、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema。前端观察台尚未开始。
 
 ## 目标架构
 
@@ -26,7 +26,25 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 
 ## 当前边界
 
-- 当前只有文档和规则，没有运行时代码。
-- 具体包结构、API、数据库表和前端页面等 scaffold 后再细化。
+- 当前入口是 CLI：`pre-market`、`intraday-watch`、`post-market-review`。
+- 默认 provider 是 `MockProvider`；真实公开源通过 `AKShareProvider` 适配，后续再加外部测试标记。
+- 默认 LLM 是 mock；`.env` 中设置 `ASHARE_LLM_PROVIDER=openai` 或 `deepseek` 后才调用真实 API。
+- PostgreSQL 通过 Alembic 创建 `ashare_agent` schema，业务结果先可写入审计 artifact，核心表分组已预留。
+- Streamlit/React dashboard 放到第二阶段，第一阶段只输出 Markdown 报告。
 - 模块边界发生变化时，同步更新本文件。
 
+## 代码布局
+
+```text
+src/ashare_agent/
+├── agents/              # 各业务 Agent
+├── llm/                 # Mock/OpenAI/DeepSeek adapter
+├── providers/           # Mock/AKShare data provider
+├── cli.py               # Typer CLI
+├── config.py            # .env 与 universe 配置
+├── domain.py            # 标准 domain models
+├── indicators.py        # 基础技术指标
+├── pipeline.py          # 三段流程编排
+├── reports.py           # Markdown 输出
+└── repository.py        # PostgreSQL artifact repository
+```

@@ -1,5 +1,7 @@
 .DS_Store
 .mindfs/
 .venv/
+.env
+reports/
 __pycache__/
 *.py[cod]

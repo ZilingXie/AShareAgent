@@ -24,21 +24,36 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.sql import func
 
 from ashare_agent.domain import (
+    AnnouncementItem,
+    Asset,
     LLMAnalysis,
+    MarketBar,
+    NewsItem,
     PaperOrder,
     PaperPosition,
     PipelineRunContext,
+    PolicyItem,
     PortfolioSnapshot,
     PositionStatus,
     ReviewReport,
     RiskDecision,
     Signal,
     SignalAction,
+    SourceSnapshot,
+    TechnicalIndicator,
     WatchlistCandidate,
 )
 
 PAYLOAD_TABLES = (
     "pipeline_runs",
+    "universe_assets",
+    "raw_source_snapshots",
+    "market_bars",
+    "announcements",
+    "news_items",
+    "policy_items",
+    "industry_snapshots",
+    "technical_indicators",
     "llm_analyses",
     "watchlist_candidates",
     "signals",
@@ -159,6 +174,41 @@ class PipelineRepository(Protocol):
 
     def save_llm_analysis(self, context: PipelineRunContext, analysis: LLMAnalysis) -> None: ...
 
+    def save_universe_assets(self, context: PipelineRunContext, assets: list[Asset]) -> None: ...
+
+    def save_raw_source_snapshots(
+        self,
+        context: PipelineRunContext,
+        snapshots: list[SourceSnapshot],
+    ) -> None:
+        ...
+
+    def save_market_bars(self, context: PipelineRunContext, bars: list[MarketBar]) -> None: ...
+
+    def save_announcements(
+        self,
+        context: PipelineRunContext,
+        announcements: list[AnnouncementItem],
+    ) -> None:
+        ...
+
+    def save_news_items(self, context: PipelineRunContext, news_items: list[NewsItem]) -> None:
+        ...
+
+    def save_policy_items(
+        self,
+        context: PipelineRunContext,
+        policy_items: list[PolicyItem],
+    ) -> None:
+        ...
+
+    def save_technical_indicators(
+        self,
+        context: PipelineRunContext,
+        indicators: list[TechnicalIndicator],
+    ) -> None:
+        ...
+
     def save_watchlist_candidates(
         self,
         context: PipelineRunContext,
@@ -244,6 +294,92 @@ class RepositoryBase:
 
     def save_llm_analysis(self, context: PipelineRunContext, analysis: LLMAnalysis) -> None:
         self._save_payload("llm_analyses", context.run_id, context.trade_date, None, analysis)
+
+    def save_universe_assets(self, context: PipelineRunContext, assets: list[Asset]) -> None:
+        for asset in assets:
+            self._save_payload(
+                "universe_assets",
+                context.run_id,
+                context.trade_date,
+                asset.symbol,
+                asset,
+            )
+
+    def save_raw_source_snapshots(
+        self,
+        context: PipelineRunContext,
+        snapshots: list[SourceSnapshot],
+    ) -> None:
+        for snapshot in snapshots:
+            self._save_payload(
+                "raw_source_snapshots",
+                context.run_id,
+                snapshot.trade_date,
+                None,
+                snapshot,
+            )
+
+    def save_market_bars(self, context: PipelineRunContext, bars: list[MarketBar]) -> None:
+        for bar in bars:
+            self._save_payload(
+                "market_bars",
+                context.run_id,
+                bar.trade_date,
+                bar.symbol,
+                bar,
+            )
+
+    def save_announcements(
+        self,
+        context: PipelineRunContext,
+        announcements: list[AnnouncementItem],
+    ) -> None:
+        for announcement in announcements:
+            self._save_payload(
+                "announcements",
+                context.run_id,
+                announcement.trade_date,
+                announcement.symbol,
+                announcement,
+            )
+
+    def save_news_items(self, context: PipelineRunContext, news_items: list[NewsItem]) -> None:
+        for item in news_items:
+            self._save_payload(
+                "news_items",
+                context.run_id,
+                item.trade_date,
+                item.symbol,
+                item,
+            )
+
+    def save_policy_items(
+        self,
+        context: PipelineRunContext,
+        policy_items: list[PolicyItem],
+    ) -> None:
+        for item in policy_items:
+            self._save_payload(
+                "policy_items",
+                context.run_id,
+                item.trade_date,
+                None,
+                item,
+            )
+
+    def save_technical_indicators(
+        self,
+        context: PipelineRunContext,
+        indicators: list[TechnicalIndicator],
+    ) -> None:
+        for indicator in indicators:
+            self._save_payload(
+                "technical_indicators",
+                context.run_id,
+                indicator.trade_date,
+                indicator.symbol,
+                indicator,
+            )
 
     def save_watchlist_candidates(
         self,

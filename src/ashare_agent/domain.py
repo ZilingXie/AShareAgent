@@ -21,6 +21,10 @@ def empty_str_list() -> list[str]:
     return []
 
 
+def empty_dict() -> dict[str, Any]:
+    return {}
+
+
 @dataclass(frozen=True)
 class Asset:
     symbol: str
@@ -97,6 +101,18 @@ class SourceSnapshot:
     collected_at: datetime = field(default_factory=now_utc)
     failure_reason: str | None = None
     row_count: int = 0
+    metadata: dict[str, Any] = field(default_factory=empty_dict)
+
+
+@dataclass(frozen=True)
+class TradingCalendarSnapshot:
+    trade_date: date
+    is_trade_date: bool
+    row_count: int
+    source: str
+    calendar_start: date | None = None
+    calendar_end: date | None = None
+    collected_at: datetime = field(default_factory=now_utc)
 
 
 @dataclass(frozen=True)
@@ -109,6 +125,7 @@ class MarketDataset:
     policy_items: list[PolicyItem]
     industry_snapshots: list[IndustrySnapshot]
     source_snapshots: list[SourceSnapshot]
+    trade_calendar: TradingCalendarSnapshot | None = None
 
 
 @dataclass(frozen=True)

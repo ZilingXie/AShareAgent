@@ -40,6 +40,12 @@ def test_initial_migration_defines_core_table_groups() -> None:
         assert f'"{table}"' in text
 
 
+def test_initial_migration_does_not_create_trading_calendar_table() -> None:
+    text = Path("migrations/versions/0001_initial_schema.py").read_text(encoding="utf-8")
+
+    assert '"trading_calendar"' not in text
+
+
 def test_alembic_version_table_is_isolated_in_project_schema() -> None:
     text = Path("migrations/env.py").read_text(encoding="utf-8")
 

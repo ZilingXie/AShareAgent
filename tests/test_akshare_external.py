@@ -1,0 +1,22 @@
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from ashare_agent.config import load_universe
+from ashare_agent.providers.akshare_provider import AKShareProvider
+
+pytestmark = pytest.mark.external
+
+
+def test_akshare_external_smoke_returns_calendar_and_market_bars() -> None:
+    assets = load_universe(Path("configs/universe.yml"), enabled_only=True)
+    provider = AKShareProvider(assets[:1])
+
+    calendar = provider.get_trade_calendar()
+    bars = provider.get_market_bars(date(2026, 4, 29), lookback_days=2)
+
+    assert calendar
+    assert bars

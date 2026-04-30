@@ -35,6 +35,7 @@ dev-dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["-m", "not external"]
 markers = [
   "external: tests that require network or live third-party services",
 ]
@@ -52,4 +53,3 @@ pythonVersion = "3.12"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
-

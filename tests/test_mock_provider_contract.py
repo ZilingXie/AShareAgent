@@ -15,6 +15,7 @@ def test_mock_provider_returns_standard_audit_models() -> None:
     news = provider.get_news(trade_date=trade_date)
     policy_items = provider.get_policy_items(trade_date=trade_date)
     industry_items = provider.get_industry_snapshots(trade_date=trade_date)
+    trade_calendar = provider.get_trade_calendar()
 
     assert assets
     assert all(asset.asset_type in {"ETF", "STOCK"} for asset in assets)
@@ -23,5 +24,5 @@ def test_mock_provider_returns_standard_audit_models() -> None:
     assert all(item.source == "mock" for item in news)
     assert all(item.source == "mock" for item in policy_items)
     assert all(item.source == "mock" for item in industry_items)
+    assert trade_date in trade_calendar
     assert {bar.symbol for bar in bars}.issubset({asset.symbol for asset in assets})
-

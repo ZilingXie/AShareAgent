@@ -29,7 +29,7 @@ def load_settings() -> Settings:
     return Settings()
 
 
-def load_universe(path: Path) -> list[Asset]:
+def load_universe(path: Path, *, enabled_only: bool = False) -> list[Asset]:
     raw_data = cast(object, safe_load(path.read_text(encoding="utf-8")))
     if not isinstance(raw_data, dict):
         raise ValueError("universe 配置必须是 YAML object")
@@ -56,6 +56,10 @@ def load_universe(path: Path) -> list[Asset]:
                 enabled=bool(row.get("enabled", True)),
             )
         )
+    if enabled_only:
+        assets = [asset for asset in assets if asset.enabled]
+        if not assets:
+            raise ValueError("universe 配置没有 enabled=true 的资产")
     return assets
 
 

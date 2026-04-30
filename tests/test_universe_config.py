@@ -27,3 +27,23 @@ assets:
     assert assets[0].asset_type == "ETF"
     assert assets[1].enabled is False
 
+
+def test_load_universe_can_filter_enabled_assets(tmp_path: Path) -> None:
+    config_path = tmp_path / "universe.yml"
+    config_path.write_text(
+        """
+assets:
+  - symbol: "510300"
+    name: "沪深300ETF"
+    asset_type: "ETF"
+  - symbol: "600000"
+    name: "浦发银行"
+    asset_type: "STOCK"
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    assets = load_universe(config_path, enabled_only=True)
+
+    assert [asset.symbol for asset in assets] == ["510300"]

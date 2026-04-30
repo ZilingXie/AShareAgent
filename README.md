@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Mock Pipeline / PostgreSQL Persistence`
+当前状态：`Foundation MVP / Real DataCollector / PostgreSQL Persistence`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -23,7 +23,7 @@
 这个闭环应支持：
 
 - 使用 Mock 数据稳定回放核心流程。
-- 使用 AKShare provider 接入少量真实公开数据。
+- 使用 AKShare provider 接入固定 ETF/大盘股池的真实公开数据。
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
 - 在收盘后生成复盘结果、策略统计和错误归因。
@@ -164,7 +164,7 @@ AShareAgent
 ### Phase 3: Hardening
 
 - [ ] 增加公告样本 golden tests。
-- [ ] 增加 provider contract tests。
+- [x] 增加 provider contract tests。
 - [ ] 增加数据质量检查。
 - [ ] 增加 pipeline run 审计日志。
 - [ ] 增加策略参数版本记录。
@@ -200,6 +200,16 @@ ASHARE_LLM_PROVIDER=mock
 DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal
 ```
 
+真实公开源使用：
+
+```bash
+ASHARE_PROVIDER=akshare
+ASHARE_LLM_PROVIDER=mock
+DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal
+```
+
+`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败时 CLI 会明确失败，并把失败原因写入 `raw_source_snapshots` 和失败的 `pipeline_runs`。公告、新闻和政策为空可以继续，接口异常仍会记录失败快照。
+
 运行 CLI 前必须先配置 `DATABASE_URL` 并完成迁移。CLI 不配置数据库会明确失败，避免误以为结果已持久化。
 
 运行 CLI：
@@ -218,6 +228,12 @@ uv run ruff check
 uv run pyright
 ```
 
+真实 AKShare smoke test 默认不进入普通测试，手动运行：
+
+```bash
+uv run pytest -m external
+```
+
 PostgreSQL 迁移：
 
 ```bash
@@ -227,7 +243,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 本地开发复用现有 Podman PostgreSQL：容器 `deployment_local_postgres_1`，宿主端口 `15432`，数据库 `supportportal`，用户 `supportportal`。迁移只创建 `ashare_agent` schema、本项目表和 `ashare_agent.alembic_version`，不主动删除已有对象，也不在 `public` 或 `supportportal` schema 建业务表。若 `ashare_agent` schema 已存在但缺少 `ashare_agent.alembic_version`，迁移会停止并要求先人工确认。
 
-当前 CLI 会把 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。
+当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 
 ## 文档导航
 

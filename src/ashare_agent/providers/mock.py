@@ -118,3 +118,6 @@ class MockProvider:
             ),
         ]
 
+    def get_trade_calendar(self) -> list[date]:
+        start = date(2026, 1, 1)
+        return [start + timedelta(days=idx) for idx in range(366)]

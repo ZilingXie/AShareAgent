@@ -6,6 +6,8 @@ import pytest
 from typer.testing import CliRunner
 
 from ashare_agent.cli import app
+from ashare_agent.domain import Asset
+from ashare_agent.providers.mock import MockProvider
 from ashare_agent.repository import InMemoryRepository
 
 
@@ -50,6 +52,63 @@ def test_cli_pre_market_requires_database_url(
     assert result.exit_code != 0
     assert "DATABASE_URL" in result.output
     assert "持久化 CLI" in result.output
+
+
+def test_cli_pre_market_supports_akshare_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "universe.yml").write_text(
+        """
+assets:
+  - symbol: "510300"
+    name: "沪深300ETF"
+    asset_type: "ETF"
+  - symbol: "600000"
+    name: "浦发银行"
+    asset_type: "STOCK"
+    enabled: false
+""",
+        encoding="utf-8",
+    )
+    created_symbols: list[str] = []
+
+    class FakePostgresRepository(InMemoryRepository):
+        def __init__(self, database_url: str) -> None:
+            super().__init__()
+
+    class FakeAKShareProvider(MockProvider):
+        def __init__(self, assets: list[Asset]) -> None:
+            super().__init__(assets)
+            created_symbols.extend(asset.symbol for asset in assets)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASHARE_PROVIDER", "akshare")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
+    monkeypatch.setattr("ashare_agent.cli.AKShareProvider", FakeAKShareProvider, raising=False)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["pre-market", "--trade-date", "2026-04-29"])
+
+    assert result.exit_code == 0
+    assert created_symbols == ["510300"]
+
+
+def test_cli_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ASHARE_PROVIDER", "unknown")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["pre-market", "--trade-date", "2026-04-29"])
+
+    assert result.exit_code != 0
+    assert "未知 ASHARE_PROVIDER" in result.output
 
 
 def test_cli_rejects_invalid_trade_date() -> None:

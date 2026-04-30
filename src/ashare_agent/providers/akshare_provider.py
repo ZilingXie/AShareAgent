@@ -23,6 +23,10 @@ def _to_decimal(value: object) -> Decimal:
 
 
 def _parse_date(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
     text = str(value).replace("-", "")
     return datetime.strptime(text[:8], "%Y%m%d").date()
 
@@ -33,6 +37,15 @@ def _parse_datetime(value: object, fallback_date: date) -> datetime:
         return datetime.fromisoformat(text)
     except ValueError:
         return datetime.combine(fallback_date, datetime.min.time())
+
+
+def _symbol_text(value: object) -> str:
+    text = str(value).strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    if text.isdigit() and len(text) < 6:
+        return text.zfill(6)
+    return text
 
 
 class AKShareProvider:
@@ -76,28 +89,34 @@ class AKShareProvider:
                     )
             except Exception as exc:  # noqa: BLE001
                 raise DataProviderError(f"{asset.symbol} 行情获取失败: {exc}") from exc
-            records = df.tail(lookback_days).to_dict("records")
-            if not records:
-                raise DataProviderError(f"{asset.symbol} 行情为空")
-            for row in records:
-                bars.append(
-                    MarketBar(
-                        symbol=asset.symbol,
-                        trade_date=_parse_date(row["日期"]),
-                        open=_to_decimal(row["开盘"]),
-                        high=_to_decimal(row["最高"]),
-                        low=_to_decimal(row["最低"]),
-                        close=_to_decimal(row["收盘"]),
-                        volume=int(row["成交量"]),
-                        amount=_to_decimal(row["成交额"]),
-                        source="akshare",
+            try:
+                records = df.tail(lookback_days).to_dict("records")
+                if not records:
+                    raise DataProviderError(f"{asset.symbol} 行情为空")
+                for row in records:
+                    bars.append(
+                        MarketBar(
+                            symbol=asset.symbol,
+                            trade_date=_parse_date(row["日期"]),
+                            open=_to_decimal(row["开盘"]),
+                            high=_to_decimal(row["最高"]),
+                            low=_to_decimal(row["最低"]),
+                            close=_to_decimal(row["收盘"]),
+                            volume=int(row["成交量"]),
+                            amount=_to_decimal(row["成交额"]),
+                            source="akshare",
+                        )
                     )
-                )
+            except DataProviderError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise DataProviderError(f"{asset.symbol} 行情解析失败: {exc}") from exc
         return bars
 
     def get_announcements(self, trade_date: date) -> list[AnnouncementItem]:
         ak = self._ak()
         results: list[AnnouncementItem] = []
+        universe_symbols = {asset.symbol for asset in self._universe}
         notice_types = (
             "重大事项",
             "财务报告",
@@ -113,9 +132,12 @@ class AKShareProvider:
             except Exception as exc:  # noqa: BLE001
                 raise DataProviderError(f"公告获取失败: {exc}") from exc
             for row in df.to_dict("records"):
+                row_symbol = _symbol_text(row.get("代码", ""))
+                if row_symbol not in universe_symbols:
+                    continue
                 results.append(
                     AnnouncementItem(
-                        symbol=str(row.get("代码", "")),
+                        symbol=row_symbol,
                         name=str(row.get("名称", "")),
                         title=str(row.get("公告标题", "")),
                         category=str(row.get("公告类型", symbol)),
@@ -177,3 +199,19 @@ class AKShareProvider:
                 reasons=["第一版未启用行业真实强弱接口"],
             )
         ]
+
+    def get_trade_calendar(self) -> list[date]:
+        ak = self._ak()
+        try:
+            df = ak.tool_trade_date_hist_sina()
+        except Exception as exc:  # noqa: BLE001
+            raise DataProviderError(f"交易日历获取失败: {exc}") from exc
+        try:
+            dates = [_parse_date(row["trade_date"]) for row in df.to_dict("records")]
+            if not dates:
+                raise DataProviderError("交易日历为空")
+        except DataProviderError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise DataProviderError(f"交易日历解析失败: {exc}") from exc
+        return sorted(dates)

@@ -22,7 +22,7 @@ from ashare_agent.domain import (
 from ashare_agent.indicators import calculate_indicators
 from ashare_agent.llm.base import LLMClient
 from ashare_agent.llm.mock import MockLLMClient
-from ashare_agent.providers.base import DataProvider
+from ashare_agent.providers.base import DataProvider, DataProviderError
 from ashare_agent.providers.mock import MockProvider
 from ashare_agent.reports import write_markdown_report
 from ashare_agent.repository import InMemoryRepository, PipelineRepository
@@ -40,6 +40,7 @@ class ASharePipeline:
         report_root: Path,
         repository: PipelineRepository | None = None,
         trader: PaperTrader | None = None,
+        required_data_sources: set[str] | None = None,
     ) -> None:
         self.collector = DataCollector(provider)
         self.announcement_analyzer = AnnouncementAnalyzer()
@@ -51,16 +52,63 @@ class ASharePipeline:
         self.llm_client = llm_client
         self.report_root = report_root
         self.repository = repository or InMemoryRepository()
+        self.required_data_sources = required_data_sources or set()
         self._last_dataset: MarketDataset | None = None
         self._last_signal_result: SignalResult | None = None
         self._last_risk_decisions: list[RiskDecision] = []
 
+    def _save_dataset(self, context: PipelineRunContext, dataset: MarketDataset) -> None:
+        self.repository.save_universe_assets(context, dataset.assets)
+        self.repository.save_raw_source_snapshots(context, dataset.source_snapshots)
+        self.repository.save_market_bars(context, dataset.bars)
+        self.repository.save_announcements(context, dataset.announcements)
+        self.repository.save_news_items(context, dataset.news)
+        self.repository.save_policy_items(context, dataset.policy_items)
+
+    def _required_source_failure_reason(self, dataset: MarketDataset) -> str | None:
+        failures = [
+            snapshot
+            for snapshot in dataset.source_snapshots
+            if snapshot.source in self.required_data_sources and snapshot.status == "failed"
+        ]
+        if not failures:
+            return None
+        return "; ".join(
+            f"{snapshot.source}: {snapshot.failure_reason or 'unknown failure'}"
+            for snapshot in failures
+        )
+
+    def _fail_if_required_sources_failed(
+        self,
+        context: PipelineRunContext,
+        stage: str,
+        dataset: MarketDataset,
+    ) -> None:
+        required_failure = self._required_source_failure_reason(dataset)
+        if required_failure is None:
+            return
+        payload = {
+            "run_id": context.run_id,
+            "failure_reason": f"必需数据源失败: {required_failure}",
+        }
+        self.repository.save_artifact(context.trade_date, f"{stage}_failed", payload)
+        self.repository.save_pipeline_run(
+            context,
+            stage,
+            "failed",
+            payload,
+        )
+        raise DataProviderError(payload["failure_reason"])
+
     def run_pre_market(self, trade_date: date) -> AgentResult:
         context = PipelineRunContext(trade_date=trade_date)
         dataset = self.collector.collect(trade_date=trade_date)
+        self._save_dataset(context, dataset)
+        self._fail_if_required_sources_failed(context, "pre_market", dataset)
         events = self.announcement_analyzer.analyze(dataset.announcements)
         regime = self.market_regime_analyzer.analyze(trade_date=trade_date, bars=dataset.bars)
         indicators = calculate_indicators(trade_date=trade_date, bars=dataset.bars)
+        self.repository.save_technical_indicators(context, indicators)
         signal_result = self.signal_engine.generate(
             trade_date=trade_date,
             indicators=indicators,
@@ -145,7 +193,12 @@ class ASharePipeline:
 
     def run_post_market_review(self, trade_date: date) -> AgentResult:
         context = PipelineRunContext(trade_date=trade_date)
-        dataset = self._last_dataset or self.collector.collect(trade_date=trade_date)
+        if self._last_dataset is None:
+            dataset = self.collector.collect(trade_date=trade_date)
+            self._save_dataset(context, dataset)
+            self._fail_if_required_sources_failed(context, "post_market_review", dataset)
+        else:
+            dataset = self._last_dataset
         decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
             trade_date
         )

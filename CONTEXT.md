@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/data-quality-agent`：已基于本地 `main` 上的策略参数版本审计和复盘指标接入，完成 DataQualityAgent、质量报告落库和 dashboard 展示，准备最终验证后合并回 `main`。
+`codex/data-quality-agent` 已完成并合入本地 `main`：策略参数版本审计、DataQualityAgent、质量报告落库和 dashboard 展示均已完成。当前正在做收尾清理：更新状态记录、清理已合入的 `codex/alembic-transaction-fix` worktree/本地分支，并准备将 `main` push 到 GitHub。
 
 ## 上次停在哪
 
@@ -30,6 +30,7 @@
 - 本轮新增 `StrategyParamsAgent`，从 `configs/strategy_params.yml` 加载风控和模拟交易参数，并在每次 `pipeline_runs.payload` 记录 `strategy_params_version` 和 `strategy_params_snapshot`。
 - 本轮新增 DataQualityAgent，检查必需源失败/空数据、缺失当日行情、异常价格、source 失败率和非交易日运行提示。
 - 新增 `data_quality_reports` 专表和 DashboardQueryAgent DTO，dashboard 已显示每次 run 的数据质量状态和问题明细。
+- 已将 `codex/data-quality-agent` 和 `codex/alembic-transaction-fix` 合并回本地 `main`；其中 Alembic 修复确保 schema 状态检查在迁移前提交事务，避免 PostgreSQL aborted transaction 影响后续迁移。
 
 ## 近期关键决定和原因
 

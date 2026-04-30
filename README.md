@@ -27,7 +27,7 @@
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
 - 在收盘后完成模拟买卖、持仓状态更新、复盘结果和错误归因。
-- 通过只读观察台查看 pipeline run、观察名单、风控、模拟订单、持仓、复盘和数据源状态。
+- 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、模拟订单、持仓、复盘和数据源状态。
 
 ## 模块设计
 
@@ -178,6 +178,7 @@ AShareAgent
 - [x] 展示风控拒绝原因。
 - [x] 展示模拟订单和真实交易安全标记。
 - [x] 展示模拟持仓和资金曲线摘要。
+- [x] 展示日期范围内的资金曲线、信号趋势、风控拒绝原因和数据质量趋势。
 - [x] 展示收盘复盘结果。
 - [x] 展示 raw source snapshots 和真实源失败原因。
 
@@ -278,7 +279,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `data_quality_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情和异常价格问题。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `data_quality_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情和异常价格问题；趋势 DTO 覆盖 `portfolio_snapshots.total_value`、每天信号数、通过/拒绝数、最高评分、风控拒绝原因统计、source 失败率、阻断次数和 warning 次数。
 
 前端观察台：
 
@@ -287,7 +288,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev --host 127.0.0.1 --port 5173
 ```
 
-前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何 `True` 都视为安全异常。
+前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。页面支持日期范围筛选，并按范围展示趋势；所选单日仍展示明细。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何 `True` 都视为安全异常。
 
 前端验证：
 

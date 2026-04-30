@@ -262,6 +262,227 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert day.data_quality_reports[0].issues[0].symbol == "510300"
 
 
+def test_dashboard_query_builds_range_trends_from_latest_successful_pre_market_runs() -> None:
+    repository = InMemoryRepository()
+    first_date = date(2026, 4, 28)
+    second_date = date(2026, 4, 29)
+    third_date = date(2026, 4, 30)
+    old_context = PipelineRunContext(trade_date=second_date, run_id="old-pre")
+    latest_context = PipelineRunContext(trade_date=second_date, run_id="latest-pre")
+    third_context = PipelineRunContext(trade_date=third_date, run_id="third-pre")
+
+    repository.save_pipeline_run(
+        old_context,
+        "pre_market",
+        "success",
+        {"report_path": "reports/2026-04-29/old.md"},
+    )
+    repository.save_signals(
+        old_context,
+        [
+            Signal(
+                symbol="159915",
+                trade_date=second_date,
+                action="paper_buy",
+                score=0.99,
+                score_breakdown={"technical": 0.99},
+                reasons=["旧 run 不应进入趋势"],
+            )
+        ],
+    )
+    repository.save_pipeline_run(
+        latest_context,
+        "pre_market",
+        "success",
+        {"report_path": "reports/2026-04-29/latest.md"},
+    )
+    repository.save_signals(
+        latest_context,
+        [
+            Signal(
+                symbol="510300",
+                trade_date=second_date,
+                action="paper_buy",
+                score=0.91,
+                score_breakdown={"technical": 0.5},
+                reasons=["趋势改善"],
+            ),
+            Signal(
+                symbol="000001",
+                trade_date=second_date,
+                action="observe",
+                score=0.73,
+                score_breakdown={"technical": 0.3},
+                reasons=["观察"],
+            ),
+        ],
+    )
+    repository.save_risk_decisions(
+        latest_context,
+        [
+            RiskDecision(
+                symbol="510300",
+                trade_date=second_date,
+                signal_action="paper_buy",
+                approved=True,
+                reasons=["通过"],
+                target_position_pct=Decimal("0.1"),
+            ),
+            RiskDecision(
+                symbol="000001",
+                trade_date=second_date,
+                signal_action="observe",
+                approved=False,
+                reasons=["接近涨停，不买入"],
+                target_position_pct=Decimal("0"),
+            ),
+        ],
+    )
+    repository.save_pipeline_run(
+        third_context,
+        "pre_market",
+        "success",
+        {"report_path": "reports/2026-04-30/pre-market.md"},
+    )
+    repository.save_risk_decisions(
+        third_context,
+        [
+            RiskDecision(
+                symbol="159915",
+                trade_date=third_date,
+                signal_action="paper_buy",
+                approved=False,
+                reasons=["接近涨停，不买入", "单日亏损超过限制"],
+                target_position_pct=Decimal("0"),
+            )
+        ],
+    )
+
+    for snapshot_date, total_value in [
+        (first_date, Decimal("100000")),
+        (second_date, Decimal("100500")),
+        (third_date, Decimal("100200")),
+    ]:
+        repository.save_portfolio_snapshot(
+            PipelineRunContext(trade_date=snapshot_date, run_id=f"snapshot-{snapshot_date}"),
+            PortfolioSnapshot(
+                trade_date=snapshot_date,
+                cash=Decimal("90000"),
+                market_value=total_value - Decimal("90000"),
+                total_value=total_value,
+                open_positions=1,
+            ),
+        )
+
+    repository.save_data_quality_report(
+        PipelineRunContext(trade_date=first_date, run_id="quality-1"),
+        DataQualityReport(
+            trade_date=first_date,
+            stage="pre_market",
+            status="passed",
+            source_failure_rate=0,
+            total_sources=5,
+            failed_source_count=0,
+            empty_source_count=0,
+            missing_market_bar_count=0,
+            abnormal_price_count=0,
+            is_trade_date=True,
+            issues=[],
+        ),
+    )
+    repository.save_data_quality_report(
+        PipelineRunContext(trade_date=second_date, run_id="quality-2"),
+        DataQualityReport(
+            trade_date=second_date,
+            stage="pre_market",
+            status="warning",
+            source_failure_rate=0.2,
+            total_sources=5,
+            failed_source_count=1,
+            empty_source_count=0,
+            missing_market_bar_count=0,
+            abnormal_price_count=0,
+            is_trade_date=True,
+            issues=[
+                DataQualityIssue(
+                    severity="warning",
+                    check_name="empty_optional_source",
+                    source="news",
+                    symbol=None,
+                    message="news 为空",
+                    metadata={},
+                )
+            ],
+        ),
+    )
+    repository.save_data_quality_report(
+        PipelineRunContext(trade_date=third_date, run_id="quality-3"),
+        DataQualityReport(
+            trade_date=third_date,
+            stage="pre_market",
+            status="failed",
+            source_failure_rate=0.6,
+            total_sources=5,
+            failed_source_count=3,
+            empty_source_count=0,
+            missing_market_bar_count=1,
+            abnormal_price_count=0,
+            is_trade_date=True,
+            issues=[
+                DataQualityIssue(
+                    severity="error",
+                    check_name="missing_market_bar",
+                    source="market_bars",
+                    symbol="159915",
+                    message="159915 缺少当日行情",
+                    metadata={},
+                ),
+                DataQualityIssue(
+                    severity="warning",
+                    check_name="source_failed",
+                    source="news",
+                    symbol=None,
+                    message="news 失败",
+                    metadata={},
+                ),
+                DataQualityIssue(
+                    severity="warning",
+                    check_name="source_failed",
+                    source="policy",
+                    symbol=None,
+                    message="policy 失败",
+                    metadata={},
+                ),
+            ],
+        ),
+    )
+
+    trend = DashboardQueryAgent(repository).trends(first_date, third_date)
+
+    assert trend.start_date == "2026-04-28"
+    assert trend.end_date == "2026-04-30"
+    assert [point.trade_date for point in trend.points] == [
+        "2026-04-28",
+        "2026-04-29",
+        "2026-04-30",
+    ]
+    assert [point.total_value for point in trend.points] == ["100000", "100500", "100200"]
+    assert trend.points[1].signal_count == 2
+    assert trend.points[1].approved_count == 1
+    assert trend.points[1].rejected_count == 1
+    assert trend.points[1].max_signal_score == 0.91
+    assert trend.points[2].signal_count == 0
+    assert trend.points[2].approved_count == 0
+    assert trend.points[2].rejected_count == 1
+    assert trend.points[2].source_failure_rate == 0.6
+    assert trend.points[2].blocked_count == 1
+    assert trend.points[2].warning_count == 2
+    assert trend.risk_reject_reasons == {
+        "接近涨停，不买入": 2,
+        "单日亏损超过限制": 1,
+    }
+
+
 def test_dashboard_query_keeps_failed_runs_visible_without_successful_pre_market() -> None:
     repository = InMemoryRepository()
     trade_date = date(2026, 4, 29)

@@ -9,7 +9,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from ashare_agent.config import load_settings
-from ashare_agent.dashboard import DashboardDay, DashboardQueryService, DashboardRun
+from ashare_agent.dashboard import (
+    DashboardDay,
+    DashboardQueryService,
+    DashboardRun,
+    DashboardTrends,
+)
 from ashare_agent.repository import PostgresRepository
 
 
@@ -17,6 +22,8 @@ class DashboardService(Protocol):
     def list_runs(self, limit: int = 50) -> list[DashboardRun]: ...
 
     def day_summary(self, trade_date: date) -> DashboardDay: ...
+
+    def trends(self, start_date: date, end_date: date) -> DashboardTrends: ...
 
 
 DashboardServiceFactory = Callable[[], DashboardService]
@@ -54,7 +61,14 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
     def dashboard_day(trade_date: date) -> JsonObject:
         return _dto(service().day_summary(trade_date))
 
-    _registered_routes = (health, dashboard_runs, dashboard_day)
+    @api.get("/api/dashboard/trends")
+    def dashboard_trends(start_date: date, end_date: date) -> JsonObject:
+        try:
+            return _dto(service().trends(start_date, end_date))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    _registered_routes = (health, dashboard_runs, dashboard_day, dashboard_trends)
     return api
 
 

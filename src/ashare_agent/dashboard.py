@@ -4,10 +4,12 @@ from ashare_agent.agents.dashboard_query_agent import (
     DashboardDaySummary,
     DashboardPipelineRun,
     DashboardQueryAgent,
+    DashboardTrendSummary,
 )
 
 DashboardDay = DashboardDaySummary
 DashboardRun = DashboardPipelineRun
+DashboardTrends = DashboardTrendSummary
 
 
 class DashboardQueryService(DashboardQueryAgent):

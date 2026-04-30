@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、DataQualityAgent 质量门禁、CLI、LLM adapter、PostgreSQL/Alembic schema、核心持久化接线、模拟持仓生命周期、策略参数版本审计、复盘指标查询和第一版只读观察台。
+当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、DataQualityAgent 质量门禁、CLI、LLM adapter、PostgreSQL/Alembic schema、核心持久化接线、模拟持仓生命周期、策略参数版本审计、复盘指标查询和支持日期范围趋势的只读观察台。
 
 ## 目标架构
 
@@ -41,7 +41,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有订单，执行买入、盯市、退出评估、卖出、closed position 落库和复盘。
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
-- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、风控、模拟订单、持仓、组合快照、复盘和数据源快照查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
+- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、风控、模拟订单、持仓、组合快照、复盘、数据源快照和日期范围趋势查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 模块边界发生变化时，同步更新本文件。
@@ -68,4 +68,4 @@ configs/
 
 `src/ashare_agent/agents/dashboard_query_agent.py` 属于只读查询适配层，不参与 pipeline 写入、不执行交易、不修改策略状态。`src/ashare_agent/dashboard.py` 是 API 使用的薄兼容层，避免前端/API 依赖内部 agent 文件路径。
 
-前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，左侧展示 pipeline runs，右侧按交易日展示观察名单、风控结果、模拟订单、持仓、复盘、数据源状态和运行详情。
+前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，左侧展示日期范围内的 pipeline runs，右侧展示范围趋势、所选交易日的观察名单、风控结果、模拟订单、持仓、复盘、数据源状态和运行详情。

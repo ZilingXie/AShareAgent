@@ -14,7 +14,7 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { fetchDashboardDay, fetchRuns } from "./api";
+import { fetchDashboardDay, fetchDashboardTrends, fetchRuns } from "./api";
 import {
   boolText,
   breakdown,
@@ -31,6 +31,8 @@ import type {
   DashboardPaperOrder,
   DashboardPosition,
   DashboardRun,
+  DashboardTrendPoint,
+  DashboardTrends,
 } from "./types";
 
 const stageLabels: Record<string, string> = {
@@ -49,17 +51,25 @@ const statusLabels: Record<string, string> = {
 export default function App(): JSX.Element {
   const [runs, setRuns] = useState<DashboardRun[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [rangeStart, setRangeStart] = useState<string | null>(null);
+  const [rangeEnd, setRangeEnd] = useState<string | null>(null);
   const [day, setDay] = useState<DashboardDay | null>(null);
+  const [trends, setTrends] = useState<DashboardTrends | null>(null);
   const [loading, setLoading] = useState(true);
+  const [trendLoading, setTrendLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [trendError, setTrendError] = useState<string | null>(null);
 
   async function loadRuns(): Promise<void> {
     setLoading(true);
     setError(null);
     try {
-      const loadedRuns = await fetchRuns();
+      const loadedRuns = await fetchRuns(200);
+      const tradeDates = [...new Set(loadedRuns.map((run) => run.trade_date))].sort();
       setRuns(loadedRuns);
       setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
+      setRangeStart((current) => current ?? tradeDates[0] ?? null);
+      setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Dashboard API 请求失败");
     } finally {
@@ -100,9 +110,67 @@ export default function App(): JSX.Element {
     };
   }, [selectedDate]);
 
+  useEffect(() => {
+    if (!rangeStart || !rangeEnd) {
+      setTrends(null);
+      return;
+    }
+    if (rangeStart > rangeEnd) {
+      setTrendError("开始日期不能晚于结束日期");
+      setTrends(null);
+      return;
+    }
+    let active = true;
+    setTrendLoading(true);
+    setTrendError(null);
+    fetchDashboardTrends(rangeStart, rangeEnd)
+      .then((loadedTrends) => {
+        if (active) {
+          setTrends(loadedTrends);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setTrendError(caught instanceof Error ? caught.message : "Dashboard API 请求失败");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setTrendLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [rangeStart, rangeEnd]);
+
+  const visibleRuns = useMemo(
+    () =>
+      runs.filter((run) => {
+        if (rangeStart && run.trade_date < rangeStart) {
+          return false;
+        }
+        if (rangeEnd && run.trade_date > rangeEnd) {
+          return false;
+        }
+        return true;
+      }),
+    [rangeEnd, rangeStart, runs]
+  );
+
+  useEffect(() => {
+    if (!rangeStart || !rangeEnd || !selectedDate) {
+      return;
+    }
+    if (selectedDate >= rangeStart && selectedDate <= rangeEnd) {
+      return;
+    }
+    setSelectedDate(visibleRuns[0]?.trade_date ?? rangeEnd);
+  }, [rangeEnd, rangeStart, selectedDate, visibleRuns]);
+
   const selectedRuns = useMemo(
-    () => runs.filter((run) => run.trade_date === selectedDate),
-    [runs, selectedDate]
+    () => visibleRuns.filter((run) => run.trade_date === selectedDate),
+    [selectedDate, visibleRuns]
   );
 
   return (
@@ -119,8 +187,8 @@ export default function App(): JSX.Element {
           </button>
         </div>
         <div className="run-list">
-          {runs.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
-          {runs.map((run) => (
+          {visibleRuns.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
+          {visibleRuns.map((run) => (
             <button
               className={`run-item ${run.trade_date === selectedDate ? "selected" : ""}`}
               key={`${run.run_id}-${run.stage}`}
@@ -144,6 +212,26 @@ export default function App(): JSX.Element {
             <p className="eyebrow">交易日</p>
             <h2>{selectedDate ?? "-"}</h2>
           </div>
+          <div className="date-controls" aria-label="日期范围">
+            <label>
+              开始日期
+              <input
+                max={rangeEnd ?? undefined}
+                onChange={(event) => setRangeStart(event.target.value || null)}
+                type="date"
+                value={rangeStart ?? ""}
+              />
+            </label>
+            <label>
+              结束日期
+              <input
+                min={rangeStart ?? undefined}
+                onChange={(event) => setRangeEnd(event.target.value || null)}
+                type="date"
+                value={rangeEnd ?? ""}
+              />
+            </label>
+          </div>
           <div className="status-strip">
             <span>{selectedRuns.length} 次运行</span>
             <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
@@ -153,7 +241,11 @@ export default function App(): JSX.Element {
         </header>
 
         {error ? <div className="alert">{error}</div> : null}
+        {trendError ? <div className="alert">{trendError}</div> : null}
         {loading ? <div className="loading">加载中</div> : null}
+        {trendLoading ? <div className="loading">趋势加载中</div> : null}
+
+        {trends ? <TrendPanels trends={trends} /> : null}
 
         {day ? (
           <div className="dashboard-grid">
@@ -358,6 +450,147 @@ export default function App(): JSX.Element {
   );
 }
 
+function TrendPanels({ trends }: { trends: DashboardTrends }): JSX.Element {
+  return (
+    <div className="trend-grid">
+      <Section icon={Activity} title="权益曲线">
+        <EquityTrend points={trends.points} />
+      </Section>
+      <Section icon={Gauge} title="信号趋势">
+        <SignalTrend points={trends.points} />
+      </Section>
+      <Section icon={ShieldCheck} title="风控拒绝原因">
+        <RiskRejectReasons reasons={trends.risk_reject_reasons} />
+      </Section>
+      <Section icon={Database} title="数据质量趋势">
+        <DataQualityTrend points={trends.points} />
+      </Section>
+    </div>
+  );
+}
+
+function EquityTrend({ points }: { points: DashboardTrendPoint[] }): JSX.Element {
+  const equityPoints = points.filter((point) => point.total_value !== null);
+  const latest = equityPoints[equityPoints.length - 1];
+  if (!latest) {
+    return <EmptyState text="暂无权益曲线" />;
+  }
+  return (
+    <div className="trend-block">
+      <div className="trend-headline">
+        <span>最新总资产</span>
+        <strong>{money(latest.total_value)}</strong>
+      </div>
+      <MiniLineChart points={equityPoints} />
+      <div className="trend-row-list">
+        {equityPoints.map((point) => (
+          <div className="trend-row" key={`equity-${point.trade_date}`}>
+            <span>{point.trade_date}</span>
+            <strong>{money(point.total_value)}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MiniLineChart({ points }: { points: DashboardTrendPoint[] }): JSX.Element {
+  const values = points.map((point) => Number(point.total_value));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const spread = max - min || 1;
+  const width = 320;
+  const height = 96;
+  const coordinates = values.map((value, index) => {
+    const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+    const y = height - 12 - ((value - min) / spread) * (height - 24);
+    return { x, y };
+  });
+  const line = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  return (
+    <svg
+      aria-label="权益曲线图"
+      className="line-chart"
+      preserveAspectRatio="none"
+      role="img"
+      viewBox={`0 0 ${width} ${height}`}
+    >
+      <polyline points={line} />
+      {coordinates.map((point, index) => (
+        <circle
+          cx={point.x}
+          cy={point.y}
+          key={`${points[index].trade_date}-${point.x}`}
+          r="3"
+        />
+      ))}
+    </svg>
+  );
+}
+
+function SignalTrend({ points }: { points: DashboardTrendPoint[] }): JSX.Element {
+  if (points.length === 0) {
+    return <EmptyState text="暂无信号趋势" />;
+  }
+  const maxSignals = Math.max(...points.map((point) => point.signal_count), 1);
+  return (
+    <div className="trend-row-list">
+      {points.map((point) => (
+        <div className="trend-row stacked" key={`signal-${point.trade_date}`}>
+          <div>
+            <span>{point.trade_date}</span>
+            <strong>{point.signal_count} 个信号</strong>
+          </div>
+          <div className="mini-bars" aria-hidden="true">
+            <span
+              className="mini-bar approved"
+              style={{ width: `${(point.approved_count / maxSignals) * 100}%` }}
+            />
+            <span
+              className="mini-bar rejected"
+              style={{ width: `${(point.rejected_count / maxSignals) * 100}%` }}
+            />
+          </div>
+          <div className="trend-meta">
+            <span>通过 {point.approved_count}</span>
+            <span>拒绝 {point.rejected_count}</span>
+            <span>最高评分 {scoreOrDash(point.max_signal_score)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RiskRejectReasons({ reasons }: { reasons: Record<string, number> }): JSX.Element {
+  if (Object.keys(reasons).length === 0) {
+    return <EmptyState text="暂无风控拒绝原因" />;
+  }
+  return <p className="reason-distribution">{distributionText(reasons)}</p>;
+}
+
+function DataQualityTrend({ points }: { points: DashboardTrendPoint[] }): JSX.Element {
+  if (points.length === 0) {
+    return <EmptyState text="暂无数据质量趋势" />;
+  }
+  return (
+    <div className="trend-row-list">
+      {points.map((point) => (
+        <div className="trend-row stacked" key={`quality-${point.trade_date}`}>
+          <div>
+            <span>{point.trade_date}</span>
+            <strong>source 失败率 {percent(point.source_failure_rate)}</strong>
+          </div>
+          <div className="trend-meta">
+            <span>阻断 {point.blocked_count}</span>
+            <span>warning {point.warning_count}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Section({
   children,
   icon: Icon,
@@ -376,6 +609,13 @@ function Section({
       {children}
     </section>
   );
+}
+
+function scoreOrDash(value: number | null): string {
+  if (value === null || Number.isNaN(value)) {
+    return "-";
+  }
+  return score(value);
 }
 
 function StatusBadge({ status }: { status: string }): JSX.Element {

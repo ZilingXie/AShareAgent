@@ -119,6 +119,25 @@ export interface DashboardDataQualityReport {
   created_at: string | null;
 }
 
+export interface DashboardTrendPoint {
+  trade_date: string;
+  total_value: string | null;
+  signal_count: number;
+  approved_count: number;
+  rejected_count: number;
+  max_signal_score: number | null;
+  source_failure_rate: number;
+  blocked_count: number;
+  warning_count: number;
+}
+
+export interface DashboardTrends {
+  start_date: string;
+  end_date: string;
+  points: DashboardTrendPoint[];
+  risk_reject_reasons: Record<string, number>;
+}
+
 export interface DashboardDay {
   trade_date: string;
   runs: DashboardRun[];

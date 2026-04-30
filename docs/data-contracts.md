@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、DashboardQueryAgent 只读 DTO 契约、复盘指标 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、DashboardQueryAgent 只读 DTO 契约、复盘指标 DTO、日期范围趋势 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -101,11 +101,18 @@ Alembic 迁移创建以下表分组：
 ## Dashboard 查询契约
 
 - `DashboardQueryAgent` 是 dashboard 读取 pipeline 数据的稳定入口。
-- `src/ashare_agent/dashboard.py` 只提供 API 兼容封装：`DashboardQueryService.list_runs()` 委托 `DashboardQueryAgent.list_pipeline_runs()`，避免出现两套查询逻辑。
+- `src/ashare_agent/dashboard.py` 只提供 API 兼容封装：`DashboardQueryService.list_runs()` 委托 `DashboardQueryAgent.list_pipeline_runs()`，趋势查询沿用 `DashboardQueryAgent.trends()`，避免出现两套查询逻辑。
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
-- DTO 覆盖 pipeline runs、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots 和 data quality reports。
+- DTO 覆盖 pipeline runs、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots、data quality reports 和 range trends。
+- `trends(start_date, end_date)` 使用闭区间日期范围，输出 `DashboardTrendSummary`：
+  - `points` 按日期升序排列，只包含范围内有 pipeline run、组合快照或数据质量报告的日期。
+  - 权益曲线使用范围内每个交易日最新一条 `portfolio_snapshots.total_value`；没有快照时为 `null`。
+  - 信号趋势使用当天最新成功 `pre_market` run 的 `signals`，统计 `signal_count` 和 `max_signal_score`。
+  - 通过/拒绝使用同一最新成功 `pre_market` run 的 `risk_decisions`，统计 `approved_count` 和 `rejected_count`。
+  - `risk_reject_reasons` 只统计被拒绝风控决策中的 `reasons` 原文次数，不做归类或改写。
+  - 数据质量趋势按天统计 `source_failure_rate` 的最大值、`status=failed` 的阻断次数，以及 `severity=warning` 的 warning issue 次数。
 - dashboard/API/frontend 只能展示质量结果，不修改数据或触发交易。
 - `holding_days` 第一版用自然日差计算；后续如果新增结构化交易日历表，再替换为交易日口径。
 - `DashboardReviewReport.metrics` 是截至所选交易日的累计复盘指标，字段包括：

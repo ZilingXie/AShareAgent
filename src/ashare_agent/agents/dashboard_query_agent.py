@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
@@ -165,6 +166,35 @@ class DashboardDataQualityReport:
     created_at: str | None
 
 
+@dataclass(frozen=True)
+class DashboardTrendPoint:
+    trade_date: str
+    total_value: str | None
+    signal_count: int
+    approved_count: int
+    rejected_count: int
+    max_signal_score: float | None
+    source_failure_rate: float
+    blocked_count: int
+    warning_count: int
+
+
+def _empty_trend_points() -> list[DashboardTrendPoint]:
+    return []
+
+
+def _empty_risk_reject_reasons() -> dict[str, int]:
+    return {}
+
+
+@dataclass(frozen=True)
+class DashboardTrendSummary:
+    start_date: str
+    end_date: str
+    points: list[DashboardTrendPoint] = field(default_factory=_empty_trend_points)
+    risk_reject_reasons: dict[str, int] = field(default_factory=_empty_risk_reject_reasons)
+
+
 def _empty_runs() -> list[DashboardPipelineRun]:
     return []
 
@@ -246,6 +276,57 @@ class DashboardQueryAgent:
             review_report=self.latest_review_report(trade_date),
             source_snapshots=self.source_snapshots(trade_date, run_stage_by_id),
             data_quality_reports=self.data_quality_reports(trade_date),
+        )
+
+    def trends(self, start_date: date, end_date: date) -> DashboardTrendSummary:
+        if start_date > end_date:
+            raise ValueError("start_date 不能晚于 end_date")
+
+        latest_pre_market_run_id_by_date = self._latest_successful_run_ids_by_date(
+            start_date,
+            end_date,
+            "pre_market",
+        )
+        trend_dates = self._trend_dates(start_date, end_date, latest_pre_market_run_id_by_date)
+        portfolio_total_value_by_date = self._portfolio_total_values_by_date(
+            start_date,
+            end_date,
+        )
+        quality_by_date = self._data_quality_trends_by_date(start_date, end_date)
+        risk_reject_reasons: Counter[str] = Counter()
+        points: list[DashboardTrendPoint] = []
+
+        for trade_day in trend_dates:
+            run_id = latest_pre_market_run_id_by_date.get(trade_day)
+            signals = self.signals(trade_day, run_id) if run_id is not None else []
+            risk_decisions = self.risk_decisions(trade_day, run_id) if run_id is not None else []
+            approved_count = len([decision for decision in risk_decisions if decision.approved])
+            rejected_decisions = [decision for decision in risk_decisions if not decision.approved]
+            for decision in rejected_decisions:
+                risk_reject_reasons.update(decision.reasons)
+            source_failure_rate, blocked_count, warning_count = quality_by_date.get(
+                trade_day,
+                (0.0, 0, 0),
+            )
+            points.append(
+                DashboardTrendPoint(
+                    trade_date=trade_day.isoformat(),
+                    total_value=portfolio_total_value_by_date.get(trade_day),
+                    signal_count=len(signals),
+                    approved_count=approved_count,
+                    rejected_count=len(rejected_decisions),
+                    max_signal_score=max((signal.score for signal in signals), default=None),
+                    source_failure_rate=source_failure_rate,
+                    blocked_count=blocked_count,
+                    warning_count=warning_count,
+                )
+            )
+
+        return DashboardTrendSummary(
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
+            points=points,
+            risk_reject_reasons=dict(risk_reject_reasons),
         )
 
     def watchlist(
@@ -367,6 +448,93 @@ class DashboardQueryAgent:
             if payload.get("stage") == stage and payload.get("status") == "success":
                 return _row_run_id(row, "pipeline_runs")
         return None
+
+    def _latest_successful_run_ids_by_date(
+        self,
+        start_date: date,
+        end_date: date,
+        stage: str,
+    ) -> dict[date, str]:
+        latest_by_date: dict[date, str] = {}
+        for row in sorted(
+            self.repository.payload_rows("pipeline_runs"),
+            key=lambda item: _row_id(item, "pipeline_runs"),
+        ):
+            trade_day = _row_date(row, "pipeline_runs")
+            if trade_day < start_date or trade_day > end_date:
+                continue
+            payload = _payload(row, "pipeline_runs")
+            if payload.get("stage") == stage and payload.get("status") == "success":
+                latest_by_date[trade_day] = _row_run_id(row, "pipeline_runs")
+        return latest_by_date
+
+    def _trend_dates(
+        self,
+        start_date: date,
+        end_date: date,
+        latest_pre_market_run_id_by_date: Mapping[date, str],
+    ) -> list[date]:
+        trend_dates = set(latest_pre_market_run_id_by_date)
+        for table_name in (
+            "pipeline_runs",
+            "portfolio_snapshots",
+            "data_quality_reports",
+        ):
+            for row in self.repository.payload_rows(table_name):
+                trade_day = _row_date(row, table_name)
+                if start_date <= trade_day <= end_date:
+                    trend_dates.add(trade_day)
+        return sorted(trend_dates)
+
+    def _portfolio_total_values_by_date(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[date, str]:
+        latest_by_date: dict[date, str] = {}
+        for row in sorted(
+            self.repository.payload_rows("portfolio_snapshots"),
+            key=lambda item: _row_id(item, "portfolio_snapshots"),
+        ):
+            trade_day = _row_date(row, "portfolio_snapshots")
+            if start_date <= trade_day <= end_date:
+                latest_by_date[trade_day] = self._portfolio_snapshot(row).total_value
+        return latest_by_date
+
+    def _data_quality_trends_by_date(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[date, tuple[float, int, int]]:
+        source_failure_rate_by_date: dict[date, float] = {}
+        blocked_count_by_date: Counter[date] = Counter()
+        warning_count_by_date: Counter[date] = Counter()
+
+        for row in self.repository.payload_rows("data_quality_reports"):
+            trade_day = _row_date(row, "data_quality_reports")
+            if trade_day < start_date or trade_day > end_date:
+                continue
+            report = self._data_quality_report(row)
+            source_failure_rate_by_date[trade_day] = max(
+                source_failure_rate_by_date.get(trade_day, 0.0),
+                report.source_failure_rate,
+            )
+            if report.status == "failed":
+                blocked_count_by_date[trade_day] += 1
+            warning_count_by_date[trade_day] += len(
+                [issue for issue in report.issues if issue.severity == "warning"]
+            )
+
+        return {
+            trade_day: (
+                source_failure_rate_by_date.get(trade_day, 0.0),
+                blocked_count_by_date[trade_day],
+                warning_count_by_date[trade_day],
+            )
+            for trade_day in set(source_failure_rate_by_date)
+            | set(blocked_count_by_date)
+            | set(warning_count_by_date)
+        }
 
     def _pipeline_run(self, row: PayloadRecord) -> DashboardPipelineRun:
         payload = _payload(row, "pipeline_runs")

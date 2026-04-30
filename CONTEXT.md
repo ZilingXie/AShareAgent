@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/data-quality-agent` 已完成并合入本地 `main`：策略参数版本审计、DataQualityAgent、质量报告落库和 dashboard 展示均已完成。当前正在做收尾清理：更新状态记录、清理已合入的 `codex/alembic-transaction-fix` worktree/本地分支，并准备将 `main` push 到 GitHub。
+`codex/dashboard-trends` 已完成只读观察台趋势增强：后端新增日期范围趋势 DTO/API，前端新增日期范围筛选、权益曲线、信号趋势、风控拒绝原因统计和数据质量趋势。
 
 ## 上次停在哪
 
@@ -31,6 +31,8 @@
 - 本轮新增 DataQualityAgent，检查必需源失败/空数据、缺失当日行情、异常价格、source 失败率和非交易日运行提示。
 - 新增 `data_quality_reports` 专表和 DashboardQueryAgent DTO，dashboard 已显示每次 run 的数据质量状态和问题明细。
 - 已将 `codex/data-quality-agent` 和 `codex/alembic-transaction-fix` 合并回本地 `main`；其中 Alembic 修复确保 schema 状态检查在迁移前提交事务，避免 PostgreSQL aborted transaction 影响后续迁移。
+- 已清理 `codex/alembic-transaction-fix` worktree 和本地分支，并将 `main` 同步到 GitHub `origin/main`。
+- 本轮新增 `DashboardQueryAgent.trends(start_date, end_date)` 和 `/api/dashboard/trends`，前端范围筛选已改为按日期区间展示趋势，同时保留所选单日明细。
 
 ## 近期关键决定和原因
 
@@ -52,9 +54,11 @@
 - dashboard 第一版持有天数用自然日差计算，后续有结构化交易日历表后再替换为交易日口径。
 - 复盘指标只基于已落库模拟交易审计数据，不新增数据库迁移，不接真实交易；卖出原因分布使用模拟卖单 `reason` 原文。
 - 最大回撤按 `portfolio_snapshots.total_value` 序列计算，不基于单票价格或未落库临时估值。
+- dashboard 趋势按日期范围闭区间查询；信号、通过/拒绝和风控拒绝原因只使用当天最新成功 `pre_market` run，避免旧 run 重复计数。
+- 数据质量趋势按天取最大 source 失败率，阻断次数统计 `status=failed` 报告数，warning 次数统计 `severity=warning` issue 数。
 - 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动提交 task 分支并合并回 `main`。
 - `CONTEXT.md` 保持极简，只记录当前状态、停靠点和关键决定。
 
 ## 下一步
 
-- 下一步可继续补充 dashboard 筛选/趋势图，或补更细的数据质量趋势统计。
+- 下一步可接真实 `DATABASE_URL` 做 dashboard API + 前端联调 smoke，或继续补充更细的趋势钻取。

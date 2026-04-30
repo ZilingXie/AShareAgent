@@ -202,6 +202,40 @@ export interface DashboardTrends {
   risk_reject_reasons: Record<string, number>;
 }
 
+export interface DashboardBacktest {
+  backtest_id: string;
+  strategy_params_version: string;
+  provider: string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  attempted_days: number;
+  succeeded_days: number;
+  failed_days: number;
+  created_at: string | null;
+}
+
+export interface DashboardStrategyComparisonItem {
+  backtest_id: string;
+  strategy_params_version: string;
+  provider: string;
+  start_date: string;
+  end_date: string;
+  attempted_days: number;
+  succeeded_days: number;
+  failed_days: number;
+  win_rate: number;
+  max_drawdown: number;
+  total_return: number;
+  risk_reject_rate: number;
+  data_quality_failure_rate: number;
+}
+
+export interface DashboardStrategyComparison {
+  backtest_ids: string[];
+  items: DashboardStrategyComparisonItem[];
+}
+
 export interface DashboardDay {
   trade_date: string;
   runs: DashboardRun[];

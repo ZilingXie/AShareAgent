@@ -27,6 +27,7 @@ from ashare_agent.domain import (
     PortfolioSnapshot,
     ReviewReport,
     RiskDecision,
+    RunMode,
     SignalResult,
 )
 from ashare_agent.indicators import calculate_indicators
@@ -52,12 +53,16 @@ class ASharePipeline:
         trader: PaperTrader | None = None,
         strategy_params: StrategyParams | None = None,
         required_data_sources: set[str] | None = None,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
     ) -> None:
         self.strategy_params = strategy_params or StrategyParamsAgent(
             Path("configs/strategy_params.yml")
         ).load()
         self.repository = repository or InMemoryRepository()
         self.required_data_sources = required_data_sources or set()
+        self.run_mode: RunMode = run_mode
+        self.backtest_id: str | None = backtest_id
         self.collector = DataCollector(provider)
         self.data_quality_agent = DataQualityAgent(
             required_data_sources=self.required_data_sources
@@ -68,7 +73,11 @@ class ASharePipeline:
         )
         self.announcement_analyzer = AnnouncementAnalyzer()
         self.market_regime_analyzer = MarketRegimeAnalyzer()
-        self.signal_engine = SignalEngine()
+        self.signal_engine = SignalEngine(
+            params=self.strategy_params.signal,
+            strategy_params_version=self.strategy_params.version,
+            strategy_params_snapshot=self.strategy_params.snapshot(),
+        )
         self.risk_manager = RiskManager(
             max_positions=self.strategy_params.risk.max_positions,
             target_position_pct=self.strategy_params.risk.target_position_pct,
@@ -98,10 +107,30 @@ class ASharePipeline:
             "strategy_params_snapshot": self.strategy_params.snapshot(),
         }
 
+    def _run_scope_payload(self) -> dict[str, Any]:
+        return {
+            "run_mode": self.run_mode,
+            "backtest_id": self.backtest_id,
+        }
+
+    def _context(self, trade_date: date) -> PipelineRunContext:
+        return PipelineRunContext(
+            trade_date=trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
+
     def _restore_trader_state(self) -> None:
         if not self.trader.positions:
-            self.trader.positions = self.repository.load_open_positions()
-        self.trader.cash = self.repository.load_latest_cash(default_cash=self.trader.cash)
+            self.trader.positions = self.repository.load_open_positions(
+                run_mode=self.run_mode,
+                backtest_id=self.backtest_id,
+            )
+        self.trader.cash = self.repository.load_latest_cash(
+            default_cash=self.trader.cash,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
 
     def _current_total_value(self) -> Decimal:
         return self.trader.cash + sum(
@@ -116,6 +145,14 @@ class ASharePipeline:
             if not isinstance(payload, Mapping):
                 raise ValueError("pipeline_runs payload 必须是 JSON object")
             payload_map = cast(Mapping[str, object], payload)
+            row_run_mode = payload_map.get("run_mode", "normal")
+            row_backtest_id = payload_map.get("backtest_id")
+            if row_run_mode != self.run_mode:
+                continue
+            if self.run_mode == "backtest" and row_backtest_id != self.backtest_id:
+                continue
+            if self.run_mode == "normal" and row_backtest_id is not None:
+                continue
             if payload_map.get("stage") == stage and payload_map.get("status") == "success":
                 run_id = row.get("run_id")
                 if run_id is None:
@@ -264,6 +301,7 @@ class ASharePipeline:
         payload = {
             "run_id": context.run_id,
             "failure_reason": f"数据质量检查失败: {failure_detail}",
+            **self._run_scope_payload(),
             **self._strategy_params_payload(),
         }
         self.repository.save_artifact(context.trade_date, f"{stage}_failed", payload)
@@ -271,7 +309,7 @@ class ASharePipeline:
         raise DataProviderError(payload["failure_reason"])
 
     def run_pre_market(self, trade_date: date) -> AgentResult:
-        context = PipelineRunContext(trade_date=trade_date)
+        context = self._context(trade_date)
         dataset = self.collector.collect(trade_date=trade_date)
         self._save_dataset(context, dataset)
         self._run_data_quality_gate(context, "pre_market", dataset)
@@ -287,7 +325,10 @@ class ASharePipeline:
         )
         self._restore_trader_state()
         self.trader.mark_to_market(dataset.bars)
-        latest_snapshot = self.repository.load_latest_portfolio_snapshot()
+        latest_snapshot = self.repository.load_latest_portfolio_snapshot(
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
         previous_total_value = latest_snapshot.total_value if latest_snapshot is not None else None
         decisions = self.risk_manager.evaluate(
             trade_date=trade_date,
@@ -325,6 +366,8 @@ class ASharePipeline:
             "watchlist": _to_dict_list(signal_result.watchlist),
             "risk_decisions": _to_dict_list(decisions),
             "report_path": str(report_path),
+            **self._run_scope_payload(),
+            **self._strategy_params_payload(),
         }
         self.repository.save_watchlist_candidates(context, signal_result.watchlist)
         self.repository.save_signals(context, signal_result.signals)
@@ -349,7 +392,7 @@ class ASharePipeline:
         return AgentResult(name="pre_market", success=True, payload=payload)
 
     def run_intraday_watch(self, trade_date: date) -> AgentResult:
-        context = PipelineRunContext(trade_date=trade_date)
+        context = self._context(trade_date)
         report_path = write_markdown_report(
             self.report_root,
             trade_date.isoformat(),
@@ -359,7 +402,13 @@ class ASharePipeline:
                 "安全边界": "本项目 v1 只有 paper trading。",
             },
         )
-        payload = {"run_id": context.run_id, "report_path": str(report_path), "real_trading": False}
+        payload = {
+            "run_id": context.run_id,
+            "report_path": str(report_path),
+            "real_trading": False,
+            **self._run_scope_payload(),
+            **self._strategy_params_payload(),
+        }
         self.repository.save_artifact(trade_date, "intraday_watch", payload)
         self.repository.save_pipeline_run(
             context,
@@ -374,7 +423,7 @@ class ASharePipeline:
         return AgentResult(name="intraday_watch", success=True, payload=payload)
 
     def run_post_market_review(self, trade_date: date) -> AgentResult:
-        context = PipelineRunContext(trade_date=trade_date)
+        context = self._context(trade_date)
         if self._last_dataset is None:
             dataset = self.collector.collect(trade_date=trade_date)
             self._save_dataset(context, dataset)
@@ -382,10 +431,16 @@ class ASharePipeline:
             dataset = self._last_dataset
         self._run_data_quality_gate(context, "post_market_review", dataset)
         decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
-            trade_date
+            trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
         )
         self._restore_trader_state()
-        existing_orders = self.repository.load_paper_orders(trade_date)
+        existing_orders = self.repository.load_paper_orders(
+            trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
         buy_result = self.trader.apply_pre_market_decisions(
             trade_date=trade_date,
             decisions=decisions,
@@ -441,6 +496,8 @@ class ASharePipeline:
             "review": asdict(report),
             "report_path": f"paper:{report_path}",
             "experiment_report_path": str(experiment_report_path),
+            **self._run_scope_payload(),
+            **self._strategy_params_payload(),
         }
         self.repository.save_artifact(trade_date, "post_market_review", payload)
         self.repository.save_pipeline_run(
@@ -458,7 +515,7 @@ class ASharePipeline:
         return AgentResult(name="post_market_review", success=True, payload=payload)
 
     def run_daily(self, trade_date: date) -> AgentResult:
-        context = PipelineRunContext(trade_date=trade_date)
+        context = self._context(trade_date)
         calendar = self.collector.collect_trade_calendar(trade_date)
         self.repository.save_raw_source_snapshots(context, [calendar.source_snapshot])
         self.repository.save_trading_calendar_days(context, calendar.days)
@@ -474,6 +531,7 @@ class ASharePipeline:
             payload = {
                 "run_id": context.run_id,
                 "failure_reason": failure_reason,
+                **self._run_scope_payload(),
                 **self._strategy_params_payload(),
             }
             self.repository.save_artifact(trade_date, "daily_run_failed", payload)
@@ -485,6 +543,7 @@ class ASharePipeline:
             payload = {
                 "run_id": context.run_id,
                 "skipped_reason": f"{trade_date.isoformat()} 非交易日，跳过策略阶段",
+                **self._run_scope_payload(),
                 **self._strategy_params_payload(),
             }
             self.repository.save_artifact(trade_date, "daily_run_skipped", payload)
@@ -500,6 +559,7 @@ class ASharePipeline:
             payload = {
                 "run_id": context.run_id,
                 "failure_reason": str(exc),
+                **self._run_scope_payload(),
                 **self._strategy_params_payload(),
             }
             self.repository.save_artifact(trade_date, "daily_run_failed", payload)
@@ -510,6 +570,7 @@ class ASharePipeline:
         payload = {
             "run_id": context.run_id,
             "stages": [pre_market.name, intraday.name, review.name],
+            **self._run_scope_payload(),
             **self._strategy_params_payload(),
         }
         self.repository.save_artifact(trade_date, "daily_run", payload)

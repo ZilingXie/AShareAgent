@@ -82,6 +82,82 @@ def test_repository_restores_latest_snapshot_and_paper_orders() -> None:
     assert repository.load_latest_portfolio_snapshot() == snapshot
 
 
+def test_repository_scopes_backtest_state_away_from_normal_account() -> None:
+    repository = InMemoryRepository()
+    normal_context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="normal-run")
+    backtest_context = PipelineRunContext(
+        trade_date=date(2026, 4, 29),
+        run_id="backtest-run",
+        run_mode="backtest",
+        backtest_id="bt-signal-v1",
+    )
+    repository.save_paper_positions(
+        normal_context,
+        [
+            PaperPosition(
+                symbol="510300",
+                opened_at=date(2026, 4, 29),
+                quantity=100,
+                entry_price=Decimal("100"),
+                current_price=Decimal("101"),
+                status="open",
+            )
+        ],
+    )
+    repository.save_paper_positions(
+        backtest_context,
+        [
+            PaperPosition(
+                symbol="159915",
+                opened_at=date(2026, 4, 29),
+                quantity=200,
+                entry_price=Decimal("10"),
+                current_price=Decimal("11"),
+                status="open",
+            )
+        ],
+    )
+    repository.save_portfolio_snapshot(
+        normal_context,
+        PortfolioSnapshot(
+            trade_date=date(2026, 4, 29),
+            cash=Decimal("90000"),
+            market_value=Decimal("10100"),
+            total_value=Decimal("100100"),
+            open_positions=1,
+        ),
+    )
+    repository.save_portfolio_snapshot(
+        backtest_context,
+        PortfolioSnapshot(
+            trade_date=date(2026, 4, 29),
+            cash=Decimal("80000"),
+            market_value=Decimal("2200"),
+            total_value=Decimal("82200"),
+            open_positions=1,
+        ),
+    )
+
+    assert [position.symbol for position in repository.load_open_positions()] == ["510300"]
+    assert [
+        position.symbol
+        for position in repository.load_open_positions(
+            run_mode="backtest",
+            backtest_id="bt-signal-v1",
+        )
+    ] == ["159915"]
+    assert repository.load_latest_cash(default_cash=Decimal("0")) == Decimal("90000")
+    assert repository.load_latest_cash(
+        default_cash=Decimal("0"),
+        run_mode="backtest",
+        backtest_id="bt-signal-v1",
+    ) == Decimal("80000")
+    assert repository.records_for("paper_positions")[-1]["payload"]["run_mode"] == "backtest"
+    assert repository.records_for("paper_positions")[-1]["payload"]["backtest_id"] == (
+        "bt-signal-v1"
+    )
+
+
 def test_repository_payload_rows_filter_by_table_date_and_run_id() -> None:
     repository = InMemoryRepository()
     first_context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="first-run")

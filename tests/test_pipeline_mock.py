@@ -79,6 +79,14 @@ paper_trader:
   initial_cash: "100000"
   position_size_pct: "0.10"
   slippage_pct: "0.001"
+signal:
+  min_score: "0.55"
+  max_daily_signals: 1
+  weights:
+    technical: "0.45"
+    market: "0.25"
+    event: "0.20"
+    risk_penalty: "0.10"
 """,
         encoding="utf-8",
     )
@@ -151,6 +159,11 @@ def test_mock_pipeline_runs_pre_market_and_post_market_with_audit_outputs(tmp_pa
     assert (
         pipeline_runs[0]["payload"]["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.05"
     )
+    assert pipeline_runs[0]["payload"]["run_mode"] == "normal"
+    assert pipeline_runs[0]["payload"]["backtest_id"] is None
+    signals = repository.records_for("signals")
+    assert signals[0]["payload"]["strategy_params_version"] == "strategy-params-v1"
+    assert signals[0]["payload"]["strategy_params_snapshot"]["signal"]["max_daily_signals"] == 1
 
 
 def test_post_market_review_writes_strategy_experiment_report(tmp_path: Path) -> None:

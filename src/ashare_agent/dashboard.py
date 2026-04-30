@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 from ashare_agent.agents.dashboard_query_agent import (
+    DashboardBacktest,
     DashboardDaySummary,
     DashboardPipelineRun,
     DashboardQueryAgent,
+    DashboardStrategyComparison,
+    DashboardStrategyComparisonItem,
     DashboardTrendSummary,
 )
 
 DashboardDay = DashboardDaySummary
 DashboardRun = DashboardPipelineRun
 DashboardTrends = DashboardTrendSummary
+DashboardBacktestRun = DashboardBacktest
+DashboardStrategyComparisonResult = DashboardStrategyComparison
+DashboardStrategyComparisonRow = DashboardStrategyComparisonItem
 
 
 class DashboardQueryService(DashboardQueryAgent):

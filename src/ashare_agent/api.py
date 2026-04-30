@@ -10,9 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ashare_agent.config import load_settings
 from ashare_agent.dashboard import (
+    DashboardBacktest,
     DashboardDay,
     DashboardQueryService,
     DashboardRun,
+    DashboardStrategyComparison,
     DashboardTrends,
 )
 from ashare_agent.repository import PostgresRepository
@@ -24,6 +26,10 @@ class DashboardService(Protocol):
     def day_summary(self, trade_date: date) -> DashboardDay: ...
 
     def trends(self, start_date: date, end_date: date) -> DashboardTrends: ...
+
+    def list_backtests(self, limit: int = 50) -> list[DashboardBacktest]: ...
+
+    def strategy_comparison(self, backtest_ids: list[str]) -> DashboardStrategyComparison: ...
 
 
 DashboardServiceFactory = Callable[[], DashboardService]
@@ -68,7 +74,24 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    _registered_routes = (health, dashboard_runs, dashboard_day, dashboard_trends)
+    @api.get("/api/dashboard/backtests")
+    def dashboard_backtests(limit: int = 50) -> dict[str, list[JsonObject]]:
+        safe_limit = min(max(limit, 1), 200)
+        return {"backtests": [_dto(item) for item in service().list_backtests(limit=safe_limit)]}
+
+    @api.get("/api/dashboard/strategy-comparison")
+    def dashboard_strategy_comparison(backtest_ids: str) -> JsonObject:
+        ids = [item.strip() for item in backtest_ids.split(",") if item.strip()]
+        return _dto(service().strategy_comparison(ids))
+
+    _registered_routes = (
+        health,
+        dashboard_runs,
+        dashboard_day,
+        dashboard_trends,
+        dashboard_backtests,
+        dashboard_strategy_comparison,
+    )
     return api
 
 

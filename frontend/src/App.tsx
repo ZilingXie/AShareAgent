@@ -15,6 +15,7 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { fetchDashboardDay, fetchDashboardTrends, fetchRuns } from "./api";
+import { fetchBacktests, fetchStrategyComparison } from "./api";
 import {
   boolText,
   breakdown,
@@ -27,6 +28,8 @@ import {
 } from "./format";
 import type {
   DashboardDay,
+  DashboardStrategyComparison,
+  DashboardStrategyComparisonItem,
   DashboardDataQualityReport,
   DashboardDataReliabilityReport,
   DashboardLLMAnalysis,
@@ -58,6 +61,8 @@ export default function App(): JSX.Element {
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
   const [day, setDay] = useState<DashboardDay | null>(null);
   const [trends, setTrends] = useState<DashboardTrends | null>(null);
+  const [strategyComparison, setStrategyComparison] =
+    useState<DashboardStrategyComparison | null>(null);
   const [loading, setLoading] = useState(true);
   const [trendLoading, setTrendLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,11 +73,19 @@ export default function App(): JSX.Element {
     setError(null);
     try {
       const loadedRuns = await fetchRuns(200);
+      const loadedBacktests = await fetchBacktests(20);
       const tradeDates = [...new Set(loadedRuns.map((run) => run.trade_date))].sort();
       setRuns(loadedRuns);
       setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
+      if (loadedBacktests.length === 0) {
+        setStrategyComparison(null);
+      } else {
+        setStrategyComparison(
+          await fetchStrategyComparison(loadedBacktests.map((item) => item.backtest_id))
+        );
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Dashboard API 请求失败");
     } finally {
@@ -250,6 +263,7 @@ export default function App(): JSX.Element {
         {trendLoading ? <div className="loading">趋势加载中</div> : null}
 
         {trends ? <TrendPanels trends={trends} /> : null}
+        <StrategyComparisonPanel comparison={strategyComparison} />
 
         {day ? (
           <div className="dashboard-grid">
@@ -459,6 +473,54 @@ export default function App(): JSX.Element {
         ) : null}
       </section>
     </main>
+  );
+}
+
+function StrategyComparisonPanel({
+  comparison,
+}: {
+  comparison: DashboardStrategyComparison | null;
+}): JSX.Element {
+  return (
+    <div className="trend-grid">
+      <Section icon={Gauge} title="策略版本对比">
+        {!comparison || comparison.items.length === 0 ? (
+          <EmptyState text="暂无策略回放对比" />
+        ) : (
+          <div className="comparison-list">
+            {comparison.items.map((item) => (
+              <StrategyComparisonItemRow item={item} key={item.backtest_id} />
+            ))}
+          </div>
+        )}
+      </Section>
+    </div>
+  );
+}
+
+function StrategyComparisonItemRow({
+  item,
+}: {
+  item: DashboardStrategyComparisonItem;
+}): JSX.Element {
+  return (
+    <div className="comparison-row">
+      <div>
+        <strong>{item.backtest_id}</strong>
+        <span>{item.strategy_params_version}</span>
+        <span>
+          {item.provider} · {item.start_date} 至 {item.end_date}
+        </span>
+      </div>
+      <div className="trend-meta">
+        <span>胜率 {percent(item.win_rate)}</span>
+        <span>回撤 {percent(item.max_drawdown)}</span>
+        <span>收益 {percent(item.total_return)}</span>
+        <span>拒绝率 {percent(item.risk_reject_rate)}</span>
+        <span>质量失败率 {percent(item.data_quality_failure_rate)}</span>
+        <span>失败天数 {item.failed_days}</span>
+      </div>
+    </div>
   );
 }
 

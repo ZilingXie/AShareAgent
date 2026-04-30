@@ -10,6 +10,36 @@ from yaml import safe_load  # type: ignore[import-untyped]
 
 
 @dataclass(frozen=True)
+class SignalWeights:
+    technical: float
+    market: float
+    event: float
+    risk_penalty: float
+
+    def snapshot(self) -> dict[str, float]:
+        return {
+            "technical": self.technical,
+            "market": self.market,
+            "event": self.event,
+            "risk_penalty": self.risk_penalty,
+        }
+
+
+@dataclass(frozen=True)
+class SignalParams:
+    min_score: float
+    max_daily_signals: int
+    weights: SignalWeights
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "min_score": self.min_score,
+            "max_daily_signals": self.max_daily_signals,
+            "weights": self.weights.snapshot(),
+        }
+
+
+@dataclass(frozen=True)
 class RiskParams:
     max_positions: int
     target_position_pct: Decimal
@@ -54,12 +84,14 @@ class StrategyParams:
     version: str
     risk: RiskParams
     paper_trader: PaperTraderParams
+    signal: SignalParams
 
     def snapshot(self) -> dict[str, Any]:
         return {
             "version": self.version,
             "risk": self.risk.snapshot(),
             "paper_trader": self.paper_trader.snapshot(),
+            "signal": self.signal.snapshot(),
         }
 
 
@@ -78,6 +110,8 @@ class StrategyParamsAgent:
         version = _required_str(raw, "version")
         risk = _required_mapping(raw, "risk")
         paper_trader = _required_mapping(raw, "paper_trader")
+        signal = _required_mapping(raw, "signal")
+        signal_weights = _required_mapping(signal, "signal.weights")
 
         min_holding_trade_days = _required_int(risk, "risk.min_holding_trade_days", minimum=0)
         max_holding_trade_days = _required_int(risk, "risk.max_holding_trade_days", minimum=0)
@@ -108,6 +142,20 @@ class StrategyParamsAgent:
                 ),
                 position_size_pct=_required_pct(paper_trader, "paper_trader.position_size_pct"),
                 slippage_pct=_required_pct(paper_trader, "paper_trader.slippage_pct"),
+            ),
+            signal=SignalParams(
+                min_score=_required_ratio(signal, "signal.min_score"),
+                max_daily_signals=_required_int(
+                    signal,
+                    "signal.max_daily_signals",
+                    minimum=1,
+                ),
+                weights=SignalWeights(
+                    technical=_required_ratio(signal_weights, "signal.weights.technical"),
+                    market=_required_ratio(signal_weights, "signal.weights.market"),
+                    event=_required_ratio(signal_weights, "signal.weights.event"),
+                    risk_penalty=_required_ratio(signal_weights, "signal.weights.risk_penalty"),
+                ),
             ),
         )
 
@@ -154,6 +202,10 @@ def _required_pct(raw: Mapping[str, object], field_name: str) -> Decimal:
     if value > Decimal("1"):
         raise ValueError(f"策略参数配置字段 {field_name} 必须在 0 到 1 之间")
     return value
+
+
+def _required_ratio(raw: Mapping[str, object], field_name: str) -> float:
+    return float(_required_pct(raw, field_name))
 
 
 def _required_int(raw: Mapping[str, object], field_name: str, *, minimum: int) -> int:

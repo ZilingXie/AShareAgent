@@ -126,4 +126,5 @@ class DataCollector:
             industry_snapshots=industry,
             source_snapshots=snapshots,
             trade_calendar=self._trade_calendar_snapshot(trade_date, calendar_dates),
+            trade_calendar_dates=calendar_dates,
         )

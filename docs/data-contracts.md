@@ -30,7 +30,7 @@
 
 - 数据输入：`Asset`、`MarketBar`、`AnnouncementItem`、`NewsItem`、`PolicyItem`、`IndustrySnapshot`。
 - 分析输出：`AnnouncementEvent`、`TechnicalIndicator`、`MarketRegime`、`LLMAnalysis`。
-- 信号与风控：`WatchlistCandidate`、`Signal`、`RiskDecision`。
+- 信号与风控：`WatchlistCandidate`、`Signal`、`RiskDecision`、`ExitDecision`。
 - 模拟交易：`PaperOrder`、`PaperPosition`、`PortfolioSnapshot`、`ReviewReport`。
 - 流程审计：`SourceSnapshot`、`MarketDataset`、`PipelineRunContext`、`AgentResult`。
 
@@ -63,7 +63,8 @@ Alembic 初始迁移创建以下表分组：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`market_bars`、`announcements`、`news_items`、`policy_items`、`technical_indicators`，再写入 `pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
 - `intraday-watch` 写入 `pipeline_runs` 和 `artifacts`。
-- `post-market-review` 从 repository 读取当日最新 pre-market 风控决策和开放持仓；若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。
+- `post-market-review` 从 repository 读取当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有模拟订单；若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。
+- `paper_positions` 中的 payload 可保存 `open` 和 `closed` 状态；repository 恢复开放持仓时只返回每个 symbol 的最新 `open` payload。
 
 真实 provider 下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败时，`pre-market` 会先保存失败的 `raw_source_snapshots` 和失败的 `pipeline_runs`，再明确失败。交易日历本轮只保存采集快照和摘要，不新增 `trading_calendar` 表。
 

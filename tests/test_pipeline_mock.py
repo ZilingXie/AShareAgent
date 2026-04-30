@@ -1,13 +1,87 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 
+from ashare_agent.domain import (
+    Asset,
+    MarketBar,
+    PaperPosition,
+    PipelineRunContext,
+    PortfolioSnapshot,
+)
 from ashare_agent.llm.mock import MockLLMClient
 from ashare_agent.pipeline import ASharePipeline, build_mock_pipeline
 from ashare_agent.providers.base import DataProviderError
 from ashare_agent.providers.mock import MockProvider
 from ashare_agent.repository import InMemoryRepository
+
+
+class ExitScenarioProvider(MockProvider):
+    def __init__(
+        self,
+        *,
+        close: Decimal,
+        calendar_start: date,
+        calendar_days: int,
+    ) -> None:
+        super().__init__([Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")])
+        self._close = close
+        self._calendar = [calendar_start + timedelta(days=idx) for idx in range(calendar_days)]
+
+    def get_market_bars(self, trade_date: date, lookback_days: int = 30) -> list[MarketBar]:
+        return [
+            MarketBar(
+                symbol="510300",
+                trade_date=trade_date - timedelta(days=lookback_days - 1 - idx),
+                open=self._close,
+                high=self._close,
+                low=self._close,
+                close=self._close,
+                volume=1_000_000,
+                amount=self._close * Decimal("1000000"),
+                source="test",
+            )
+            for idx in range(lookback_days)
+        ]
+
+    def get_trade_calendar(self) -> list[date]:
+        return list(self._calendar)
+
+
+def _seed_open_position(
+    repository: InMemoryRepository,
+    *,
+    opened_at: date,
+    trade_date: date,
+    current_price: Decimal,
+    entry_price: Decimal = Decimal("100"),
+) -> None:
+    context = PipelineRunContext(trade_date=opened_at, run_id=f"seed-{opened_at.isoformat()}")
+    repository.save_paper_positions(
+        context,
+        [
+            PaperPosition(
+                symbol="510300",
+                opened_at=opened_at,
+                quantity=100,
+                entry_price=entry_price,
+                current_price=current_price,
+                status="open",
+            )
+        ],
+    )
+    repository.save_portfolio_snapshot(
+        PipelineRunContext(trade_date=trade_date, run_id=f"snapshot-{trade_date.isoformat()}"),
+        PortfolioSnapshot(
+            trade_date=trade_date,
+            cash=Decimal("90000"),
+            market_value=current_price * Decimal("100"),
+            total_value=Decimal("90000") + current_price * Decimal("100"),
+            open_positions=1,
+        ),
+    )
 
 
 def test_mock_pipeline_runs_pre_market_and_post_market_with_audit_outputs(tmp_path: Path) -> None:
@@ -77,6 +151,99 @@ def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) ->
     repeat_pipeline.run_post_market_review(trade_date)
 
     assert len(repository.records_for("paper_orders")) == len(first_orders)
+
+
+def test_pipeline_closes_position_on_stop_loss(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 30)
+    repository = InMemoryRepository()
+    _seed_open_position(
+        repository,
+        opened_at=date(2026, 4, 29),
+        trade_date=trade_date,
+        current_price=Decimal("100"),
+    )
+    pipeline = ASharePipeline(
+        provider=ExitScenarioProvider(
+            close=Decimal("94"),
+            calendar_start=date(2026, 4, 29),
+            calendar_days=2,
+        ),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_post_market_review(trade_date)
+
+    sell_orders = [
+        row["payload"]
+        for row in repository.records_for("paper_orders")
+        if row["payload"]["side"] == "sell"
+    ]
+    positions = repository.records_for("paper_positions")
+    assert sell_orders
+    assert sell_orders[0]["is_real_trade"] is False
+    assert positions[-1]["payload"]["status"] == "closed"
+    assert positions[-1]["payload"]["closed_at"] == trade_date.isoformat()
+
+
+def test_pipeline_rejects_t_plus_one_stop_loss_sell(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    _seed_open_position(
+        repository,
+        opened_at=trade_date,
+        trade_date=trade_date,
+        current_price=Decimal("100"),
+    )
+    pipeline = ASharePipeline(
+        provider=ExitScenarioProvider(
+            close=Decimal("94"),
+            calendar_start=trade_date,
+            calendar_days=1,
+        ),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_post_market_review(trade_date)
+
+    assert repository.records_for("paper_orders") == []
+    assert repository.records_for("paper_positions")[-1]["payload"]["status"] == "open"
+
+
+def test_pipeline_closes_position_after_max_holding_days(tmp_path: Path) -> None:
+    opened_at = date(2026, 4, 1)
+    trade_date = date(2026, 4, 11)
+    repository = InMemoryRepository()
+    _seed_open_position(
+        repository,
+        opened_at=opened_at,
+        trade_date=trade_date,
+        current_price=Decimal("100"),
+    )
+    pipeline = ASharePipeline(
+        provider=ExitScenarioProvider(
+            close=Decimal("101"),
+            calendar_start=opened_at,
+            calendar_days=11,
+        ),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_post_market_review(trade_date)
+
+    sell_orders = [
+        row["payload"]
+        for row in repository.records_for("paper_orders")
+        if row["payload"]["side"] == "sell"
+    ]
+    assert sell_orders
+    assert "到期" in sell_orders[0]["reason"]
+    assert repository.records_for("paper_positions")[-1]["payload"]["status"] == "closed"
 
 
 def test_pipeline_records_required_source_failure_before_raising(tmp_path: Path) -> None:

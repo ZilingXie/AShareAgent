@@ -1,6 +1,6 @@
 # AShareAgent 安全边界
 
-当前状态：已落地 Mock pipeline 和 PaperTrader。本文记录项目必须长期遵守的交易和数据安全边界。
+当前状态：已落地 Mock pipeline、真实数据入口和完整 PaperTrader 模拟持仓生命周期。本文记录项目必须长期遵守的交易和数据安全边界。
 
 ## 交易边界
 
@@ -12,6 +12,8 @@
 - 真实交易能力不进入 v1；未来如果需要讨论，必须先做单独安全设计。
 - 当前代码不包含 broker、real order 或 live trading 模块。
 - `PaperOrder.is_real_trade` 必须始终为 `False`。
+- `PaperTrader` 只允许生成模拟订单；卖出同样只写入 `paper_orders` 和 `paper_positions`，不接任何真实交易通道。
+- 当前默认退出规则为 T+1、止损 5%、趋势走弱、最多持有 10 个交易日；止损可在 T+1 后突破最少持有 2 个交易日限制。
 
 ## 数据边界
 

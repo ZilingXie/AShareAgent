@@ -4,6 +4,7 @@ from datetime import date
 from decimal import ROUND_DOWN, Decimal
 
 from ashare_agent.domain import (
+    ExitDecision,
     MarketBar,
     PaperOrder,
     PaperPosition,
@@ -33,14 +34,20 @@ class PaperTrader:
         trade_date: date,
         decisions: list[RiskDecision],
         bars: list[MarketBar],
+        existing_orders: list[PaperOrder] | None = None,
     ) -> PaperTradeResult:
         latest_bars = {bar.symbol: bar for bar in sorted(bars, key=lambda item: item.trade_date)}
         new_orders: list[PaperOrder] = []
         open_symbols = {position.symbol for position in self.open_positions()}
+        existing_order_keys = {
+            (order.trade_date, order.symbol, order.side) for order in (existing_orders or [])
+        }
         for decision in decisions:
             if not decision.approved or decision.signal_action != "paper_buy":
                 continue
             if decision.symbol in open_symbols:
+                continue
+            if (trade_date, decision.symbol, "buy") in existing_order_keys:
                 continue
             bar = latest_bars.get(decision.symbol)
             if bar is None:
@@ -81,7 +88,55 @@ class PaperTrader:
                 )
             )
             open_symbols.add(decision.symbol)
-        return PaperTradeResult(cash=self.cash, orders=new_orders, positions=self.open_positions())
+        return PaperTradeResult(cash=self.cash, orders=new_orders, positions=list(self.positions))
+
+    def apply_exit_decisions(
+        self,
+        trade_date: date,
+        decisions: list[ExitDecision],
+        bars: list[MarketBar],
+        existing_orders: list[PaperOrder] | None = None,
+    ) -> PaperTradeResult:
+        latest_bars = {bar.symbol: bar for bar in sorted(bars, key=lambda item: item.trade_date)}
+        existing_order_keys = {
+            (order.trade_date, order.symbol, order.side) for order in (existing_orders or [])
+        }
+        positions_by_symbol = {position.symbol: position for position in self.open_positions()}
+        new_orders: list[PaperOrder] = []
+        for decision in decisions:
+            if not decision.approved or decision.exit_reason is None:
+                continue
+            if (trade_date, decision.symbol, "sell") in existing_order_keys:
+                continue
+            position = positions_by_symbol.get(decision.symbol)
+            if position is None:
+                continue
+            bar = latest_bars.get(decision.symbol)
+            if bar is None:
+                continue
+            price = (bar.close * (Decimal("1") - self.slippage_pct)).quantize(Decimal("0.0001"))
+            amount = (price * Decimal(position.quantity)).quantize(Decimal("0.01"))
+            order = PaperOrder(
+                order_id=f"paper-{trade_date.isoformat()}-{decision.symbol}-sell",
+                symbol=decision.symbol,
+                trade_date=trade_date,
+                side="sell",
+                quantity=position.quantity,
+                price=price,
+                amount=amount,
+                slippage=self.slippage_pct,
+                reason=";".join(decision.reasons),
+                is_real_trade=False,
+            )
+            self.cash += amount
+            position.current_price = bar.close
+            position.status = "closed"
+            position.closed_at = trade_date
+            position.exit_price = price
+            self.orders.append(order)
+            new_orders.append(order)
+            existing_order_keys.add((trade_date, decision.symbol, "sell"))
+        return PaperTradeResult(cash=self.cash, orders=new_orders, positions=list(self.positions))
 
     def mark_to_market(self, bars: list[MarketBar]) -> None:
         latest_bars = {bar.symbol: bar for bar in sorted(bars, key=lambda item: item.trade_date)}

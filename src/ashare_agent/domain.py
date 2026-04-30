@@ -11,6 +11,7 @@ RegimeStatus = Literal["risk_on", "neutral", "risk_off"]
 SignalAction = Literal["observe", "paper_buy", "paper_sell"]
 OrderSide = Literal["buy", "sell"]
 PositionStatus = Literal["open", "closed"]
+ExitReason = Literal["stop_loss", "trend_weakness", "max_holding_days"]
 
 
 def now_utc() -> datetime:
@@ -23,6 +24,10 @@ def empty_str_list() -> list[str]:
 
 def empty_dict() -> dict[str, Any]:
     return {}
+
+
+def empty_date_list() -> list[date]:
+    return []
 
 
 @dataclass(frozen=True)
@@ -126,6 +131,7 @@ class MarketDataset:
     industry_snapshots: list[IndustrySnapshot]
     source_snapshots: list[SourceSnapshot]
     trade_calendar: TradingCalendarSnapshot | None = None
+    trade_calendar_dates: list[date] = field(default_factory=empty_date_list)
 
 
 @dataclass(frozen=True)
@@ -205,6 +211,15 @@ class RiskDecision:
     approved: bool
     reasons: list[str]
     target_position_pct: Decimal = Decimal("0")
+
+
+@dataclass(frozen=True)
+class ExitDecision:
+    symbol: str
+    trade_date: date
+    approved: bool
+    reasons: list[str]
+    exit_reason: ExitReason | None = None
 
 
 @dataclass(frozen=True)

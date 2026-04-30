@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-真实数据 DataCollector 接入已完成，当前在 `codex/akshare-market-bars-fix` 修复 AKShare 行情外部验收。
+真实数据 DataCollector 和模拟持仓完整生命周期已完成，当前 `main` 可继续进入 dashboard 或策略参数硬化。
 
 ## 上次停在哪
 
@@ -18,6 +18,7 @@
 - 已修复真实行情路径：ETF 日线改用 AKShare `fund_etf_hist_sina`，A 股日线改用 `stock_zh_a_daily`。
 - 已跑通 `uv run pytest -m external`，并用 `ASHARE_PROVIDER=akshare`、`ASHARE_LLM_PROVIDER=mock` 跑通 `pre-market --trade-date 2026-04-29`。
 - 已确认真实 PostgreSQL 中本次 AKShare run 写入 `raw_source_snapshots=7`、`market_bars=90`、`technical_indicators=3`，且 `public` / `supportportal` schema 未新增 AShareAgent 业务表。
+- 已实现 RiskManager/PaperTrader 的模拟持仓生命周期：T+1、涨跌停、单日最大亏损、止损、趋势走弱、最多持有 10 个交易日、sell order 和 closed position 落库。
 
 ## 近期关键决定和原因
 
@@ -28,6 +29,8 @@
 - 本地数据库复用共享 PostgreSQL，但 AShareAgent 只使用 `ashare_agent` schema 和 `ashare_agent.alembic_version`，不在 `public` 或 `supportportal` schema 建业务表。
 - 真实公开源下 `universe`、`market_bars`、`trade_calendar` 是必需源；失败时流程明确失败，不能自动切回 Mock。
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
+- 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
+- PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
 - 交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 - 前端 dashboard 放到第二阶段，第一版只做 CLI 和 Markdown 报告。
 - 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动提交 task 分支并合并回 `main`。
@@ -35,4 +38,4 @@
 
 ## 下一步
 
-- 下一步进入 RiskManager + PaperTrader 强化：T+1、涨跌停风险、单日最大亏损、持有期、止损/趋势走弱/到期卖出，以及 sell order 和 closed position 落库。
+- 下一步可继续补 dashboard 只读观察台，或扩展策略参数版本与更细的数据质量检查。

@@ -29,6 +29,7 @@ from ashare_agent.domain import (
     LLMAnalysis,
     MarketBar,
     NewsItem,
+    OrderSide,
     PaperOrder,
     PaperPosition,
     PipelineRunContext,
@@ -159,6 +160,31 @@ def _paper_position_from_payload(payload: Mapping[str, object]) -> PaperPosition
     )
 
 
+def _paper_order_from_payload(payload: Mapping[str, object]) -> PaperOrder:
+    return PaperOrder(
+        order_id=str(payload["order_id"]),
+        symbol=str(payload["symbol"]),
+        trade_date=_date_value(payload["trade_date"]),
+        side=cast(OrderSide, payload["side"]),
+        quantity=int(str(payload["quantity"])),
+        price=_decimal_value(payload["price"]),
+        amount=_decimal_value(payload["amount"]),
+        slippage=_decimal_value(payload["slippage"]),
+        reason=str(payload["reason"]),
+        is_real_trade=bool(payload.get("is_real_trade", False)),
+    )
+
+
+def _portfolio_snapshot_from_payload(payload: Mapping[str, object]) -> PortfolioSnapshot:
+    return PortfolioSnapshot(
+        trade_date=_date_value(payload["trade_date"]),
+        cash=_decimal_value(payload["cash"]),
+        market_value=_decimal_value(payload["market_value"]),
+        total_value=_decimal_value(payload["total_value"]),
+        open_positions=int(str(payload["open_positions"])),
+    )
+
+
 class PipelineRepository(Protocol):
     def save_artifact(self, trade_date: date, artifact_type: str, payload: dict[str, Any]) -> None:
         ...
@@ -248,7 +274,11 @@ class PipelineRepository(Protocol):
 
     def load_open_positions(self) -> list[PaperPosition]: ...
 
+    def load_paper_orders(self, trade_date: date | None = None) -> list[PaperOrder]: ...
+
     def load_latest_cash(self, default_cash: Decimal) -> Decimal: ...
+
+    def load_latest_portfolio_snapshot(self) -> PortfolioSnapshot | None: ...
 
 
 class RepositoryBase:
@@ -481,12 +511,24 @@ class RepositoryBase:
             if payload.get("status") == "open"
         ]
 
+    def load_paper_orders(self, trade_date: date | None = None) -> list[PaperOrder]:
+        return [
+            _paper_order_from_payload(cast(Mapping[str, object], row["payload"]))
+            for row in self._rows("paper_orders", trade_date=trade_date)
+        ]
+
     def load_latest_cash(self, default_cash: Decimal) -> Decimal:
         rows = self._rows("portfolio_snapshots")
         if not rows:
             return default_cash
         payload = cast(Mapping[str, object], rows[-1]["payload"])
         return _decimal_value(payload.get("cash", default_cash))
+
+    def load_latest_portfolio_snapshot(self) -> PortfolioSnapshot | None:
+        rows = self._rows("portfolio_snapshots")
+        if not rows:
+            return None
+        return _portfolio_snapshot_from_payload(cast(Mapping[str, object], rows[-1]["payload"]))
 
     def _latest_successful_run_id(self, trade_date: date, stage: str) -> str | None:
         latest_run_id: str | None = None

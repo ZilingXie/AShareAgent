@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema 和核心持久化接线。前端观察台尚未开始。
+当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema、核心持久化接线和模拟持仓生命周期。前端观察台尚未开始。
 
 ## 目标架构
 
@@ -33,7 +33,8 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 - 本地开发复用现有 Podman PostgreSQL 容器 `deployment_local_postgres_1` 的 `supportportal` 数据库；AShareAgent 只使用独立 `ashare_agent` schema。
 - PostgreSQL 通过 Alembic 创建 `ashare_agent` schema、`ashare_agent.alembic_version` 和业务表；DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 已写入专表。
 - 交易日历本轮不建结构化专表，只作为 `raw_source_snapshots` 的 `trade_calendar` 采集快照记录。
-- `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策和已有开放持仓，用于跨 CLI 命令的连续模拟交易基础。
+- `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有订单，执行买入、盯市、退出评估、卖出、closed position 落库和复盘。
+- `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`。
 - Streamlit/React dashboard 放到第二阶段，第一阶段只输出 Markdown 报告。
 - 模块边界发生变化时，同步更新本文件。
 

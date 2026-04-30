@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / PostgreSQL Persistence`
+当前状态：`Foundation MVP / Real DataCollector / PostgreSQL Persistence / Paper Trading Lifecycle`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -26,7 +26,7 @@
 - 使用 AKShare provider 接入固定 ETF/大盘股池的真实公开数据。
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
-- 在收盘后生成复盘结果、策略统计和错误归因。
+- 在收盘后完成模拟买卖、持仓状态更新、复盘结果和错误归因。
 
 ## 模块设计
 
@@ -85,6 +85,8 @@ AShareAgent
 - `RiskManager`：负责所有交易前风险过滤和仓位约束，是模拟交易前的强制门禁。
 - `PaperTrader`：负责模拟成交、持仓、滑点和资金曲线，不接真实交易通道。
 - `ReviewAgent`：负责复盘、统计、错误归因和参数调整建议，不直接修改生产策略参数。
+
+当前默认风控参数固定在代码中：单日最大亏损 2%、止损 5%、涨跌停阈值 9.8%、最少持有 2 个交易日、最多持有 10 个交易日。止损在 T+1 后可优先触发；趋势走弱和到期卖出必须满足最少持有期。
 
 ## 工程原则
 
@@ -246,6 +248,8 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 本地开发复用现有 Podman PostgreSQL：容器 `deployment_local_postgres_1`，宿主端口 `15432`，数据库 `supportportal`，用户 `supportportal`。迁移只创建 `ashare_agent` schema、本项目表和 `ashare_agent.alembic_version`，不主动删除已有对象，也不在 `public` 或 `supportportal` schema 建业务表。若 `ashare_agent` schema 已存在但缺少 `ashare_agent.alembic_version`，迁移会停止并要求先人工确认。
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
+
+`post-market-review` 会从数据库恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。卖出订单写入 `paper_orders`，closed position 写入 `paper_positions`；重复运行同一交易日不会重复买入或卖出。
 
 ## 文档导航
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,17 @@ class ASharePipeline:
         self._last_dataset: MarketDataset | None = None
         self._last_signal_result: SignalResult | None = None
         self._last_risk_decisions: list[RiskDecision] = []
+
+    def _restore_trader_state(self) -> None:
+        if not self.trader.positions:
+            self.trader.positions = self.repository.load_open_positions()
+        self.trader.cash = self.repository.load_latest_cash(default_cash=self.trader.cash)
+
+    def _current_total_value(self) -> Decimal:
+        return self.trader.cash + sum(
+            (position.market_value for position in self.trader.open_positions()),
+            start=Decimal("0"),
+        )
 
     def _save_dataset(self, context: PipelineRunContext, dataset: MarketDataset) -> None:
         self.repository.save_universe_assets(context, dataset.assets)
@@ -115,11 +127,18 @@ class ASharePipeline:
             events=events,
             regime=regime,
         )
+        self._restore_trader_state()
+        self.trader.mark_to_market(dataset.bars)
+        latest_snapshot = self.repository.load_latest_portfolio_snapshot()
+        previous_total_value = latest_snapshot.total_value if latest_snapshot is not None else None
         decisions = self.risk_manager.evaluate(
             trade_date=trade_date,
             signals=signal_result.signals,
             open_positions=self.trader.open_positions(),
             cash=self.trader.cash,
+            bars=dataset.bars,
+            previous_total_value=previous_total_value,
+            current_total_value=self._current_total_value(),
         )
         llm_analysis = self.llm_client.analyze_pre_market(
             trade_date=trade_date,
@@ -202,15 +221,29 @@ class ASharePipeline:
         decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
             trade_date
         )
-        if not self.trader.positions:
-            self.trader.positions = self.repository.load_open_positions()
-        self.trader.cash = self.repository.load_latest_cash(default_cash=self.trader.cash)
-        trade_result = self.trader.apply_pre_market_decisions(
+        self._restore_trader_state()
+        existing_orders = self.repository.load_paper_orders(trade_date)
+        buy_result = self.trader.apply_pre_market_decisions(
             trade_date=trade_date,
             decisions=decisions,
             bars=dataset.bars,
+            existing_orders=existing_orders,
         )
         self.trader.mark_to_market(dataset.bars)
+        indicators = calculate_indicators(trade_date=trade_date, bars=dataset.bars)
+        exit_decisions = self.risk_manager.evaluate_exits(
+            trade_date=trade_date,
+            open_positions=self.trader.open_positions(),
+            indicators=indicators,
+            trade_calendar=dataset.trade_calendar_dates,
+        )
+        sell_result = self.trader.apply_exit_decisions(
+            trade_date=trade_date,
+            decisions=exit_decisions,
+            bars=dataset.bars,
+            existing_orders=existing_orders + buy_result.orders,
+        )
+        orders = buy_result.orders + sell_result.orders
         snapshot, report = self.review_agent.review(
             trade_date=trade_date,
             cash=self.trader.cash,
@@ -228,14 +261,14 @@ class ASharePipeline:
         )
         payload: dict[str, Any] = {
             "run_id": context.run_id,
-            "orders": _to_dict_list(trade_result.orders),
-            "positions": _to_dict_list(self.trader.open_positions()),
+            "orders": _to_dict_list(orders),
+            "positions": _to_dict_list(self.trader.positions),
             "portfolio": asdict(snapshot),
             "review": asdict(report),
             "report_path": f"paper:{report_path}",
         }
-        self.repository.save_paper_orders(context, trade_result.orders)
-        self.repository.save_paper_positions(context, self.trader.open_positions())
+        self.repository.save_paper_orders(context, orders)
+        self.repository.save_paper_positions(context, self.trader.positions)
         self.repository.save_portfolio_snapshot(context, snapshot)
         self.repository.save_review_report(context, report)
         self.repository.save_artifact(trade_date, "post_market_review", payload)
@@ -245,7 +278,7 @@ class ASharePipeline:
             "success",
             {
                 "report_path": str(report_path),
-                "order_count": len(trade_result.orders),
+                "order_count": len(orders),
                 "open_positions": snapshot.open_positions,
             },
         )

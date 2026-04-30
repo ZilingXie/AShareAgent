@@ -1,0 +1,15 @@
+version: "strategy-params-v1"
+risk:
+  max_positions: 5
+  target_position_pct: "0.10"
+  min_cash: "100"
+  max_daily_loss_pct: "0.02"
+  stop_loss_pct: "0.05"
+  price_limit_pct: "0.098"
+  min_holding_trade_days: 2
+  max_holding_trade_days: 10
+  blacklist: []
+paper_trader:
+  initial_cash: "100000"
+  position_size_pct: "0.10"
+  slippage_pct: "0.001"

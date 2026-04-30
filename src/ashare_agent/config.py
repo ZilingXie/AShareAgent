@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     provider: str = Field(default="mock", alias="ASHARE_PROVIDER")
     llm_provider: str = Field(default="mock", alias="ASHARE_LLM_PROVIDER")
     report_root: Path = Field(default=Path("reports"), alias="ASHARE_REPORT_ROOT")
+    strategy_params_config: Path = Field(
+        default=Path("configs/strategy_params.yml"),
+        alias="ASHARE_STRATEGY_PARAMS_CONFIG",
+    )
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
     enable_deepseek: bool = Field(default=False, alias="ASHARE_ENABLE_DEEPSEEK")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")

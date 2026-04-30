@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from ashare_agent.agents.strategy_params_agent import StrategyParamsAgent
 from ashare_agent.config import load_settings, load_universe
 from ashare_agent.llm.factory import create_llm_client
 from ashare_agent.pipeline import ASharePipeline
@@ -41,6 +42,10 @@ def _build_pipeline() -> ASharePipeline:
     if not settings.database_url:
         raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
     provider, required_data_sources = _build_provider(settings.provider)
+    try:
+        strategy_params = StrategyParamsAgent(Path(settings.strategy_params_config)).load()
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(f"无法加载策略参数配置: {exc}") from exc
     return ASharePipeline(
         provider=provider,
         llm_client=create_llm_client(
@@ -52,6 +57,7 @@ def _build_pipeline() -> ASharePipeline:
         ),
         report_root=Path(settings.report_root),
         repository=PostgresRepository(settings.database_url),
+        strategy_params=strategy_params,
         required_data_sources=required_data_sources,
     )
 

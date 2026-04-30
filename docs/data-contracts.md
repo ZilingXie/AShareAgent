@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、PostgreSQL 初始 schema、核心 pipeline 持久化、DashboardQueryAgent 只读 DTO 契约和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、PostgreSQL 初始 schema、核心 pipeline 持久化、策略参数版本审计、DashboardQueryAgent 只读 DTO 契约和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -23,6 +23,7 @@
 - 股票代码或市场标识。
 - 决策原因。
 - 失败原因或排除原因。
+- 策略参数版本和参数快照。
 
 ## 核心模型
 
@@ -37,6 +38,13 @@
 ## 公告分析规则契约
 
 `AnnouncementAnalyzer` 保持输出 `AnnouncementEvent`，不新增运行时字段或数据库表。当前规则用标题和来源分类做可解释判断：分红归为 `distribution`，减持归为 `share_reduction`，诉讼归为 `litigation`，处罚或立案归为 `penalty`，资产重组归为 `restructuring`，风险提示、退市或亏损风险归为 `risk`。减持、诉讼、处罚和风险提示默认作为排除类负面事件；资产重组默认重大，情绪仍由标题关键词决定。固定样本放在 `tests/fixtures/announcement_golden_cases.yml`，每条样本用 `case_id` 追踪误判。
+
+## 策略参数契约
+
+默认策略参数配置位于 `configs/strategy_params.yml`，由 `StrategyParamsAgent` 加载和校验。配置必须包含显式 `version`、`risk` 和 `paper_trader` 两组参数。百分比字段必须在 0 到 1 之间，最多持有交易日不能小于最少持有交易日。每次 `pipeline_runs.payload` 必须写入：
+
+- `strategy_params_version`：本次运行使用的配置版本。
+- `strategy_params_snapshot`：JSON-safe 完整参数快照，Decimal 以字符串保存，黑名单以排序列表保存。
 
 ## PostgreSQL schema
 
@@ -63,7 +71,7 @@ Alembic 初始迁移创建以下表分组：
 - `review_reports`
 - `artifacts`
 
-当前 repository 已将核心运行结果写入专表：
+当前 repository 已将核心运行结果写入专表，`pipeline_runs.payload` 额外保存策略参数版本和完整参数快照，不新增数据库列：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`market_bars`、`announcements`、`news_items`、`policy_items`、`technical_indicators`，再写入 `pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
 - `intraday-watch` 写入 `pipeline_runs` 和 `artifacts`。

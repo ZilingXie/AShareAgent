@@ -11,11 +11,36 @@ from ashare_agent.providers.mock import MockProvider
 from ashare_agent.repository import InMemoryRepository
 
 
+def _write_strategy_params(path: Path, *, stop_loss_pct: str = "0.05") -> None:
+    path.write_text(
+        f"""
+version: "cli-test-params"
+risk:
+  max_positions: 5
+  target_position_pct: "0.10"
+  min_cash: "100"
+  max_daily_loss_pct: "0.02"
+  stop_loss_pct: "{stop_loss_pct}"
+  price_limit_pct: "0.098"
+  min_holding_trade_days: 2
+  max_holding_trade_days: 10
+  blacklist: []
+paper_trader:
+  initial_cash: "100000"
+  position_size_pct: "0.10"
+  slippage_pct: "0.001"
+""",
+        encoding="utf-8",
+    )
+
+
 def test_cli_pre_market_writes_markdown_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     created_database_urls: list[str] = []
+    strategy_config = tmp_path / "strategy_params.yml"
+    _write_strategy_params(strategy_config)
 
     class FakePostgresRepository(InMemoryRepository):
         def __init__(self, database_url: str) -> None:
@@ -25,6 +50,7 @@ def test_cli_pre_market_writes_markdown_report(
     monkeypatch.setenv("ASHARE_PROVIDER", "mock")
     monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
     monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path))
+    monkeypatch.setenv("ASHARE_STRATEGY_PARAMS_CONFIG", str(strategy_config))
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
     monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
     runner = CliRunner()
@@ -60,6 +86,7 @@ def test_cli_pre_market_supports_akshare_provider(
 ) -> None:
     config_dir = tmp_path / "configs"
     config_dir.mkdir()
+    _write_strategy_params(config_dir / "strategy_params.yml")
     (config_dir / "universe.yml").write_text(
         """
 assets:
@@ -97,6 +124,35 @@ assets:
 
     assert result.exit_code == 0
     assert created_symbols == ["510300"]
+
+
+def test_cli_strategy_params_config_env_controls_pipeline_params(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_repositories: list[InMemoryRepository] = []
+    strategy_config = tmp_path / "custom_strategy_params.yml"
+    _write_strategy_params(strategy_config, stop_loss_pct="0.11")
+
+    class FakePostgresRepository(InMemoryRepository):
+        def __init__(self, database_url: str) -> None:
+            super().__init__()
+            created_repositories.append(self)
+
+    monkeypatch.setenv("ASHARE_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("ASHARE_STRATEGY_PARAMS_CONFIG", str(strategy_config))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["pre-market", "--trade-date", "2026-04-29"])
+
+    assert result.exit_code == 0
+    run_payload = created_repositories[0].records_for("pipeline_runs")[-1]["payload"]
+    assert run_payload["strategy_params_version"] == "cli-test-params"
+    assert run_payload["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.11"
 
 
 def test_cli_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:

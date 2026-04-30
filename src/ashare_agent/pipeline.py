@@ -13,6 +13,7 @@ from ashare_agent.agents.paper_trader import PaperTrader
 from ashare_agent.agents.review_agent import ReviewAgent
 from ashare_agent.agents.risk_manager import RiskManager
 from ashare_agent.agents.signal_engine import SignalEngine
+from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyParamsAgent
 from ashare_agent.domain import (
     AgentResult,
     MarketDataset,
@@ -41,14 +42,32 @@ class ASharePipeline:
         report_root: Path,
         repository: PipelineRepository | None = None,
         trader: PaperTrader | None = None,
+        strategy_params: StrategyParams | None = None,
         required_data_sources: set[str] | None = None,
     ) -> None:
+        self.strategy_params = strategy_params or StrategyParamsAgent(
+            Path("configs/strategy_params.yml")
+        ).load()
         self.collector = DataCollector(provider)
         self.announcement_analyzer = AnnouncementAnalyzer()
         self.market_regime_analyzer = MarketRegimeAnalyzer()
         self.signal_engine = SignalEngine()
-        self.risk_manager = RiskManager()
-        self.trader = trader or PaperTrader()
+        self.risk_manager = RiskManager(
+            max_positions=self.strategy_params.risk.max_positions,
+            target_position_pct=self.strategy_params.risk.target_position_pct,
+            blacklist=self.strategy_params.risk.blacklist,
+            min_cash=self.strategy_params.risk.min_cash,
+            max_daily_loss_pct=self.strategy_params.risk.max_daily_loss_pct,
+            stop_loss_pct=self.strategy_params.risk.stop_loss_pct,
+            price_limit_pct=self.strategy_params.risk.price_limit_pct,
+            min_holding_trade_days=self.strategy_params.risk.min_holding_trade_days,
+            max_holding_trade_days=self.strategy_params.risk.max_holding_trade_days,
+        )
+        self.trader = trader or PaperTrader(
+            initial_cash=self.strategy_params.paper_trader.initial_cash,
+            position_size_pct=self.strategy_params.paper_trader.position_size_pct,
+            slippage_pct=self.strategy_params.paper_trader.slippage_pct,
+        )
         self.review_agent = ReviewAgent()
         self.llm_client = llm_client
         self.report_root = report_root
@@ -57,6 +76,12 @@ class ASharePipeline:
         self._last_dataset: MarketDataset | None = None
         self._last_signal_result: SignalResult | None = None
         self._last_risk_decisions: list[RiskDecision] = []
+
+    def _strategy_params_payload(self) -> dict[str, Any]:
+        return {
+            "strategy_params_version": self.strategy_params.version,
+            "strategy_params_snapshot": self.strategy_params.snapshot(),
+        }
 
     def _restore_trader_state(self) -> None:
         if not self.trader.positions:
@@ -102,6 +127,7 @@ class ASharePipeline:
         payload = {
             "run_id": context.run_id,
             "failure_reason": f"必需数据源失败: {required_failure}",
+            **self._strategy_params_payload(),
         }
         self.repository.save_artifact(context.trade_date, f"{stage}_failed", payload)
         self.repository.save_pipeline_run(
@@ -182,6 +208,7 @@ class ASharePipeline:
                 "watchlist_count": len(signal_result.watchlist),
                 "signal_count": len(signal_result.signals),
                 "risk_decision_count": len(decisions),
+                **self._strategy_params_payload(),
             },
         )
         self._last_dataset = dataset
@@ -206,7 +233,11 @@ class ASharePipeline:
             context,
             "intraday_watch",
             "success",
-            {"report_path": str(report_path), "real_trading": False},
+            {
+                "report_path": str(report_path),
+                "real_trading": False,
+                **self._strategy_params_payload(),
+            },
         )
         return AgentResult(name="intraday_watch", success=True, payload=payload)
 
@@ -280,6 +311,7 @@ class ASharePipeline:
                 "report_path": str(report_path),
                 "order_count": len(orders),
                 "open_positions": snapshot.open_positions,
+                **self._strategy_params_payload(),
             },
         )
         return AgentResult(name="post_market_review", success=True, payload=payload)

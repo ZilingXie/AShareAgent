@@ -400,6 +400,49 @@ def test_pipeline_records_data_quality_failure_before_raising(tmp_path: Path) ->
     assert "数据质量检查失败" in latest_run["failure_reason"]
 
 
+def test_daily_run_records_reliability_report_after_success(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    pipeline = build_mock_pipeline(report_root=tmp_path)
+
+    result = pipeline.run_daily(trade_date)
+
+    assert result.success is True
+    repository = pipeline.repository
+    assert isinstance(repository, InMemoryRepository)
+    assert repository.records_for("data_reliability_reports")
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "daily_run"
+    assert latest_run["status"] == "success"
+
+
+def test_daily_run_records_failed_reliability_report_before_raising(tmp_path: Path) -> None:
+    class BrokenMarketProvider(MockProvider):
+        def get_market_bars(self, trade_date: date, lookback_days: int = 30):  # type: ignore[no-untyped-def]
+            raise DataProviderError("行情接口失败")
+
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=BrokenMarketProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+        required_data_sources={"market_bars"},
+    )
+
+    try:
+        pipeline.run_daily(trade_date)
+    except DataProviderError as exc:
+        assert "market_bars" in str(exc) or "数据质量检查失败" in str(exc)
+    else:
+        raise AssertionError("daily-run 遇到质量失败必须抛错")
+
+    assert repository.records_for("data_reliability_reports")
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "daily_run"
+    assert latest_run["status"] == "failed"
+
+
 def test_post_market_records_required_source_failure_before_raising(tmp_path: Path) -> None:
     class BrokenMarketProvider(MockProvider):
         def get_market_bars(self, trade_date: date, lookback_days: int = 30):  # type: ignore[no-untyped-def]

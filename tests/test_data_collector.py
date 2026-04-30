@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from ashare_agent.agents.data_collector import DataCollector
+from ashare_agent.domain import Asset
 from ashare_agent.providers.base import DataProviderError
 from ashare_agent.providers.mock import MockProvider
 
@@ -20,6 +21,25 @@ def test_data_collector_records_trade_calendar_snapshot() -> None:
     assert calendar_snapshot.metadata["includes_trade_date"] is True
     assert dataset.trade_calendar is not None
     assert dataset.trade_calendar.is_trade_date is True
+
+
+def test_data_collector_expands_structured_trade_calendar_days() -> None:
+    class SparseCalendarProvider(MockProvider):
+        def __init__(self) -> None:
+            super().__init__([Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")])
+
+        def get_trade_calendar(self) -> list[date]:
+            return [date(2026, 4, 27), date(2026, 4, 29)]
+
+    dataset = DataCollector(SparseCalendarProvider()).collect(date(2026, 4, 28))
+
+    assert [(row.calendar_date, row.is_trade_date) for row in dataset.trade_calendar_days] == [
+        (date(2026, 4, 27), True),
+        (date(2026, 4, 28), False),
+        (date(2026, 4, 29), True),
+    ]
+    assert dataset.trade_calendar is not None
+    assert dataset.trade_calendar.is_trade_date is False
 
 
 def test_data_collector_keeps_required_source_failure_snapshot() -> None:

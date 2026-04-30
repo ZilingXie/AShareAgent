@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
 from ashare_agent.agents.review_metrics_agent import ReviewMetricsAgent
+from ashare_agent.domain import TradingCalendarDay
 from ashare_agent.repository import PayloadRecord
 
 
@@ -18,6 +19,12 @@ class DashboardQueryRepository(Protocol):
         trade_date: date | None = None,
         run_id: str | None = None,
     ) -> list[PayloadRecord]: ...
+
+    def trading_calendar_days(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[TradingCalendarDay]: ...
 
 
 @dataclass(frozen=True)
@@ -167,6 +174,62 @@ class DashboardDataQualityReport:
 
 
 @dataclass(frozen=True)
+class DashboardTradingCalendarDay:
+    trade_date: str
+    is_trade_date: bool
+    source: str
+    collected_at: str | None
+
+
+@dataclass(frozen=True)
+class DashboardDataReliabilityIssue:
+    severity: str
+    check_name: str
+    source: str | None
+    symbol: str | None
+    message: str
+    metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class DashboardDataSourceHealth:
+    source: str
+    status: str
+    total_snapshots: int
+    failed_snapshots: int
+    empty_snapshots: int
+    row_count: int
+    failure_rate: float
+    last_failure_reason: str | None
+    required: bool
+
+
+@dataclass(frozen=True)
+class DashboardMarketBarGap:
+    symbol: str
+    missing_dates: list[str]
+    missing_count: int
+
+
+@dataclass(frozen=True)
+class DashboardDataReliabilityReport:
+    run_id: str
+    trade_date: str
+    status: str
+    is_trade_date: bool | None
+    lookback_trade_days: int
+    total_sources: int
+    failed_source_count: int
+    empty_source_count: int
+    source_failure_rate: float
+    missing_market_bar_count: int
+    source_health: list[DashboardDataSourceHealth]
+    market_bar_gaps: list[DashboardMarketBarGap]
+    issues: list[DashboardDataReliabilityIssue]
+    created_at: str | None
+
+
+@dataclass(frozen=True)
 class DashboardTrendPoint:
     trade_date: str
     total_value: str | None
@@ -177,6 +240,9 @@ class DashboardTrendPoint:
     source_failure_rate: float
     blocked_count: int
     warning_count: int
+    reliability_status: str
+    reliability_source_failure_rate: float
+    reliability_missing_market_bar_count: int
 
 
 def _empty_trend_points() -> list[DashboardTrendPoint]:
@@ -227,6 +293,10 @@ def _empty_data_quality_reports() -> list[DashboardDataQualityReport]:
     return []
 
 
+def _empty_data_reliability_reports() -> list[DashboardDataReliabilityReport]:
+    return []
+
+
 @dataclass(frozen=True)
 class DashboardDaySummary:
     trade_date: str
@@ -241,8 +311,12 @@ class DashboardDaySummary:
     source_snapshots: list[DashboardSourceSnapshot] = field(
         default_factory=_empty_source_snapshots
     )
+    trading_calendar: DashboardTradingCalendarDay | None = None
     data_quality_reports: list[DashboardDataQualityReport] = field(
         default_factory=_empty_data_quality_reports
+    )
+    data_reliability_reports: list[DashboardDataReliabilityReport] = field(
+        default_factory=_empty_data_reliability_reports
     )
 
 
@@ -275,7 +349,9 @@ class DashboardQueryAgent:
             portfolio_snapshot=self.latest_portfolio_snapshot(trade_date),
             review_report=self.latest_review_report(trade_date),
             source_snapshots=self.source_snapshots(trade_date, run_stage_by_id),
+            trading_calendar=self.trading_calendar_day(trade_date),
             data_quality_reports=self.data_quality_reports(trade_date),
+            data_reliability_reports=self.data_reliability_reports(trade_date),
         )
 
     def trends(self, start_date: date, end_date: date) -> DashboardTrendSummary:
@@ -293,6 +369,7 @@ class DashboardQueryAgent:
             end_date,
         )
         quality_by_date = self._data_quality_trends_by_date(start_date, end_date)
+        reliability_by_date = self._data_reliability_trends_by_date(start_date, end_date)
         risk_reject_reasons: Counter[str] = Counter()
         points: list[DashboardTrendPoint] = []
 
@@ -308,6 +385,9 @@ class DashboardQueryAgent:
                 trade_day,
                 (0.0, 0, 0),
             )
+            reliability_status, reliability_source_failure_rate, reliability_gap_count = (
+                reliability_by_date.get(trade_day, ("none", 0.0, 0))
+            )
             points.append(
                 DashboardTrendPoint(
                     trade_date=trade_day.isoformat(),
@@ -319,6 +399,9 @@ class DashboardQueryAgent:
                     source_failure_rate=source_failure_rate,
                     blocked_count=blocked_count,
                     warning_count=warning_count,
+                    reliability_status=reliability_status,
+                    reliability_source_failure_rate=reliability_source_failure_rate,
+                    reliability_missing_market_bar_count=reliability_gap_count,
                 )
             )
 
@@ -433,6 +516,27 @@ class DashboardQueryAgent:
             for row in self.repository.payload_rows("data_quality_reports", trade_date=trade_date)
         ]
 
+    def trading_calendar_day(self, trade_date: date) -> DashboardTradingCalendarDay | None:
+        rows = self.repository.trading_calendar_days(start_date=trade_date, end_date=trade_date)
+        if not rows:
+            return None
+        row = rows[-1]
+        return DashboardTradingCalendarDay(
+            trade_date=row.calendar_date.isoformat(),
+            is_trade_date=row.is_trade_date,
+            source=row.source,
+            collected_at=row.collected_at.isoformat(),
+        )
+
+    def data_reliability_reports(self, trade_date: date) -> list[DashboardDataReliabilityReport]:
+        return [
+            self._data_reliability_report(row)
+            for row in self.repository.payload_rows(
+                "data_reliability_reports",
+                trade_date=trade_date,
+            )
+        ]
+
     def _pipeline_runs_for_day(self, trade_date: date) -> list[DashboardPipelineRun]:
         rows = sorted(
             self.repository.payload_rows("pipeline_runs", trade_date=trade_date),
@@ -479,6 +583,7 @@ class DashboardQueryAgent:
             "pipeline_runs",
             "portfolio_snapshots",
             "data_quality_reports",
+            "data_reliability_reports",
         ):
             for row in self.repository.payload_rows(table_name):
                 trade_day = _row_date(row, table_name)
@@ -534,6 +639,39 @@ class DashboardQueryAgent:
             for trade_day in set(source_failure_rate_by_date)
             | set(blocked_count_by_date)
             | set(warning_count_by_date)
+        }
+
+    def _data_reliability_trends_by_date(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> dict[date, tuple[str, float, int]]:
+        order = {"none": 0, "passed": 1, "skipped": 1, "warning": 2, "failed": 3}
+        status_by_date: dict[date, str] = {}
+        source_failure_rate_by_date: dict[date, float] = {}
+        missing_count_by_date: Counter[date] = Counter()
+        for row in self.repository.payload_rows("data_reliability_reports"):
+            trade_day = _row_date(row, "data_reliability_reports")
+            if trade_day < start_date or trade_day > end_date:
+                continue
+            report = self._data_reliability_report(row)
+            current_status = status_by_date.get(trade_day, "none")
+            if order[report.status] >= order[current_status]:
+                status_by_date[trade_day] = report.status
+            source_failure_rate_by_date[trade_day] = max(
+                source_failure_rate_by_date.get(trade_day, 0.0),
+                report.source_failure_rate,
+            )
+            missing_count_by_date[trade_day] += report.missing_market_bar_count
+        return {
+            trade_day: (
+                status_by_date.get(trade_day, "none"),
+                source_failure_rate_by_date.get(trade_day, 0.0),
+                missing_count_by_date[trade_day],
+            )
+            for trade_day in set(status_by_date)
+            | set(source_failure_rate_by_date)
+            | set(missing_count_by_date)
         }
 
     def _pipeline_run(self, row: PayloadRecord) -> DashboardPipelineRun:
@@ -762,6 +900,58 @@ class DashboardQueryAgent:
             created_at=_optional_str(payload.get("created_at")),
         )
 
+    def _data_reliability_report(self, row: PayloadRecord) -> DashboardDataReliabilityReport:
+        payload = _payload(row, "data_reliability_reports")
+        status = _required_str(payload, "data_reliability_reports", "status")
+        if status not in {"passed", "warning", "failed", "skipped"}:
+            raise ValueError(f"data_reliability_reports 字段 status 未知: {status}")
+        return DashboardDataReliabilityReport(
+            run_id=_row_run_id(row, "data_reliability_reports"),
+            trade_date=_required_date(
+                payload,
+                "data_reliability_reports",
+                "trade_date",
+            ).isoformat(),
+            status=status,
+            is_trade_date=_optional_bool(payload.get("is_trade_date"), "data_reliability_reports"),
+            lookback_trade_days=_required_int(
+                payload,
+                "data_reliability_reports",
+                "lookback_trade_days",
+            ),
+            total_sources=_required_int(payload, "data_reliability_reports", "total_sources"),
+            failed_source_count=_required_int(
+                payload,
+                "data_reliability_reports",
+                "failed_source_count",
+            ),
+            empty_source_count=_required_int(
+                payload,
+                "data_reliability_reports",
+                "empty_source_count",
+            ),
+            source_failure_rate=_required_float(
+                payload,
+                "data_reliability_reports",
+                "source_failure_rate",
+            ),
+            missing_market_bar_count=_required_int(
+                payload,
+                "data_reliability_reports",
+                "missing_market_bar_count",
+            ),
+            source_health=_data_source_health(
+                _required_list(payload, "data_reliability_reports", "source_health")
+            ),
+            market_bar_gaps=_market_bar_gaps(
+                _required_list(payload, "data_reliability_reports", "market_bar_gaps")
+            ),
+            issues=_data_reliability_issues(
+                _required_list(payload, "data_reliability_reports", "issues")
+            ),
+            created_at=_optional_str(payload.get("created_at")),
+        )
+
 
 def _payload(row: PayloadRecord, table_name: str) -> Mapping[str, object]:
     raw = row.get("payload")
@@ -953,3 +1143,108 @@ def _data_quality_issues(values: list[object]) -> list[DashboardDataQualityIssue
             )
         )
     return issues
+
+
+def _data_reliability_issues(values: list[object]) -> list[DashboardDataReliabilityIssue]:
+    issues: list[DashboardDataReliabilityIssue] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("data_reliability_reports 字段 issues 必须是 object list")
+        payload = cast(Mapping[str, object], value)
+        severity = _required_str(payload, "data_reliability_reports.issues", "severity")
+        if severity not in {"warning", "error"}:
+            raise ValueError(f"data_reliability_reports.issues 字段 severity 未知: {severity}")
+        issues.append(
+            DashboardDataReliabilityIssue(
+                severity=severity,
+                check_name=_required_str(
+                    payload,
+                    "data_reliability_reports.issues",
+                    "check_name",
+                ),
+                source=_optional_str(payload.get("source")),
+                symbol=_optional_str(payload.get("symbol")),
+                message=_required_str(payload, "data_reliability_reports.issues", "message"),
+                metadata=dict(
+                    _required_mapping(
+                        payload,
+                        "data_reliability_reports.issues",
+                        "metadata",
+                    )
+                ),
+            )
+        )
+    return issues
+
+
+def _data_source_health(values: list[object]) -> list[DashboardDataSourceHealth]:
+    rows: list[DashboardDataSourceHealth] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("data_reliability_reports 字段 source_health 必须是 object list")
+        payload = cast(Mapping[str, object], value)
+        status = _required_str(payload, "data_reliability_reports.source_health", "status")
+        if status not in {"success", "failed", "empty", "mixed"}:
+            raise ValueError(f"data_reliability_reports.source_health 字段 status 未知: {status}")
+        rows.append(
+            DashboardDataSourceHealth(
+                source=_required_str(payload, "data_reliability_reports.source_health", "source"),
+                status=status,
+                total_snapshots=_required_int(
+                    payload,
+                    "data_reliability_reports.source_health",
+                    "total_snapshots",
+                ),
+                failed_snapshots=_required_int(
+                    payload,
+                    "data_reliability_reports.source_health",
+                    "failed_snapshots",
+                ),
+                empty_snapshots=_required_int(
+                    payload,
+                    "data_reliability_reports.source_health",
+                    "empty_snapshots",
+                ),
+                row_count=_required_int(
+                    payload,
+                    "data_reliability_reports.source_health",
+                    "row_count",
+                ),
+                failure_rate=_required_float(
+                    payload,
+                    "data_reliability_reports.source_health",
+                    "failure_rate",
+                ),
+                last_failure_reason=_optional_str(payload.get("last_failure_reason")),
+                required=_required_bool(
+                    payload,
+                    "data_reliability_reports.source_health",
+                    "required",
+                ),
+            )
+        )
+    return rows
+
+
+def _market_bar_gaps(values: list[object]) -> list[DashboardMarketBarGap]:
+    gaps: list[DashboardMarketBarGap] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("data_reliability_reports 字段 market_bar_gaps 必须是 object list")
+        payload = cast(Mapping[str, object], value)
+        gaps.append(
+            DashboardMarketBarGap(
+                symbol=_required_str(payload, "data_reliability_reports.market_bar_gaps", "symbol"),
+                missing_dates=_required_str_list(
+                    payload,
+                    "data_reliability_reports.market_bar_gaps",
+                    "missing_dates",
+                ),
+                missing_count=_required_int(
+                    payload,
+                    "data_reliability_reports.market_bar_gaps",
+                    "missing_count",
+                ),
+            )
+        )
+    return gaps

@@ -124,6 +124,12 @@ const dayFixture: DashboardDay = {
       collected_at: "2026-04-29T07:00:00+00:00",
     },
   ],
+  trading_calendar: {
+    trade_date: "2026-04-29",
+    is_trade_date: true,
+    source: "trade_calendar",
+    collected_at: "2026-04-29T07:00:00+00:00",
+  },
   data_quality_reports: [
     {
       run_id: "run-failed",
@@ -150,6 +156,62 @@ const dayFixture: DashboardDay = {
       ],
     },
   ],
+  data_reliability_reports: [
+    {
+      run_id: "run-pre",
+      trade_date: "2026-04-29",
+      status: "failed",
+      is_trade_date: true,
+      lookback_trade_days: 30,
+      total_sources: 3,
+      failed_source_count: 1,
+      empty_source_count: 1,
+      source_failure_rate: 0.3333,
+      missing_market_bar_count: 1,
+      source_health: [
+        {
+          source: "market_bars",
+          status: "success",
+          total_snapshots: 1,
+          failed_snapshots: 0,
+          empty_snapshots: 0,
+          row_count: 2,
+          failure_rate: 0,
+          last_failure_reason: null,
+          required: true,
+        },
+        {
+          source: "policy",
+          status: "failed",
+          total_snapshots: 1,
+          failed_snapshots: 1,
+          empty_snapshots: 0,
+          row_count: 0,
+          failure_rate: 1,
+          last_failure_reason: "policy endpoint failed",
+          required: false,
+        },
+      ],
+      market_bar_gaps: [
+        {
+          symbol: "510300",
+          missing_dates: ["2026-04-28"],
+          missing_count: 1,
+        },
+      ],
+      issues: [
+        {
+          severity: "error",
+          check_name: "market_bar_gap",
+          source: "market_bars",
+          symbol: "510300",
+          message: "510300 近 30 个交易日缺少 1 天行情",
+          metadata: { missing_dates: ["2026-04-28"] },
+        },
+      ],
+      created_at: "2026-04-29T07:00:00+00:00",
+    },
+  ],
 };
 
 const trendsFixture: DashboardTrends = {
@@ -166,6 +228,9 @@ const trendsFixture: DashboardTrends = {
       source_failure_rate: 0,
       blocked_count: 0,
       warning_count: 0,
+      reliability_status: "passed",
+      reliability_source_failure_rate: 0,
+      reliability_missing_market_bar_count: 0,
     },
     {
       trade_date: "2026-04-29",
@@ -177,6 +242,9 @@ const trendsFixture: DashboardTrends = {
       source_failure_rate: 0.2,
       blocked_count: 1,
       warning_count: 2,
+      reliability_status: "failed",
+      reliability_source_failure_rate: 0.3333,
+      reliability_missing_market_bar_count: 1,
     },
   ],
   risk_reject_reasons: {
@@ -195,7 +263,7 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByText("只读观察台")).toBeInTheDocument();
-    expect(await screen.findAllByText("510300")).toHaveLength(5);
+    expect((await screen.findAllByText("510300")).length).toBeGreaterThanOrEqual(5);
     expect(screen.getByText("趋势改善")).toBeInTheDocument();
     expect(screen.getByText("20.00 / 5.00%")).toBeInTheDocument();
     expect(screen.getByText("已实现盈亏")).toBeInTheDocument();
@@ -215,7 +283,11 @@ describe("dashboard", () => {
     expect(await screen.findByText("必需数据源失败: market_bars")).toBeInTheDocument();
     expect(await screen.findByText("EastMoney endpoint disconnected")).toBeInTheDocument();
     expect(await screen.findByText("数据质量失败")).toBeInTheDocument();
+    expect(await screen.findByText("运行可靠性失败")).toBeInTheDocument();
     expect(screen.getByText("510300 缺少 2026-04-29 当日行情")).toBeInTheDocument();
+    expect(screen.getByText("近 30 交易日缺口")).toBeInTheDocument();
+    expect(screen.getAllByText("2026-04-28").length).toBeGreaterThan(0);
+    expect(screen.getByText("policy endpoint failed")).toBeInTheDocument();
     expect(screen.getByText("False")).toBeInTheDocument();
   });
 
@@ -235,6 +307,8 @@ describe("dashboard", () => {
     expect(screen.getByText("数据质量趋势")).toBeInTheDocument();
     expect(screen.getByText("阻断 1")).toBeInTheDocument();
     expect(screen.getByText("warning 2")).toBeInTheDocument();
+    expect(screen.getByText("可靠性 failed")).toBeInTheDocument();
+    expect(screen.getByText("缺口 1")).toBeInTheDocument();
   });
 
   it("renders empty states for a quiet trading day", async () => {
@@ -245,7 +319,9 @@ describe("dashboard", () => {
       paper_orders: [],
       positions: [],
       source_snapshots: [],
+      trading_calendar: null,
       data_quality_reports: [],
+      data_reliability_reports: [],
       review_report: null,
       portfolio_snapshot: null,
     });
@@ -257,6 +333,7 @@ describe("dashboard", () => {
     expect(screen.getByText("暂无持仓")).toBeInTheDocument();
     expect(screen.getByText("暂无 source snapshot")).toBeInTheDocument();
     expect(screen.getByText("暂无数据质量报告")).toBeInTheDocument();
+    expect(screen.getByText("暂无运行可靠性报告")).toBeInTheDocument();
   });
 });
 

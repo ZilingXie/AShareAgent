@@ -47,6 +47,8 @@ def test_dashboard_api_returns_runs_and_day_summary() -> None:
     assert day_response.status_code == 200
     assert day_response.json()["trade_date"] == "2026-04-29"
     assert day_response.json()["data_quality_reports"] == []
+    assert day_response.json()["data_reliability_reports"] == []
+    assert day_response.json()["trading_calendar"] is None
 
 
 def test_dashboard_api_returns_range_trends() -> None:

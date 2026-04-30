@@ -8,6 +8,7 @@ from typing import Any, Protocol, cast
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     Date,
     DateTime,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     insert,
     select,
 )
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql import func
 
@@ -27,6 +29,7 @@ from ashare_agent.domain import (
     AnnouncementItem,
     Asset,
     DataQualityReport,
+    DataReliabilityReport,
     LLMAnalysis,
     MarketBar,
     NewsItem,
@@ -43,6 +46,7 @@ from ashare_agent.domain import (
     SignalAction,
     SourceSnapshot,
     TechnicalIndicator,
+    TradingCalendarDay,
     WatchlistCandidate,
 )
 
@@ -57,6 +61,7 @@ PAYLOAD_TABLES = (
     "industry_snapshots",
     "technical_indicators",
     "data_quality_reports",
+    "data_reliability_reports",
     "llm_analyses",
     "watchlist_candidates",
     "signals",
@@ -242,6 +247,27 @@ class PipelineRepository(Protocol):
         context: PipelineRunContext,
         report: DataQualityReport,
     ) -> None:
+        ...
+
+    def save_data_reliability_report(
+        self,
+        context: PipelineRunContext,
+        report: DataReliabilityReport,
+    ) -> None:
+        ...
+
+    def save_trading_calendar_days(
+        self,
+        context: PipelineRunContext,
+        days: list[TradingCalendarDay],
+    ) -> None:
+        ...
+
+    def trading_calendar_days(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[TradingCalendarDay]:
         ...
 
     def save_watchlist_candidates(
@@ -450,6 +476,33 @@ class RepositoryBase:
             report,
         )
 
+    def save_data_reliability_report(
+        self,
+        context: PipelineRunContext,
+        report: DataReliabilityReport,
+    ) -> None:
+        self._save_payload(
+            "data_reliability_reports",
+            context.run_id,
+            report.trade_date,
+            None,
+            report,
+        )
+
+    def save_trading_calendar_days(
+        self,
+        context: PipelineRunContext,
+        days: list[TradingCalendarDay],
+    ) -> None:
+        raise NotImplementedError
+
+    def trading_calendar_days(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[TradingCalendarDay]:
+        raise NotImplementedError
+
     def save_watchlist_candidates(
         self,
         context: PipelineRunContext,
@@ -582,6 +635,7 @@ class InMemoryRepository(RepositoryBase):
     def __init__(self) -> None:
         self.records: list[dict[str, Any]] = []
         self._tables: dict[str, list[PayloadRecord]] = {name: [] for name in PAYLOAD_TABLES}
+        self._trading_calendar: dict[tuple[date, str], TradingCalendarDay] = {}
         self._next_id = 1
 
     def save_artifact(self, trade_date: date, artifact_type: str, payload: dict[str, Any]) -> None:
@@ -629,6 +683,30 @@ class InMemoryRepository(RepositoryBase):
             and (run_id is None or row["run_id"] == run_id)
         ]
 
+    def save_trading_calendar_days(
+        self,
+        context: PipelineRunContext,
+        days: list[TradingCalendarDay],
+    ) -> None:
+        for day in days:
+            self._trading_calendar[(day.calendar_date, day.source)] = day
+
+    def trading_calendar_days(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[TradingCalendarDay]:
+        rows = sorted(
+            self._trading_calendar.values(),
+            key=lambda item: (item.calendar_date, item.source),
+        )
+        return [
+            row
+            for row in rows
+            if (start_date is None or row.calendar_date >= start_date)
+            and (end_date is None or row.calendar_date <= end_date)
+        ]
+
 
 class PostgresRepository(RepositoryBase):
     def __init__(self, database_url: str) -> None:
@@ -648,6 +726,11 @@ class PostgresRepository(RepositoryBase):
             # Schema is created by Alembic; repository does not auto-migrate.
             autoload_with=self.engine,
         )
+        self.trading_calendar = Table(
+            "trading_calendar",
+            self.metadata,
+            autoload_with=self.engine,
+        )
 
     @classmethod
     def from_engine(cls, engine: Engine) -> PostgresRepository:
@@ -664,6 +747,11 @@ class PostgresRepository(RepositoryBase):
         }
         instance.artifacts = Table(
             "artifacts",
+            instance.metadata,
+            autoload_with=engine,
+        )
+        instance.trading_calendar = Table(
+            "trading_calendar",
             instance.metadata,
             autoload_with=engine,
         )
@@ -723,6 +811,55 @@ class PostgresRepository(RepositoryBase):
             for row in rows
         ]
 
+    def save_trading_calendar_days(
+        self,
+        context: PipelineRunContext,
+        days: list[TradingCalendarDay],
+    ) -> None:
+        if not days:
+            return
+        with self.engine.begin() as conn:
+            for day in days:
+                statement = postgresql_insert(self.trading_calendar).values(
+                    calendar_date=day.calendar_date,
+                    is_trade_date=day.is_trade_date,
+                    source=day.source,
+                    collected_at=day.collected_at,
+                )
+                statement = statement.on_conflict_do_update(
+                    index_elements=["calendar_date", "source"],
+                    set_={
+                        "is_trade_date": day.is_trade_date,
+                        "collected_at": day.collected_at,
+                    },
+                )
+                conn.execute(statement)
+
+    def trading_calendar_days(
+        self,
+        start_date: date | None = None,
+        end_date: date | None = None,
+    ) -> list[TradingCalendarDay]:
+        statement = select(self.trading_calendar).order_by(
+            self.trading_calendar.c.calendar_date.asc(),
+            self.trading_calendar.c.source.asc(),
+        )
+        if start_date is not None:
+            statement = statement.where(self.trading_calendar.c.calendar_date >= start_date)
+        if end_date is not None:
+            statement = statement.where(self.trading_calendar.c.calendar_date <= end_date)
+        with self.engine.begin() as conn:
+            rows = conn.execute(statement).mappings().all()
+        return [
+            TradingCalendarDay(
+                calendar_date=row["calendar_date"],
+                is_trade_date=bool(row["is_trade_date"]),
+                source=str(row["source"]),
+                collected_at=row["collected_at"],
+            )
+            for row in rows
+        ]
+
 
 metadata = MetaData(schema="ashare_agent")
 artifacts_table = Table(
@@ -739,4 +876,19 @@ artifacts_table = Table(
         server_default=func.now(),
     ),
     Column("failure_reason", Text),
+)
+
+trading_calendar_table = Table(
+    "trading_calendar",
+    metadata,
+    Column("id", Integer, primary_key=True),
+    Column("calendar_date", Date, nullable=False),
+    Column("is_trade_date", Boolean, nullable=False),
+    Column("source", String(80), nullable=False),
+    Column("collected_at", DateTime(timezone=True), nullable=False),
+    Column(
+        "created_at",
+        DateTime(timezone=True),
+        server_default=func.now(),
+    ),
 )

@@ -28,6 +28,7 @@ import {
 import type {
   DashboardDay,
   DashboardDataQualityReport,
+  DashboardDataReliabilityReport,
   DashboardPaperOrder,
   DashboardPosition,
   DashboardRun,
@@ -46,6 +47,7 @@ const statusLabels: Record<string, string> = {
   failed: "失败",
   passed: "通过",
   warning: "警告",
+  skipped: "跳过",
 };
 
 export default function App(): JSX.Element {
@@ -237,6 +239,7 @@ export default function App(): JSX.Element {
             <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
             <span>{day?.positions.length ?? 0} 个持仓状态</span>
             <span>{day ? qualityStatusSummary(day) : "无质量报告"}</span>
+            <span>{day ? reliabilityStatusSummary(day) : "无可靠性报告"}</span>
           </div>
         </header>
 
@@ -378,6 +381,10 @@ export default function App(): JSX.Element {
 
             <Section icon={Gauge} title="数据质量">
               <DataQualityTable reports={day.data_quality_reports} />
+            </Section>
+
+            <Section icon={Database} title="运行可靠性">
+              <ReliabilityPanel day={day} reports={day.data_reliability_reports} />
             </Section>
 
             <Section icon={Database} title="数据源状态">
@@ -584,6 +591,8 @@ function DataQualityTrend({ points }: { points: DashboardTrendPoint[] }): JSX.El
           <div className="trend-meta">
             <span>阻断 {point.blocked_count}</span>
             <span>warning {point.warning_count}</span>
+            <span>可靠性 {point.reliability_status}</span>
+            <span>缺口 {point.reliability_missing_market_bar_count}</span>
           </div>
         </div>
       ))}
@@ -624,7 +633,7 @@ function StatusBadge({ status }: { status: string }): JSX.Element {
       ? "safe"
       : status === "failed"
         ? "danger"
-        : status === "warning"
+        : status === "warning" || status === "skipped"
           ? "warning"
           : "neutral";
   const icon =
@@ -650,6 +659,22 @@ function qualityStatusSummary(day: DashboardDay): string {
     return "数据质量通过";
   }
   return "无质量报告";
+}
+
+function reliabilityStatusSummary(day: DashboardDay): string {
+  if (day.data_reliability_reports.some((report) => report.status === "failed")) {
+    return "运行可靠性失败";
+  }
+  if (day.data_reliability_reports.some((report) => report.status === "warning")) {
+    return "运行可靠性警告";
+  }
+  if (day.data_reliability_reports.some((report) => report.status === "skipped")) {
+    return "非交易日跳过";
+  }
+  if (day.data_reliability_reports.length > 0) {
+    return "运行可靠性通过";
+  }
+  return "无可靠性报告";
 }
 
 function DataQualityTable({ reports }: { reports: DashboardDataQualityReport[] }): JSX.Element {
@@ -689,6 +714,93 @@ function DataQualityTable({ reports }: { reports: DashboardDataQualityReport[] }
         </tbody>
       </table>
       <div className="issue-list">
+        {reports.flatMap((report) =>
+          report.issues.map((issue) => (
+            <div
+              className="issue-row"
+              key={`${report.run_id}-${issue.check_name}-${issue.message}`}
+            >
+              <StatusBadge status={issue.severity === "error" ? "failed" : "warning"} />
+              <span>{issue.source ?? "-"}</span>
+              <span>{issue.symbol ?? "-"}</span>
+              <strong>{issue.message}</strong>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ReliabilityPanel({
+  day,
+  reports,
+}: {
+  day: DashboardDay;
+  reports: DashboardDataReliabilityReport[];
+}): JSX.Element {
+  if (reports.length === 0) {
+    return (
+      <div className="quality-block">
+        <p className="muted">
+          交易日历：
+          {day.trading_calendar
+            ? boolText(day.trading_calendar.is_trade_date)
+            : "-"}
+        </p>
+        <EmptyState text="暂无运行可靠性报告" />
+      </div>
+    );
+  }
+  return (
+    <div className="quality-block">
+      <table>
+        <thead>
+          <tr>
+            <th>status</th>
+            <th>交易日</th>
+            <th>source 失败率</th>
+            <th>失败/空源</th>
+            <th>近 30 交易日缺口</th>
+          </tr>
+        </thead>
+        <tbody>
+          {reports.map((report) => (
+            <tr key={`${report.run_id}-${report.trade_date}`}>
+              <td>
+                <StatusBadge status={report.status} />
+              </td>
+              <td>{report.is_trade_date === null ? "-" : boolText(report.is_trade_date)}</td>
+              <td>{percent(report.source_failure_rate)}</td>
+              <td>
+                {report.failed_source_count}/{report.empty_source_count}
+              </td>
+              <td>{report.missing_market_bar_count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="issue-list">
+        {reports.flatMap((report) =>
+          report.source_health.map((source) => (
+            <div className="issue-row" key={`${report.run_id}-source-${source.source}`}>
+              <StatusBadge status={source.status === "failed" ? "failed" : source.status} />
+              <span>{source.source}</span>
+              <span>{source.row_count} rows</span>
+              <strong>{source.last_failure_reason ?? `失败率 ${percent(source.failure_rate)}`}</strong>
+            </div>
+          ))
+        )}
+        {reports.flatMap((report) =>
+          report.market_bar_gaps.map((gap) => (
+            <div className="issue-row" key={`${report.run_id}-gap-${gap.symbol}`}>
+              <StatusBadge status="failed" />
+              <span>{gap.symbol}</span>
+              <span>{gap.missing_count} 天</span>
+              <strong>{gap.missing_dates.join(", ")}</strong>
+            </div>
+          ))
+        )}
         {reports.flatMap((report) =>
           report.issues.map((issue) => (
             <div

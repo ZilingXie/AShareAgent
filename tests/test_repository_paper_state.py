@@ -9,6 +9,7 @@ from ashare_agent.domain import (
     PaperPosition,
     PipelineRunContext,
     PortfolioSnapshot,
+    TradingCalendarDay,
 )
 from ashare_agent.repository import InMemoryRepository
 
@@ -123,6 +124,29 @@ def test_repository_saves_data_quality_report_payload() -> None:
 
     assert rows[0]["run_id"] == "quality-run"
     assert rows[0]["payload"]["status"] == "passed"
+
+
+def test_repository_upserts_structured_trading_calendar_days() -> None:
+    repository = InMemoryRepository()
+    context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="calendar-run")
+
+    repository.save_trading_calendar_days(
+        context,
+        [TradingCalendarDay(date(2026, 4, 29), True, "trade_calendar")],
+    )
+    repository.save_trading_calendar_days(
+        context,
+        [TradingCalendarDay(date(2026, 4, 29), False, "trade_calendar")],
+    )
+
+    rows = repository.trading_calendar_days(
+        start_date=date(2026, 4, 29),
+        end_date=date(2026, 4, 29),
+    )
+
+    assert [(row.calendar_date, row.is_trade_date, row.source) for row in rows] == [
+        (date(2026, 4, 29), False, "trade_calendar")
+    ]
 
 
 def test_repository_payload_rows_rejects_unknown_table() -> None:

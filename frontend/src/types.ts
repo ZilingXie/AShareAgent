@@ -119,6 +119,57 @@ export interface DashboardDataQualityReport {
   created_at: string | null;
 }
 
+export interface DashboardTradingCalendarDay {
+  trade_date: string;
+  is_trade_date: boolean;
+  source: string;
+  collected_at: string | null;
+}
+
+export interface DashboardDataReliabilityIssue {
+  severity: string;
+  check_name: string;
+  source: string | null;
+  symbol: string | null;
+  message: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface DashboardDataSourceHealth {
+  source: string;
+  status: string;
+  total_snapshots: number;
+  failed_snapshots: number;
+  empty_snapshots: number;
+  row_count: number;
+  failure_rate: number;
+  last_failure_reason: string | null;
+  required: boolean;
+}
+
+export interface DashboardMarketBarGap {
+  symbol: string;
+  missing_dates: string[];
+  missing_count: number;
+}
+
+export interface DashboardDataReliabilityReport {
+  run_id: string;
+  trade_date: string;
+  status: string;
+  is_trade_date: boolean | null;
+  lookback_trade_days: number;
+  total_sources: number;
+  failed_source_count: number;
+  empty_source_count: number;
+  source_failure_rate: number;
+  missing_market_bar_count: number;
+  source_health: DashboardDataSourceHealth[];
+  market_bar_gaps: DashboardMarketBarGap[];
+  issues: DashboardDataReliabilityIssue[];
+  created_at: string | null;
+}
+
 export interface DashboardTrendPoint {
   trade_date: string;
   total_value: string | null;
@@ -129,6 +180,9 @@ export interface DashboardTrendPoint {
   source_failure_rate: number;
   blocked_count: number;
   warning_count: number;
+  reliability_status: string;
+  reliability_source_failure_rate: number;
+  reliability_missing_market_bar_count: number;
 }
 
 export interface DashboardTrends {
@@ -148,5 +202,7 @@ export interface DashboardDay {
   portfolio_snapshot: DashboardPortfolioSnapshot | null;
   review_report: DashboardReviewReport | null;
   source_snapshots: DashboardSourceSnapshot[];
+  trading_calendar: DashboardTradingCalendarDay | null;
   data_quality_reports: DashboardDataQualityReport[];
+  data_reliability_reports: DashboardDataReliabilityReport[];
 }

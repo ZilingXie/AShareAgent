@@ -9,6 +9,7 @@ from typing import Any
 from ashare_agent.agents.announcement_analyzer import AnnouncementAnalyzer
 from ashare_agent.agents.data_collector import DataCollector
 from ashare_agent.agents.data_quality_agent import DataQualityAgent
+from ashare_agent.agents.data_reliability_agent import DataReliabilityAgent
 from ashare_agent.agents.market_regime_analyzer import MarketRegimeAnalyzer
 from ashare_agent.agents.paper_trader import PaperTrader
 from ashare_agent.agents.review_agent import ReviewAgent
@@ -49,8 +50,16 @@ class ASharePipeline:
         self.strategy_params = strategy_params or StrategyParamsAgent(
             Path("configs/strategy_params.yml")
         ).load()
+        self.repository = repository or InMemoryRepository()
+        self.required_data_sources = required_data_sources or set()
         self.collector = DataCollector(provider)
-        self.data_quality_agent = DataQualityAgent(required_data_sources=required_data_sources)
+        self.data_quality_agent = DataQualityAgent(
+            required_data_sources=self.required_data_sources
+        )
+        self.data_reliability_agent = DataReliabilityAgent(
+            self.repository,
+            required_data_sources=self.required_data_sources,
+        )
         self.announcement_analyzer = AnnouncementAnalyzer()
         self.market_regime_analyzer = MarketRegimeAnalyzer()
         self.signal_engine = SignalEngine()
@@ -73,7 +82,6 @@ class ASharePipeline:
         self.review_agent = ReviewAgent()
         self.llm_client = llm_client
         self.report_root = report_root
-        self.repository = repository or InMemoryRepository()
         self._last_dataset: MarketDataset | None = None
         self._last_signal_result: SignalResult | None = None
         self._last_risk_decisions: list[RiskDecision] = []
@@ -98,10 +106,15 @@ class ASharePipeline:
     def _save_dataset(self, context: PipelineRunContext, dataset: MarketDataset) -> None:
         self.repository.save_universe_assets(context, dataset.assets)
         self.repository.save_raw_source_snapshots(context, dataset.source_snapshots)
+        self.repository.save_trading_calendar_days(context, dataset.trade_calendar_days)
         self.repository.save_market_bars(context, dataset.bars)
         self.repository.save_announcements(context, dataset.announcements)
         self.repository.save_news_items(context, dataset.news)
         self.repository.save_policy_items(context, dataset.policy_items)
+
+    def _save_reliability_report(self, context: PipelineRunContext) -> None:
+        report = self.data_reliability_agent.analyze(context.trade_date)
+        self.repository.save_data_reliability_report(context, report)
 
     def _run_data_quality_gate(
         self,
@@ -302,6 +315,65 @@ class ASharePipeline:
             },
         )
         return AgentResult(name="post_market_review", success=True, payload=payload)
+
+    def run_daily(self, trade_date: date) -> AgentResult:
+        context = PipelineRunContext(trade_date=trade_date)
+        calendar = self.collector.collect_trade_calendar(trade_date)
+        self.repository.save_raw_source_snapshots(context, [calendar.source_snapshot])
+        self.repository.save_trading_calendar_days(context, calendar.days)
+
+        if calendar.source_snapshot.status == "failed" and "trade_calendar" in (
+            self.required_data_sources
+        ):
+            failure_reason = (
+                "必需数据源失败: "
+                f"trade_calendar: {calendar.source_snapshot.failure_reason or 'unknown failure'}"
+            )
+            self._save_reliability_report(context)
+            payload = {
+                "run_id": context.run_id,
+                "failure_reason": failure_reason,
+                **self._strategy_params_payload(),
+            }
+            self.repository.save_artifact(trade_date, "daily_run_failed", payload)
+            self.repository.save_pipeline_run(context, "daily_run", "failed", payload)
+            raise DataProviderError(failure_reason)
+
+        if calendar.snapshot is not None and calendar.snapshot.is_trade_date is False:
+            self._save_reliability_report(context)
+            payload = {
+                "run_id": context.run_id,
+                "skipped_reason": f"{trade_date.isoformat()} 非交易日，跳过策略阶段",
+                **self._strategy_params_payload(),
+            }
+            self.repository.save_artifact(trade_date, "daily_run_skipped", payload)
+            self.repository.save_pipeline_run(context, "daily_run", "skipped", payload)
+            return AgentResult(name="daily_run", success=True, payload=payload)
+
+        try:
+            pre_market = self.run_pre_market(trade_date)
+            intraday = self.run_intraday_watch(trade_date)
+            review = self.run_post_market_review(trade_date)
+        except DataProviderError as exc:
+            self._save_reliability_report(context)
+            payload = {
+                "run_id": context.run_id,
+                "failure_reason": str(exc),
+                **self._strategy_params_payload(),
+            }
+            self.repository.save_artifact(trade_date, "daily_run_failed", payload)
+            self.repository.save_pipeline_run(context, "daily_run", "failed", payload)
+            raise
+
+        self._save_reliability_report(context)
+        payload = {
+            "run_id": context.run_id,
+            "stages": [pre_market.name, intraday.name, review.name],
+            **self._strategy_params_payload(),
+        }
+        self.repository.save_artifact(trade_date, "daily_run", payload)
+        self.repository.save_pipeline_run(context, "daily_run", "success", payload)
+        return AgentResult(name="daily_run", success=True, payload=payload)
 
 
 def build_mock_pipeline(report_root: Path) -> ASharePipeline:

@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / PostgreSQL Persistence / Paper Trading Lifecycle / Strategy Params Audit / Read-only Dashboard`
+当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / PostgreSQL Persistence / Paper Trading Lifecycle / Strategy Params Audit / Read-only Dashboard`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -27,7 +27,7 @@
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
 - 在收盘后完成模拟买卖、持仓状态更新、复盘结果和错误归因。
-- 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、模拟订单、持仓、复盘和数据源状态。
+- 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、模拟订单、持仓、复盘、数据源状态和运行可靠性报告。
 
 ## 模块设计
 
@@ -46,6 +46,12 @@ AShareAgent
 │   ├── 空数据源检查
 │   ├── source 失败率统计
 │   └── 非交易日运行提示
+│
+├── DataReliabilityAgent
+│   ├── source 健康报告
+│   ├── 近 30 交易日行情缺口报告
+│   ├── 结构化交易日历读取
+│   └── daily-run 跳过/失败/成功审计
 │
 ├── AnnouncementAnalyzer
 │   ├── 公告分类
@@ -93,6 +99,7 @@ AShareAgent
 
 - `DataCollector`：负责数据获取、标准化和缓存，不直接做投资判断。
 - `DataQualityAgent`：负责真实数据质量门禁和质量报告，不生成交易信号。
+- `DataReliabilityAgent`：负责从已落库数据生成数据源健康和行情缺口报告，不生成交易信号。
 - `AnnouncementAnalyzer`：负责将公告转成结构化事件和规则判断结果，不直接生成交易指令。
 - `MarketRegimeAnalyzer`：负责判断市场环境、板块强弱和风险偏好，为信号和风控提供上下文。
 - `SignalEngine`：负责策略规则、候选股票评分和观察名单决策，不绕过风控。
@@ -187,6 +194,8 @@ AShareAgent
 - [x] 增加公告样本 golden tests。
 - [x] 增加 provider contract tests。
 - [x] 增加数据质量检查。
+- [x] 增加结构化交易日历、数据源健康和缺口报告。
+- [x] 增加每日运行 CLI 和脚本。
 - [ ] 增加 pipeline run 审计日志。
 - [x] 增加策略参数版本记录。
 
@@ -243,7 +252,11 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 uv run ashare pre-market --trade-date 2026-04-29
 uv run ashare intraday-watch --trade-date 2026-04-29
 uv run ashare post-market-review --trade-date 2026-04-29
+uv run ashare daily-run --trade-date 2026-04-29
+scripts/daily_run.sh 2026-04-29
 ```
+
+`daily-run` 会先刷新结构化交易日历。若所选日期不是交易日，只写入 `daily_run` skipped 审计、交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；若是交易日，则按盘前、盘中、复盘顺序运行，任一阶段失败都会先写入已有质量/可靠性报告和 failed `daily_run` 后再明确失败。
 
 验证：
 
@@ -268,7 +281,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 本地开发复用现有 Podman PostgreSQL：容器 `deployment_local_postgres_1`，宿主端口 `15432`，数据库 `supportportal`，用户 `supportportal`。迁移只创建 `ashare_agent` schema、本项目表和 `ashare_agent.alembic_version`，不主动删除已有对象，也不在 `public` 或 `supportportal` schema 建业务表。若 `ashare_agent` schema 已存在但缺少 `ashare_agent.alembic_version`，迁移会停止并要求先人工确认。
 
-当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、DataQualityAgent 的 data quality reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
+当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
 `post-market-review` 会从数据库恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。卖出订单写入 `paper_orders`，closed position 写入 `paper_positions`；重复运行同一交易日不会重复买入或卖出。
 
@@ -279,7 +292,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `data_quality_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情和异常价格问题；趋势 DTO 覆盖 `portfolio_snapshots.total_value`、每天信号数、通过/拒绝数、最高评分、风控拒绝原因统计、source 失败率、阻断次数和 warning 次数。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势。
 
 前端观察台：
 

@@ -10,6 +10,10 @@ from ashare_agent.agents.dashboard_query_agent import DashboardQueryAgent
 from ashare_agent.domain import (
     DataQualityIssue,
     DataQualityReport,
+    DataReliabilityIssue,
+    DataReliabilityReport,
+    DataSourceHealth,
+    MarketBarGap,
     PaperOrder,
     PaperPosition,
     PipelineRunContext,
@@ -18,6 +22,7 @@ from ashare_agent.domain import (
     RiskDecision,
     Signal,
     SourceSnapshot,
+    TradingCalendarDay,
     WatchlistCandidate,
 )
 from ashare_agent.repository import InMemoryRepository
@@ -232,6 +237,54 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
             ],
         ),
     )
+    repository.save_trading_calendar_days(
+        pre_market_context,
+        [TradingCalendarDay(trade_date, True, "trade_calendar")],
+    )
+    repository.save_data_reliability_report(
+        pre_market_context,
+        DataReliabilityReport(
+            trade_date=trade_date,
+            status="failed",
+            is_trade_date=True,
+            lookback_trade_days=30,
+            total_sources=1,
+            failed_source_count=1,
+            empty_source_count=0,
+            source_failure_rate=1.0,
+            missing_market_bar_count=1,
+            source_health=[
+                DataSourceHealth(
+                    source="market_bars",
+                    status="failed",
+                    total_snapshots=1,
+                    failed_snapshots=1,
+                    empty_snapshots=0,
+                    row_count=0,
+                    failure_rate=1.0,
+                    last_failure_reason="EastMoney endpoint disconnected",
+                    required=True,
+                )
+            ],
+            market_bar_gaps=[
+                MarketBarGap(
+                    symbol="510300",
+                    missing_dates=["2026-04-29"],
+                    missing_count=1,
+                )
+            ],
+            issues=[
+                DataReliabilityIssue(
+                    severity="error",
+                    check_name="market_bar_gap",
+                    message="510300 近 30 个交易日缺少 1 天行情",
+                    source="market_bars",
+                    symbol="510300",
+                    metadata={"missing_dates": ["2026-04-29"]},
+                )
+            ],
+        ),
+    )
 
     agent = DashboardQueryAgent(repository)
     runs = agent.list_pipeline_runs(limit=10)
@@ -258,6 +311,10 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert round(day.review_report.metrics.max_drawdown, 10) == 0.0098060396
     assert day.source_snapshots[0].stage == "pre_market"
     assert day.source_snapshots[0].failure_reason == "EastMoney endpoint disconnected"
+    assert day.trading_calendar is not None
+    assert day.trading_calendar.is_trade_date is True
+    assert day.data_reliability_reports[0].status == "failed"
+    assert day.data_reliability_reports[0].missing_market_bar_count == 1
     assert day.data_quality_reports[0].status == "failed"
     assert day.data_quality_reports[0].issues[0].symbol == "510300"
 

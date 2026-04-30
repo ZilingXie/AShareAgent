@@ -14,6 +14,7 @@ PositionStatus = Literal["open", "closed"]
 ExitReason = Literal["stop_loss", "trend_weakness", "max_holding_days"]
 DataQualitySeverity = Literal["warning", "error"]
 DataQualityStatus = Literal["passed", "warning", "failed"]
+DataReliabilityStatus = Literal["passed", "warning", "failed", "skipped"]
 
 
 def now_utc() -> datetime:
@@ -123,6 +124,18 @@ class TradingCalendarSnapshot:
 
 
 @dataclass(frozen=True)
+class TradingCalendarDay:
+    calendar_date: date
+    is_trade_date: bool
+    source: str
+    collected_at: datetime = field(default_factory=now_utc)
+
+
+def empty_trading_calendar_days() -> list[TradingCalendarDay]:
+    return []
+
+
+@dataclass(frozen=True)
 class MarketDataset:
     trade_date: date
     assets: list[Asset]
@@ -134,6 +147,9 @@ class MarketDataset:
     source_snapshots: list[SourceSnapshot]
     trade_calendar: TradingCalendarSnapshot | None = None
     trade_calendar_dates: list[date] = field(default_factory=empty_date_list)
+    trade_calendar_days: list[TradingCalendarDay] = field(
+        default_factory=empty_trading_calendar_days
+    )
 
 
 @dataclass(frozen=True)
@@ -181,6 +197,53 @@ class DataQualityReport:
     abnormal_price_count: int
     is_trade_date: bool | None
     issues: list[DataQualityIssue]
+    created_at: datetime = field(default_factory=now_utc)
+
+
+@dataclass(frozen=True)
+class DataReliabilityIssue:
+    severity: DataQualitySeverity
+    check_name: str
+    message: str
+    source: str | None = None
+    symbol: str | None = None
+    metadata: dict[str, Any] = field(default_factory=empty_dict)
+
+
+@dataclass(frozen=True)
+class DataSourceHealth:
+    source: str
+    status: Literal["success", "failed", "empty", "mixed"]
+    total_snapshots: int
+    failed_snapshots: int
+    empty_snapshots: int
+    row_count: int
+    failure_rate: float
+    last_failure_reason: str | None
+    required: bool
+
+
+@dataclass(frozen=True)
+class MarketBarGap:
+    symbol: str
+    missing_dates: list[str]
+    missing_count: int
+
+
+@dataclass(frozen=True)
+class DataReliabilityReport:
+    trade_date: date
+    status: DataReliabilityStatus
+    is_trade_date: bool | None
+    lookback_trade_days: int
+    total_sources: int
+    failed_source_count: int
+    empty_source_count: int
+    source_failure_rate: float
+    missing_market_bar_count: int
+    source_health: list[DataSourceHealth]
+    market_bar_gaps: list[MarketBarGap]
+    issues: list[DataReliabilityIssue]
     created_at: datetime = field(default_factory=now_utc)
 
 

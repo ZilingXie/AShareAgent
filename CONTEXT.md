@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/auto-finalize-rules`：优化 AGENTS.md 的 worktree 收尾规则，使验证通过后的提交、合并、清理和 push 默认自动完成，只有冲突、失败、远端分叉或破坏性操作才停下来确认。
+正在做 `codex/data-run-reliability`：补齐结构化交易日历、数据源健康/缺口报告和每日运行脚本。
 
 ## 上次停在哪
 
@@ -35,6 +35,8 @@
 - 本轮新增 `DashboardQueryAgent.trends(start_date, end_date)` 和 `/api/dashboard/trends`，前端范围筛选已改为按日期区间展示趋势，同时保留所选单日明细。
 - 已清理已合并的 `codex/dashboard-trends` worktree 和本地分支。
 - 本轮更新 AGENTS.md：worktree 任务验证通过后默认进入 `finalizing-to-main`，自动提交、合并、复验、清理 task worktree/分支，并在远端没有分叉时自动 push。
+- 本轮新增结构化 `trading_calendar` 表、`DataReliabilityAgent`、`data_reliability_reports`、`ashare daily-run` 和 `scripts/daily_run.sh`。
+- dashboard 日汇总和趋势 DTO 已接入交易日历与运行可靠性报告，前端新增“运行可靠性”只读面板。
 
 ## 近期关键决定和原因
 
@@ -44,13 +46,14 @@
 - CLI 现在必须配置 `DATABASE_URL`；缺失时明确失败，不做静默内存兜底。
 - 本地数据库复用共享 PostgreSQL，但 AShareAgent 只使用 `ashare_agent` schema 和 `ashare_agent.alembic_version`，不在 `public` 或 `supportportal` schema 建业务表。
 - 真实公开源下 `universe`、`market_bars`、`trade_calendar` 是必需源；失败时流程明确失败，不能自动切回 Mock。
-- 数据质量门禁按“严重阻断”执行：必需源失败/空数据、交易日缺失当日行情和异常价格会阻断 pipeline；非交易日运行只提示。
+- 数据质量门禁按“严重阻断”执行：必需源失败/空数据、交易日缺失近 30 个交易日行情和异常价格会阻断 pipeline；非交易日运行只提示。
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；本轮只覆盖风控和模拟交易参数，不迁移 SignalEngine 评分权重。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
-- 交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
+- 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
+- `daily-run` 遇到非交易日默认写 skipped 审计和可靠性报告，不进入策略分析，也不更新模拟订单或持仓。
 - 公告分析继续使用可解释规则，不引入 LLM 判断；误判追踪先落在固定样本 `case_id` 层，不改变运行时模型或落库边界。
 - 观察台只读，不直接连接 PostgreSQL，不提供交易操作入口；`PaperOrder.is_real_trade` 必须在 API DTO 和 UI 中显式展示，正常值为 `False`。
 - dashboard 第一版持有天数用自然日差计算，后续有结构化交易日历表后再替换为交易日口径。
@@ -63,4 +66,4 @@
 
 ## 下一步
 
-- 下一步可接真实 `DATABASE_URL` 做 dashboard API + 前端联调 smoke，或继续补充更细的趋势钻取。
+- 下一步可接真实 `DATABASE_URL` 执行 Alembic `upgrade head` 后跑一次 `ashare daily-run` smoke，再用 dashboard 检查可靠性面板。

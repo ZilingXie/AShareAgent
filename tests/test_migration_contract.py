@@ -54,6 +54,22 @@ def test_data_quality_migration_adds_payload_table_without_destructive_operation
     assert "drop_schema" not in text
 
 
+def test_data_reliability_migration_adds_calendar_and_report_tables() -> None:
+    migration = Path("migrations/versions/0003_data_reliability.py")
+
+    text = migration.read_text(encoding="utf-8")
+
+    assert 'revision = "0003_data_reliability"' in text
+    assert 'down_revision = "0002_data_quality_reports"' in text
+    assert '"trading_calendar"' in text
+    assert '"calendar_date"' in text
+    assert '"is_trade_date"' in text
+    assert '"data_reliability_reports"' in text
+    assert "create_table" in text
+    assert "drop_table" not in text
+    assert "drop_schema" not in text
+
+
 def test_initial_migration_does_not_create_trading_calendar_table() -> None:
     text = Path("migrations/versions/0001_initial_schema.py").read_text(encoding="utf-8")
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 from decimal import Decimal
 
 from ashare_agent.domain import (
@@ -50,7 +51,9 @@ class DataQualityAgent:
             if snapshot.status == "success" and snapshot.row_count == 0
         )
         missing_market_bar_count = sum(
-            1 for issue in issues if issue.check_name == "missing_market_bar"
+            int(issue.metadata.get("missing_count", 1))
+            for issue in issues
+            if issue.check_name == "missing_market_bar"
         )
         abnormal_price_count = sum(
             1
@@ -117,14 +120,22 @@ class DataQualityAgent:
         return None
 
     def _missing_market_bar_issues(self, dataset: MarketDataset) -> list[DataQualityIssue]:
-        latest_symbols = {
-            bar.symbol for bar in dataset.bars if bar.trade_date == dataset.trade_date
+        expected_dates = self._expected_market_bar_dates(dataset)
+        bars_by_symbol = {
+            (bar.symbol, bar.trade_date)
+            for bar in dataset.bars
+            if bar.trade_date in set(expected_dates)
         }
         issues: list[DataQualityIssue] = []
         for asset in dataset.assets:
             if not asset.enabled:
                 continue
-            if asset.symbol in latest_symbols:
+            missing_dates = [
+                expected_date
+                for expected_date in expected_dates
+                if (asset.symbol, expected_date) not in bars_by_symbol
+            ]
+            if not missing_dates:
                 continue
             issues.append(
                 DataQualityIssue(
@@ -132,11 +143,31 @@ class DataQualityAgent:
                     check_name="missing_market_bar",
                     source="market_bars",
                     symbol=asset.symbol,
-                    message=f"{asset.symbol} 缺少 {dataset.trade_date.isoformat()} 当日行情",
-                    metadata={"trade_date": dataset.trade_date.isoformat()},
+                    message=(
+                        f"{asset.symbol} 近 30 个交易日缺少 {len(missing_dates)} 天行情"
+                    ),
+                    metadata={
+                        "trade_date": dataset.trade_date.isoformat(),
+                        "missing_dates": [item.isoformat() for item in missing_dates],
+                        "missing_count": len(missing_dates),
+                    },
                 )
             )
         return issues
+
+    def _expected_market_bar_dates(self, dataset: MarketDataset) -> list[date]:
+        calendar_dates = [
+            day.calendar_date
+            for day in dataset.trade_calendar_days
+            if day.is_trade_date and day.calendar_date <= dataset.trade_date
+        ]
+        if not calendar_dates:
+            calendar_dates = [
+                item for item in dataset.trade_calendar_dates if item <= dataset.trade_date
+            ]
+        if not calendar_dates:
+            return [dataset.trade_date]
+        return sorted(set(calendar_dates))[-30:]
 
     def _abnormal_price_issues(self, bars: list[MarketBar]) -> list[DataQualityIssue]:
         issues: list[DataQualityIssue] = []

@@ -87,3 +87,16 @@ def post_market_review(trade_date: str = typer.Option(..., "--trade-date")) -> N
     except DataProviderError as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"收盘复盘完成: {result.payload['report_path']}")
+
+
+@app.command()
+def daily_run(trade_date: str = typer.Option(..., "--trade-date")) -> None:
+    parsed_date = _parse_trade_date(trade_date)
+    try:
+        result = _build_pipeline().run_daily(parsed_date)
+    except DataProviderError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if result.payload.get("skipped_reason"):
+        typer.echo(f"每日流程跳过: {result.payload['skipped_reason']}")
+        return
+    typer.echo(f"每日流程完成: {parsed_date.isoformat()}")

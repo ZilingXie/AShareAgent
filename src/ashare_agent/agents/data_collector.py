@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import date
+from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any, TypeVar
 
-from ashare_agent.domain import MarketDataset, SourceSnapshot, TradingCalendarSnapshot
+from ashare_agent.domain import (
+    MarketDataset,
+    SourceSnapshot,
+    TradingCalendarDay,
+    TradingCalendarSnapshot,
+)
 from ashare_agent.providers.base import DataProvider, DataProviderError
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class TradeCalendarCollection:
+    snapshot: TradingCalendarSnapshot | None
+    dates: list[date]
+    days: list[TradingCalendarDay]
+    source_snapshot: SourceSnapshot
 
 
 class DataCollector:
@@ -76,6 +90,44 @@ class DataCollector:
             calendar_end=ordered[-1],
         )
 
+    def _structured_trade_calendar_days(
+        self,
+        calendar_dates: list[date],
+    ) -> list[TradingCalendarDay]:
+        if not calendar_dates:
+            return []
+        trade_dates = set(calendar_dates)
+        ordered = sorted(trade_dates)
+        current = ordered[0]
+        end = ordered[-1]
+        days: list[TradingCalendarDay] = []
+        while current <= end:
+            days.append(
+                TradingCalendarDay(
+                    calendar_date=current,
+                    is_trade_date=current in trade_dates,
+                    source="trade_calendar",
+                )
+            )
+            current += timedelta(days=1)
+        return days
+
+    def collect_trade_calendar(self, trade_date: date) -> TradeCalendarCollection:
+        snapshots: list[SourceSnapshot] = []
+        calendar_dates = self._collect(
+            "trade_calendar",
+            trade_date,
+            self._provider.get_trade_calendar,
+            snapshots,
+            lambda rows: self._trade_calendar_metadata(trade_date, rows),
+        )
+        return TradeCalendarCollection(
+            snapshot=self._trade_calendar_snapshot(trade_date, calendar_dates),
+            dates=calendar_dates,
+            days=self._structured_trade_calendar_days(calendar_dates),
+            source_snapshot=snapshots[0],
+        )
+
     def collect(self, trade_date: date, lookback_days: int = 30) -> MarketDataset:
         snapshots: list[SourceSnapshot] = []
         assets = self._collect("universe", trade_date, self._provider.get_universe, snapshots)
@@ -116,6 +168,7 @@ class DataCollector:
             snapshots,
             lambda rows: self._trade_calendar_metadata(trade_date, rows),
         )
+        calendar_days = self._structured_trade_calendar_days(calendar_dates)
         return MarketDataset(
             trade_date=trade_date,
             assets=assets,
@@ -127,4 +180,5 @@ class DataCollector:
             source_snapshots=snapshots,
             trade_calendar=self._trade_calendar_snapshot(trade_date, calendar_dates),
             trade_calendar_dates=calendar_dates,
+            trade_calendar_days=calendar_days,
         )

@@ -75,6 +75,62 @@ def test_data_quality_agent_fails_required_empty_source_and_missing_trade_date_b
     }
 
 
+def test_data_quality_agent_fails_recent_trade_day_market_bar_gap() -> None:
+    trade_date = date(2026, 4, 29)
+    dataset = MarketDataset(
+        trade_date=trade_date,
+        assets=[Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        bars=[
+            MarketBar(
+                symbol="510300",
+                trade_date=date(2026, 4, 27),
+                open=Decimal("4.00"),
+                high=Decimal("4.10"),
+                low=Decimal("3.90"),
+                close=Decimal("4.05"),
+                volume=1000,
+                amount=Decimal("4050"),
+                source="test",
+            ),
+            MarketBar(
+                symbol="510300",
+                trade_date=trade_date,
+                open=Decimal("4.10"),
+                high=Decimal("4.20"),
+                low=Decimal("4.00"),
+                close=Decimal("4.15"),
+                volume=1000,
+                amount=Decimal("4150"),
+                source="test",
+            ),
+        ],
+        announcements=[],
+        news=[],
+        policy_items=[],
+        industry_snapshots=[],
+        source_snapshots=[
+            SourceSnapshot(
+                source="market_bars",
+                trade_date=trade_date,
+                status="success",
+                row_count=2,
+            )
+        ],
+        trade_calendar=None,
+        trade_calendar_dates=[date(2026, 4, 27), date(2026, 4, 28), trade_date],
+    )
+
+    report = DataQualityAgent(required_data_sources={"market_bars"}).analyze(
+        stage="pre_market",
+        dataset=dataset,
+    )
+
+    assert report.status == "failed"
+    assert report.missing_market_bar_count == 1
+    assert report.issues[-1].check_name == "missing_market_bar"
+    assert report.issues[-1].metadata["missing_dates"] == ["2026-04-28"]
+
+
 def test_data_quality_agent_fails_abnormal_prices_and_large_close_jump() -> None:
     trade_date = date(2026, 4, 29)
     dataset = MarketDataset(

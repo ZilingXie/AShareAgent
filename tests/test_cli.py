@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,44 @@ def test_cli_strategy_params_config_env_controls_pipeline_params(
     run_payload = created_repositories[0].records_for("pipeline_runs")[-1]["payload"]
     assert run_payload["strategy_params_version"] == "cli-test-params"
     assert run_payload["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.11"
+
+
+def test_cli_daily_run_skips_strategy_stages_on_non_trade_date(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_repositories: list[InMemoryRepository] = []
+    strategy_config = tmp_path / "strategy_params.yml"
+    _write_strategy_params(strategy_config)
+
+    class FakePostgresRepository(InMemoryRepository):
+        def __init__(self, database_url: str) -> None:
+            super().__init__()
+            created_repositories.append(self)
+
+    class NonTradeProvider(MockProvider):
+        def get_trade_calendar(self) -> list[date]:
+            return [date(2026, 4, 27), date(2026, 4, 29)]
+
+    monkeypatch.setenv("ASHARE_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("ASHARE_STRATEGY_PARAMS_CONFIG", str(strategy_config))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
+    monkeypatch.setattr("ashare_agent.cli.MockProvider", NonTradeProvider)
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["daily-run", "--trade-date", "2026-04-28"])
+
+    assert result.exit_code == 0
+    assert "非交易日" in result.output
+    repository = created_repositories[0]
+    assert repository.records_for("paper_orders") == []
+    assert repository.records_for("data_reliability_reports")[-1]["payload"]["status"] == "skipped"
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "daily_run"
+    assert latest_run["status"] == "skipped"
 
 
 def test_cli_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -58,6 +58,7 @@ class BacktestRunner:
             )
             try:
                 pipeline.run_pre_market(trade_day)
+                pipeline.run_intraday_watch(trade_day)
                 pipeline.run_post_market_review(trade_day)
             except DataProviderError as exc:
                 failures.append({"trade_date": trade_day.isoformat(), "reason": str(exc)})

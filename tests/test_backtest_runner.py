@@ -69,11 +69,17 @@ def test_backtest_runner_replays_trade_days_with_backtest_scope(tmp_path: Path) 
     pipeline_runs = repository.records_for("pipeline_runs")
     assert [row["payload"]["stage"] for row in pipeline_runs] == [
         "pre_market",
+        "intraday_watch",
         "post_market_review",
         "pre_market",
+        "intraday_watch",
         "post_market_review",
         "backtest",
     ]
+    stage_by_run_id = {row["run_id"]: row["payload"]["stage"] for row in pipeline_runs}
+    assert {
+        stage_by_run_id[row["run_id"]] for row in repository.records_for("paper_orders")
+    } == {"intraday_watch"}
     assert {row["payload"]["backtest_id"] for row in pipeline_runs} == {"bt-signal-v1"}
     assert {row["payload"]["run_mode"] for row in pipeline_runs} == {"backtest"}
     assert pipeline_runs[-1]["payload"]["strategy_params_version"] == "backtest-signal-v1"

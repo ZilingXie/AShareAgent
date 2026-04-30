@@ -101,6 +101,7 @@ def _strategy_params(tmp_path: Path, **overrides: Any) -> StrategyParams:
 def _seed_open_position(
     repository: InMemoryRepository,
     *,
+    symbol: str = "510300",
     opened_at: date,
     trade_date: date,
     current_price: Decimal,
@@ -111,7 +112,7 @@ def _seed_open_position(
         context,
         [
             PaperPosition(
-                symbol="510300",
+                symbol=symbol,
                 opened_at=opened_at,
                 quantity=100,
                 entry_price=entry_price,
@@ -144,12 +145,18 @@ def test_mock_pipeline_runs_pre_market_and_post_market_with_audit_outputs(tmp_pa
     assert intraday.success is True
     assert review.success is True
     assert len(pre_market.payload["signals"]) <= 1
+    repository = pipeline.repository
+    assert isinstance(repository, InMemoryRepository)
+    pre_market_run_id = pre_market.payload["run_id"]
+    assert [
+        row
+        for row in repository.records_for("paper_orders")
+        if row["run_id"] == pre_market_run_id
+    ] == []
     assert "paper" in review.payload["report_path"]
     assert (tmp_path / "2026-04-29" / "pre-market.md").exists()
     assert (tmp_path / "2026-04-29" / "post-market-review.md").exists()
 
-    repository = pipeline.repository
-    assert isinstance(repository, InMemoryRepository)
     pipeline_runs = repository.records_for("pipeline_runs")
     assert [row["payload"]["strategy_params_version"] for row in pipeline_runs] == [
         "strategy-params-v1",
@@ -164,6 +171,89 @@ def test_mock_pipeline_runs_pre_market_and_post_market_with_audit_outputs(tmp_pa
     signals = repository.records_for("signals")
     assert signals[0]["payload"]["strategy_params_version"] == "strategy-params-v1"
     assert signals[0]["payload"]["strategy_params_snapshot"]["signal"]["max_daily_signals"] == 1
+
+
+def test_intraday_watch_executes_buy_sell_and_updates_positions(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    _seed_open_position(
+        repository,
+        symbol="159915",
+        opened_at=date(2026, 4, 28),
+        trade_date=date(2026, 4, 28),
+        current_price=Decimal("3.80"),
+        entry_price=Decimal("100"),
+    )
+    pipeline = ASharePipeline(
+        provider=MockProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+    intraday = pipeline.run_intraday_watch(trade_date)
+
+    assert intraday.success is True
+    intraday_orders = [
+        row["payload"]
+        for row in repository.records_for("paper_orders")
+        if row["run_id"] == intraday.payload["run_id"]
+    ]
+    assert [order["side"] for order in intraday_orders] == ["buy", "sell"]
+    assert {order["symbol"] for order in intraday_orders} == {"510300", "159915"}
+    assert all(order["is_real_trade"] is False for order in intraday_orders)
+    latest_positions = [row["payload"] for row in repository.records_for("paper_positions")]
+    assert any(
+        position["symbol"] == "510300" and position["status"] == "open"
+        for position in latest_positions
+    )
+    assert any(
+        position["symbol"] == "159915" and position["status"] == "closed"
+        for position in latest_positions
+    )
+    assert repository.records_for("portfolio_snapshots")[-1]["run_id"] == intraday.payload["run_id"]
+
+
+def test_intraday_watch_is_idempotent_for_same_trade_date(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=MockProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
+    first_order_count = len(repository.records_for("paper_orders"))
+    pipeline.run_intraday_watch(trade_date)
+
+    assert first_order_count > 0
+    assert len(repository.records_for("paper_orders")) == first_order_count
+
+
+def test_intraday_watch_fails_without_successful_pre_market_decisions(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=MockProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    try:
+        pipeline.run_intraday_watch(trade_date)
+    except DataProviderError as exc:
+        assert "pre_market" in str(exc)
+    else:
+        raise AssertionError("intraday_watch 缺少同日 pre_market 决策时必须失败")
+
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "intraday_watch"
+    assert latest_run["status"] == "failed"
 
 
 def test_post_market_review_writes_strategy_experiment_report(tmp_path: Path) -> None:
@@ -183,6 +273,7 @@ def test_post_market_review_writes_strategy_experiment_report(tmp_path: Path) ->
     )
 
     pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
     review = pipeline.run_post_market_review(trade_date)
 
     report_path = tmp_path / "2026-04-29" / "strategy-experiment.md"
@@ -233,17 +324,16 @@ def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) ->
         report_root=tmp_path,
         repository=repository,
     )
-    review = later_pipeline.run_post_market_review(trade_date)
+    intraday = later_pipeline.run_intraday_watch(trade_date)
 
-    assert review.success is True
+    assert intraday.success is True
     first_orders = repository.records_for("paper_orders")
     assert first_orders
     assert all(order["payload"]["is_real_trade"] is False for order in first_orders)
     assert repository.records_for("paper_positions")
     assert repository.records_for("portfolio_snapshots")
-    assert repository.records_for("review_reports")
     assert repository.records_for("data_quality_reports")[-1]["payload"]["stage"] == (
-        "post_market_review"
+        "intraday_watch"
     )
 
     repeat_pipeline = ASharePipeline(
@@ -252,9 +342,42 @@ def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) ->
         report_root=tmp_path,
         repository=repository,
     )
-    repeat_pipeline.run_post_market_review(trade_date)
+    repeat_pipeline.run_intraday_watch(trade_date)
 
     assert len(repository.records_for("paper_orders")) == len(first_orders)
+    review_order_count = len(repository.records_for("paper_orders"))
+    review = repeat_pipeline.run_post_market_review(trade_date)
+
+    assert review.success is True
+    assert len(repository.records_for("paper_orders")) == review_order_count
+    assert repository.records_for("review_reports")
+    assert repository.records_for("data_quality_reports")[-1]["payload"]["stage"] == (
+        "post_market_review"
+    )
+
+
+def test_post_market_review_does_not_create_orders(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=MockProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
+    order_count_after_intraday = len(repository.records_for("paper_orders"))
+    review = pipeline.run_post_market_review(trade_date)
+
+    assert order_count_after_intraday > 0
+    assert len(repository.records_for("paper_orders")) == order_count_after_intraday
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "post_market_review"
+    assert latest_run["new_order_count"] == 0
+    assert latest_run["reviewed_order_count"] == order_count_after_intraday
+    assert repository.records_for("review_reports")[-1]["run_id"] == review.payload["run_id"]
 
 
 def test_pipeline_closes_position_on_stop_loss(tmp_path: Path) -> None:
@@ -277,7 +400,8 @@ def test_pipeline_closes_position_on_stop_loss(tmp_path: Path) -> None:
         repository=repository,
     )
 
-    pipeline.run_post_market_review(trade_date)
+    pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
 
     sell_orders = [
         row["payload"]
@@ -312,7 +436,8 @@ def test_pipeline_uses_configured_strategy_params_for_stop_loss(tmp_path: Path) 
         strategy_params=_strategy_params(tmp_path, stop_loss_pct="0.10"),
     )
 
-    pipeline.run_post_market_review(trade_date)
+    pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
 
     assert repository.records_for("paper_orders") == []
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
@@ -339,7 +464,8 @@ def test_pipeline_rejects_t_plus_one_stop_loss_sell(tmp_path: Path) -> None:
         repository=repository,
     )
 
-    pipeline.run_post_market_review(trade_date)
+    pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
 
     assert repository.records_for("paper_orders") == []
     assert repository.records_for("paper_positions")[-1]["payload"]["status"] == "open"
@@ -366,7 +492,8 @@ def test_pipeline_closes_position_after_max_holding_days(tmp_path: Path) -> None
         repository=repository,
     )
 
-    pipeline.run_post_market_review(trade_date)
+    pipeline.run_pre_market(trade_date)
+    pipeline.run_intraday_watch(trade_date)
 
     sell_orders = [
         row["payload"]
@@ -458,6 +585,18 @@ def test_daily_run_records_reliability_report_after_success(tmp_path: Path) -> N
     repository = pipeline.repository
     assert isinstance(repository, InMemoryRepository)
     assert repository.records_for("data_reliability_reports")
+    business_stages = [
+        row["payload"]["stage"]
+        for row in repository.records_for("pipeline_runs")
+        if row["payload"]["stage"] != "daily_run"
+    ]
+    assert business_stages == ["pre_market", "intraday_watch", "post_market_review"]
+    stage_by_run_id = {
+        row["run_id"]: row["payload"]["stage"] for row in repository.records_for("pipeline_runs")
+    }
+    assert {
+        stage_by_run_id[row["run_id"]] for row in repository.records_for("paper_orders")
+    } == {"intraday_watch"}
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert latest_run["stage"] == "daily_run"
     assert latest_run["status"] == "success"

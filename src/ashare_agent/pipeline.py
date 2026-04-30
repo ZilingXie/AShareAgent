@@ -393,43 +393,22 @@ class ASharePipeline:
 
     def run_intraday_watch(self, trade_date: date) -> AgentResult:
         context = self._context(trade_date)
-        report_path = write_markdown_report(
-            self.report_root,
-            trade_date.isoformat(),
-            "intraday-watch.md",
-            {
-                "状态": "盘中只监控，不执行真实交易。",
-                "安全边界": "本项目 v1 只有 paper trading。",
-            },
-        )
-        payload = {
-            "run_id": context.run_id,
-            "report_path": str(report_path),
-            "real_trading": False,
-            **self._run_scope_payload(),
-            **self._strategy_params_payload(),
-        }
-        self.repository.save_artifact(trade_date, "intraday_watch", payload)
-        self.repository.save_pipeline_run(
-            context,
-            "intraday_watch",
-            "success",
-            {
-                "report_path": str(report_path),
-                "real_trading": False,
+        if self._latest_successful_run_id(trade_date, "pre_market") is None:
+            payload = {
+                "run_id": context.run_id,
+                "failure_reason": "intraday_watch 缺少同日成功 pre_market 风控决策",
+                **self._run_scope_payload(),
                 **self._strategy_params_payload(),
-            },
-        )
-        return AgentResult(name="intraday_watch", success=True, payload=payload)
-
-    def run_post_market_review(self, trade_date: date) -> AgentResult:
-        context = self._context(trade_date)
+            }
+            self.repository.save_artifact(trade_date, "intraday_watch_failed", payload)
+            self.repository.save_pipeline_run(context, "intraday_watch", "failed", payload)
+            raise DataProviderError(payload["failure_reason"])
         if self._last_dataset is None:
             dataset = self.collector.collect(trade_date=trade_date)
             self._save_dataset(context, dataset)
         else:
             dataset = self._last_dataset
-        self._run_data_quality_gate(context, "post_market_review", dataset)
+        self._run_data_quality_gate(context, "intraday_watch", dataset)
         decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
             trade_date,
             run_mode=self.run_mode,
@@ -462,6 +441,76 @@ class ASharePipeline:
             existing_orders=existing_orders + buy_result.orders,
         )
         orders = buy_result.orders + sell_result.orders
+        snapshot, _ = self.review_agent.review(
+            trade_date=trade_date,
+            cash=self.trader.cash,
+            positions=self.trader.open_positions(),
+        )
+        report_path = write_markdown_report(
+            self.report_root,
+            trade_date.isoformat(),
+            "intraday-watch.md",
+            {
+                "状态": "盘中执行模拟交易，不执行真实交易。",
+                "模拟买入": [order.symbol for order in orders if order.side == "buy"],
+                "模拟卖出": [order.symbol for order in orders if order.side == "sell"],
+                "安全边界": "本项目 v1 只有 paper trading。",
+            },
+        )
+        self.repository.save_paper_orders(context, orders)
+        self.repository.save_paper_positions(context, self.trader.positions)
+        self.repository.save_portfolio_snapshot(context, snapshot)
+        payload = {
+            "run_id": context.run_id,
+            "orders": _to_dict_list(orders),
+            "positions": _to_dict_list(self.trader.positions),
+            "portfolio": asdict(snapshot),
+            "report_path": str(report_path),
+            "real_trading": False,
+            "order_count": len(orders),
+            "buy_order_count": len([order for order in orders if order.side == "buy"]),
+            "sell_order_count": len([order for order in orders if order.side == "sell"]),
+            "open_positions": snapshot.open_positions,
+            **self._run_scope_payload(),
+            **self._strategy_params_payload(),
+        }
+        self.repository.save_artifact(trade_date, "intraday_watch", payload)
+        self.repository.save_pipeline_run(
+            context,
+            "intraday_watch",
+            "success",
+            {
+                "report_path": str(report_path),
+                "real_trading": False,
+                "order_count": len(orders),
+                "buy_order_count": len([order for order in orders if order.side == "buy"]),
+                "sell_order_count": len([order for order in orders if order.side == "sell"]),
+                "open_positions": snapshot.open_positions,
+                **self._strategy_params_payload(),
+            },
+        )
+        return AgentResult(name="intraday_watch", success=True, payload=payload)
+
+    def run_post_market_review(self, trade_date: date) -> AgentResult:
+        context = self._context(trade_date)
+        if self._last_dataset is None:
+            dataset = self.collector.collect(trade_date=trade_date)
+            self._save_dataset(context, dataset)
+        else:
+            dataset = self._last_dataset
+        self._run_data_quality_gate(context, "post_market_review", dataset)
+        decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
+            trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
+        self._restore_trader_state()
+        existing_orders = self.repository.load_paper_orders(
+            trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
+        self.trader.mark_to_market(dataset.bars)
         snapshot, report = self.review_agent.review(
             trade_date=trade_date,
             cash=self.trader.cash,
@@ -477,25 +526,26 @@ class ASharePipeline:
                 "参数建议": report.parameter_suggestions,
             },
         )
-        self.repository.save_paper_orders(context, orders)
         self.repository.save_paper_positions(context, self.trader.positions)
         self.repository.save_portfolio_snapshot(context, snapshot)
         self.repository.save_review_report(context, report)
         experiment_report_path = self._write_strategy_experiment_report(
             context=context,
             decisions=decisions,
-            orders=orders,
+            orders=existing_orders,
             snapshot=snapshot,
             report=report,
         )
         payload: dict[str, Any] = {
             "run_id": context.run_id,
-            "orders": _to_dict_list(orders),
+            "reviewed_orders": _to_dict_list(existing_orders),
             "positions": _to_dict_list(self.trader.positions),
             "portfolio": asdict(snapshot),
             "review": asdict(report),
             "report_path": f"paper:{report_path}",
             "experiment_report_path": str(experiment_report_path),
+            "new_order_count": 0,
+            "reviewed_order_count": len(existing_orders),
             **self._run_scope_payload(),
             **self._strategy_params_payload(),
         }
@@ -507,7 +557,8 @@ class ASharePipeline:
             {
                 "report_path": str(report_path),
                 "experiment_report_path": str(experiment_report_path),
-                "order_count": len(orders),
+                "new_order_count": 0,
+                "reviewed_order_count": len(existing_orders),
                 "open_positions": snapshot.open_positions,
                 **self._strategy_params_payload(),
             },

@@ -26,7 +26,7 @@
 - 使用 AKShare provider 接入固定 ETF/大盘股池的真实公开数据。
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
-- 在收盘后完成模拟买卖、持仓状态更新、复盘结果和错误归因。
+- 在盘中完成模拟买卖和持仓/组合更新，收盘后完成盯市、复盘结果和错误归因。
 - 用 mock 或真实公开源做多日历史回放，并按策略版本比较胜率、回撤、收益、拒绝率和数据质量失败率。
 - 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、模拟订单、持仓、复盘、数据源状态和运行可靠性报告。
 
@@ -98,7 +98,7 @@ AShareAgent
 BacktestRunner
 └── 多日历史回放
     ├── mock / akshare provider
-    ├── pre-market + post-market-review
+    ├── pre-market + intraday-watch + post-market-review
     ├── backtest_id 状态隔离
     └── 策略版本对比指标
 ```
@@ -266,7 +266,7 @@ uv run ashare daily-run --trade-date 2026-04-29
 scripts/daily_run.sh 2026-04-29
 ```
 
-`daily-run` 会先刷新结构化交易日历。若所选日期不是交易日，只写入 `daily_run` skipped 审计、交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；若是交易日，则按盘前、盘中、复盘顺序运行，任一阶段失败都会先写入已有质量/可靠性报告和 failed `daily_run` 后再明确失败。
+`daily-run` 会先刷新结构化交易日历。若所选日期不是交易日，只写入 `daily_run` skipped 审计、交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；若是交易日，则按盘前、盘中、复盘顺序运行，模拟买卖只发生在盘中阶段，任一阶段失败都会先写入已有质量/可靠性报告和 failed `daily_run` 后再明确失败。
 
 运行多日策略回放：
 
@@ -278,7 +278,7 @@ ASHARE_PROVIDER=mock ASHARE_LLM_PROVIDER=mock \
   --backtest-id smoke-strategy-v1
 ```
 
-backtest 每个交易日跑 `pre-market + post-market-review`，强制使用 mock LLM，结果用 `run_mode=backtest` 和 `backtest_id` 写入现有 payload 专表。普通 CLI 运行使用 `run_mode=normal`，不会恢复 backtest 的持仓、订单或现金。
+backtest 每个交易日跑 `pre-market + intraday-watch + post-market-review`，强制使用 mock LLM，模拟订单只归属 `intraday_watch` run，结果用 `run_mode=backtest` 和 `backtest_id` 写入现有 payload 专表。普通 CLI 运行使用 `run_mode=normal`，不会恢复 backtest 的持仓、订单或现金。
 
 验证：
 
@@ -305,7 +305,9 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
-`post-market-review` 会从数据库恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。卖出订单写入 `paper_orders`，closed position 写入 `paper_positions`；重复运行同一交易日不会重复买入或卖出。
+`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。买卖订单写入 `paper_orders`，持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`；重复运行同一交易日不会重复买入或卖出。
+
+`post-market-review` 不新增 `paper_orders`，只恢复盘中已生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。
 
 只读观察台 API：
 

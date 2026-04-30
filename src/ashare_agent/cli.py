@@ -88,7 +88,7 @@ def pre_market(trade_date: str = typer.Option(..., "--trade-date")) -> None:
 def intraday_watch(trade_date: str = typer.Option(..., "--trade-date")) -> None:
     parsed_date = _parse_trade_date(trade_date)
     result = _build_pipeline().run_intraday_watch(parsed_date)
-    typer.echo(f"盘中监控完成: {result.payload['report_path']}")
+    typer.echo(f"盘中模拟交易完成: {result.payload['report_path']}")
 
 
 @app.command()

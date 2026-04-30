@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/data-run-reliability`：补齐结构化交易日历、数据源健康/缺口报告和每日运行脚本。
+正在做 `codex/intraday-trading-stage`：把模拟成交职责从 `post_market_review` 前移到 `intraday_watch`，让盘后只做收盘盯市、复盘和审计。
 
 ## 上次停在哪
 
@@ -40,8 +40,9 @@
 - 本轮新增独立 `strategy-experiment.md` 策略实验报告，在盘后复盘阶段生成，集中展示盘前 LLM 分析、风控拒绝原因、模拟订单、卖出原因、组合复盘摘要和累计复盘指标。
 - 本轮将 `llm_analyses` 接入 `DashboardQueryAgent.day_summary().llm_analysis` DTO，并在前端只读观察台展示“LLM 盘前分析”；模拟订单表同步展示 `PaperOrder.reason` 原文。
 - 本轮新增 `signal` 策略参数，SignalEngine 权重、最低分阈值和每日最大信号数已由 `StrategyParamsAgent` 加载并进入完整策略快照。
-- 本轮新增 `BacktestRunner` 和 `ashare backtest`，按 provider 交易日历多日执行 `pre_market + post_market_review`，并用 `run_mode=backtest`、`backtest_id` 隔离回放状态。
+- 本轮新增 `BacktestRunner` 和 `ashare backtest`，按 provider 交易日历多日执行 `pre_market + intraday_watch + post_market_review` 回放，并用 `run_mode=backtest`、`backtest_id` 隔离回放状态。
 - 本轮新增 dashboard backtest 列表和策略版本对比 DTO/API/前端区块，按 `backtest_id` 展示胜率、最大回撤、总收益率、风控拒绝率和数据质量失败率。
+- 本轮正在迁移盘中成交职责：`pre_market` 只生成信号和风控决策，`intraday_watch` 执行模拟买入/卖出、持仓和组合快照，`post_market_review` 不新增订单，只生成收盘快照、复盘和策略实验报告。
 
 ## 近期关键决定和原因
 
@@ -55,8 +56,10 @@
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
+- `intraday_watch` 必须依赖同日成功 `pre_market` 风控决策；缺失时显式失败并写 failed run，不空跑。
+- `post_market_review` 不再新增 `paper_orders`；盘后只读取盘中订单和持仓，生成收盘盯市、复盘和审计。
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
-- backtest 结果不新增数据库表，使用现有 payload 专表和 `backtest_id` 隔离；普通模拟账户状态不能读取 backtest 持仓、订单或现金。
+- backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
@@ -75,4 +78,4 @@
 
 ## 下一步
 
-- 下一步可接真实 `DATABASE_URL` 执行 Alembic `upgrade head`，分别跑一次 `ashare daily-run` 和 mock backtest smoke，再用 dashboard 检查可靠性面板、LLM 盘前分析和策略版本对比展示。
+- 下一步完成盘中成交迁移的全量验证、提交、合并回 `main`，并按 worktree 规则清理任务分支。

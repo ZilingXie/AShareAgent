@@ -27,7 +27,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 | `PaperTrader` | 执行模拟买入、模拟卖出、成交价格估算、滑点估算和持仓记录。 |
 | `ReviewAgent` | 生成收盘复盘、策略统计、错误归因和参数调整建议。 |
 | `ReviewMetricsAgent` | 基于已落库模拟交易审计数据计算累计复盘指标，不参与交易执行。 |
-| `BacktestRunner` | 按交易日历执行多日 `pre_market + post_market_review` 回放，并用 `backtest_id` 隔离状态。 |
+| `BacktestRunner` | 按交易日历执行多日 `pre_market + intraday_watch + post_market_review` 回放，并用 `backtest_id` 隔离状态。 |
 
 ## 当前边界
 
@@ -41,12 +41,12 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `DataQualityAgent` 在原始数据落库后、策略分析前运行；质量失败时保存 `data_quality_reports`、失败 artifact 和 failed pipeline run，然后阻断后续策略或模拟交易更新。交易日内检查近 30 个交易日行情缺口；非交易日运行只提示，不因缺失行情阻断。
 - `DataReliabilityAgent` 在 `daily-run` 和 dashboard 查询链路中读取已落库数据，生成 source 健康和近 30 个交易日行情缺口报告；交易日缺口为 failed，非交易日记录 skipped。
 - 交易日历由 DataCollector 从 provider 返回的交易日列表展开为连续日期行，写入结构化 `trading_calendar` 表；同一 `calendar_date/source` 使用 upsert。
-- `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有订单，执行买入、盯市、退出评估、卖出、closed position 落库和复盘，并生成独立 `strategy-experiment.md`，集中展示盘前 LLM 分析、风控拒绝原因、模拟订单、卖出原因和累计复盘指标。
-- `backtest` 使用 provider 交易日历确定回放日期，每个交易日跑 `pre_market + post_market_review`；结果写入现有 payload 专表，并用 `run_mode=backtest`、`backtest_id` 与普通模拟账户状态隔离。
+- `intraday-watch` 必须从 repository 恢复同日成功 `pre_market` 风控决策、开放持仓、最新现金和当日已有订单，执行买入、盯市、退出评估、卖出、closed position 落库和盘中组合快照；重复运行同一交易日不重复成交。
+- `post-market-review` 不新增模拟订单，只恢复盘中订单和持仓，执行收盘盯市、持仓/组合快照、复盘，并生成独立 `strategy-experiment.md`，集中展示盘前 LLM 分析、风控拒绝原因、模拟订单、卖出原因和累计复盘指标。
+- `backtest` 使用 provider 交易日历确定回放日期，每个交易日跑 `pre_market + intraday_watch + post_market_review`；结果写入现有 payload 专表，并用 `run_mode=backtest`、`backtest_id` 与普通模拟账户状态隔离，订单只归属 `intraday_watch`。
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `daily-run` 先刷新交易日历；非交易日只写 skipped 审计和可靠性报告，不进入策略分析或模拟交易更新；交易日按盘前、盘中、复盘顺序运行，失败时先落库可靠性报告和 failed `daily_run`。
-- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、模拟订单、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性和日期范围趋势查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、模拟订单、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势和策略版本对比查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
@@ -66,7 +66,7 @@ src/ashare_agent/
 ├── dashboard.py         # dashboard query DTO 和聚合服务
 ├── domain.py            # 标准 domain models
 ├── indicators.py        # 基础技术指标
-├── pipeline.py          # 三段流程、daily-run、数据质量门禁和可靠性报告编排
+├── pipeline.py          # 三段流程、盘中成交、daily-run、数据质量门禁和可靠性报告编排
 ├── reports.py           # Markdown 输出
 └── repository.py        # In-memory/PostgreSQL repository
 configs/

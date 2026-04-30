@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -80,3 +81,13 @@ def test_alembic_env_stops_on_unknown_existing_project_schema() -> None:
     assert "information_schema.schemata" in text
     assert "information_schema.tables" in text
     assert "迁移状态不明" in text
+
+
+def test_alembic_env_ends_schema_check_transaction_before_migrations() -> None:
+    text = Path("migrations/env.py").read_text(encoding="utf-8")
+
+    assert re.search(
+        r"_ensure_project_schema\(connection\).*?connection\.commit\(\).*?context\.configure",
+        text,
+        flags=re.DOTALL,
+    )

@@ -97,6 +97,10 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         _ensure_project_schema(connection)
+        # SQLAlchemy 2 starts an implicit transaction for the schema/version
+        # checks above. End it before Alembic opens the migration transaction,
+        # otherwise the migration can be rolled back when the connection closes.
+        connection.commit()
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

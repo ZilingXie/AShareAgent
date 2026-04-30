@@ -71,7 +71,16 @@
 12. 不要在根目录直接运行 `git switch -c codex/...`、`git checkout -b codex/...` 或等价命令创建开发分支。
 13. 如果 thread 明显切换到另一个功能，在修改前先问用户是继续当前分支还是创建新分支。
 14. 任务停止但未合并时，必须报告 `paused, not finalized`，并给出分支名、worktree 路径、clean/dirty 状态。
-15. worktree 任务验证通过后，默认自动提交当前 task 分支，并将该分支合并回 `main`；不再额外等待用户确认。合并前、提交前和合并后都必须保留验证结果。若需要 push、创建远端 PR、合并远端 PR 或清理 worktree，也按用户当前请求自动执行；如果缺少远端权限或 PR 工具不可用，必须明确说明并保留本地已合并状态。
+15. worktree 任务验证通过后，默认进入 `finalizing-to-main` 并自动完整收尾，不再等待用户额外确认。完整收尾顺序为：
+    - 在 task worktree 内提交 repo-tracked 修改。
+    - 切回根目录 `main`，确认 root clean 且未处于 detached HEAD。
+    - 将 task 分支合并回本地 `main`。
+    - 合并后重新运行对应验证。
+    - 验证通过后删除已合并的 task worktree。
+    - 删除已合并的本地 `codex/*` task 分支。
+    - 如果 `main` 已配置 upstream、远端没有分叉且 push 不需要额外交互，自动 push 到 `origin/main`。
+    - 最终报告提交号、验证命令、push 状态、清理结果和 `main` clean 状态。
+    如果出现测试失败、合并冲突、远端分叉、权限失败、root/main dirty、不明未提交改动或任何需要破坏性操作的情况，必须停止并说明原因，不能自行 stash、reset、force push 或删除不确定内容。
 
 任务分类与验证：
 

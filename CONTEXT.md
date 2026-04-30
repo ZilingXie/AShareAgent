@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/dashboard-trends` 已完成只读观察台趋势增强：后端新增日期范围趋势 DTO/API，前端新增日期范围筛选、权益曲线、信号趋势、风控拒绝原因统计和数据质量趋势。此前 `codex/data-quality-agent` 和 `codex/alembic-transaction-fix` 已合入 `main`，相关清理完成。
+正在做 `codex/auto-finalize-rules`：优化 AGENTS.md 的 worktree 收尾规则，使验证通过后的提交、合并、清理和 push 默认自动完成，只有冲突、失败、远端分叉或破坏性操作才停下来确认。
 
 ## 上次停在哪
 
@@ -33,6 +33,8 @@
 - 已将 `codex/data-quality-agent` 和 `codex/alembic-transaction-fix` 合并回本地 `main`；其中 Alembic 修复确保 schema 状态检查在迁移前提交事务，避免 PostgreSQL aborted transaction 影响后续迁移。
 - 已清理 `codex/alembic-transaction-fix` worktree 和本地分支，并将 `main` 同步到 GitHub `origin/main`。
 - 本轮新增 `DashboardQueryAgent.trends(start_date, end_date)` 和 `/api/dashboard/trends`，前端范围筛选已改为按日期区间展示趋势，同时保留所选单日明细。
+- 已清理已合并的 `codex/dashboard-trends` worktree 和本地分支。
+- 本轮更新 AGENTS.md：worktree 任务验证通过后默认进入 `finalizing-to-main`，自动提交、合并、复验、清理 task worktree/分支，并在远端没有分叉时自动 push。
 
 ## 近期关键决定和原因
 
@@ -56,7 +58,7 @@
 - 最大回撤按 `portfolio_snapshots.total_value` 序列计算，不基于单票价格或未落库临时估值。
 - dashboard 趋势按日期范围闭区间查询；信号、通过/拒绝和风控拒绝原因只使用当天最新成功 `pre_market` run，避免旧 run 重复计数。
 - 数据质量趋势按天取最大 source 失败率，阻断次数统计 `status=failed` 报告数，warning 次数统计 `severity=warning` issue 数。
-- 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动提交 task 分支并合并回 `main`。
+- 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动完整收尾：提交 task 分支、合并回 `main`、复验、清理 worktree/分支，并在远端没有分叉时自动 push。
 - `CONTEXT.md` 保持极简，只记录当前状态、停靠点和关键决定。
 
 ## 下一步

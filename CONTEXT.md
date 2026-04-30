@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/dashboard-trends` 已完成只读观察台趋势增强：后端新增日期范围趋势 DTO/API，前端新增日期范围筛选、权益曲线、信号趋势、风控拒绝原因统计和数据质量趋势。
+`codex/dashboard-trends` 已完成只读观察台趋势增强：后端新增日期范围趋势 DTO/API，前端新增日期范围筛选、权益曲线、信号趋势、风控拒绝原因统计和数据质量趋势。此前 `codex/data-quality-agent` 和 `codex/alembic-transaction-fix` 已合入 `main`，相关清理完成。
 
 ## 上次停在哪
 

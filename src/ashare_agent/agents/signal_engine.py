@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
+from typing import Any
 
+from ashare_agent.agents.strategy_params_agent import SignalParams, SignalWeights
 from ashare_agent.domain import (
     AnnouncementEvent,
     MarketRegime,
@@ -18,8 +20,25 @@ def _clamp(value: float) -> float:
 
 
 class SignalEngine:
-    def __init__(self, min_score: float = 0.55) -> None:
-        self._min_score = min_score
+    def __init__(
+        self,
+        params: SignalParams | None = None,
+        *,
+        strategy_params_version: str | None = None,
+        strategy_params_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        self._params = params or SignalParams(
+            min_score=0.55,
+            max_daily_signals=1,
+            weights=SignalWeights(
+                technical=0.45,
+                market=0.25,
+                event=0.20,
+                risk_penalty=0.10,
+            ),
+        )
+        self._strategy_params_version = strategy_params_version
+        self._strategy_params_snapshot = strategy_params_snapshot or {}
 
     def generate(
         self,
@@ -40,10 +59,10 @@ class SignalEngine:
             event_score = self._event_score(symbol_events)
             risk_penalty = self._risk_penalty(symbol_events)
             weighted = {
-                "technical": round(technical * 0.45, 4),
-                "market": round(market * 0.25, 4),
-                "event": round(event_score * 0.20, 4),
-                "risk_penalty": round(risk_penalty * 0.10, 4),
+                "technical": round(technical * self._params.weights.technical, 4),
+                "market": round(market * self._params.weights.market, 4),
+                "event": round(event_score * self._params.weights.event, 4),
+                "risk_penalty": round(risk_penalty * self._params.weights.risk_penalty, 4),
             }
             score = (
                 weighted["technical"]
@@ -65,13 +84,16 @@ class SignalEngine:
                     score=round(score, 4),
                     score_breakdown=weighted,
                     reasons=reasons,
+                    strategy_params_version=self._strategy_params_version,
+                    strategy_params_snapshot=self._strategy_params_snapshot,
                 )
             )
 
         ranked = sorted(watchlist, key=lambda item: item.score, reverse=True)
         signals: list[Signal] = []
-        if ranked and ranked[0].score >= self._min_score:
-            top = ranked[0]
+        for top in [
+            item for item in ranked if item.score >= self._params.min_score
+        ][: self._params.max_daily_signals]:
             signals.append(
                 Signal(
                     symbol=top.symbol,
@@ -80,6 +102,8 @@ class SignalEngine:
                     score=top.score,
                     score_breakdown=top.score_breakdown,
                     reasons=top.reasons,
+                    strategy_params_version=self._strategy_params_version,
+                    strategy_params_snapshot=self._strategy_params_snapshot,
                 )
             )
         return SignalResult(watchlist=ranked, signals=signals)

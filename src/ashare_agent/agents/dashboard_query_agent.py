@@ -206,6 +206,43 @@ class DashboardTrendSummary:
     risk_reject_reasons: dict[str, int] = field(default_factory=_empty_risk_reject_reasons)
 
 
+@dataclass(frozen=True)
+class DashboardBacktest:
+    backtest_id: str
+    strategy_params_version: str
+    provider: str
+    start_date: str
+    end_date: str
+    status: str
+    attempted_days: int
+    succeeded_days: int
+    failed_days: int
+    created_at: str | None
+
+
+@dataclass(frozen=True)
+class DashboardStrategyComparisonItem:
+    backtest_id: str
+    strategy_params_version: str
+    provider: str
+    start_date: str
+    end_date: str
+    attempted_days: int
+    succeeded_days: int
+    failed_days: int
+    win_rate: float
+    max_drawdown: float
+    total_return: float
+    risk_reject_rate: float
+    data_quality_failure_rate: float
+
+
+@dataclass(frozen=True)
+class DashboardStrategyComparison:
+    backtest_ids: list[str]
+    items: list[DashboardStrategyComparisonItem]
+
+
 def _empty_runs() -> list[DashboardPipelineRun]:
     return []
 
@@ -265,11 +302,40 @@ class DashboardQueryAgent:
 
     def list_pipeline_runs(self, limit: int = 50) -> list[DashboardPipelineRun]:
         rows = sorted(
-            self.repository.payload_rows("pipeline_runs"),
+            [
+                row
+                for row in self.repository.payload_rows("pipeline_runs")
+                if _is_normal_row(row, "pipeline_runs")
+            ],
             key=lambda row: _row_id(row, "pipeline_runs"),
             reverse=True,
         )
         return [self._pipeline_run(row) for row in rows[:limit]]
+
+    def list_backtests(self, limit: int = 50) -> list[DashboardBacktest]:
+        rows = [
+            row
+            for row in sorted(
+                self.repository.payload_rows("pipeline_runs"),
+                key=lambda item: _row_id(item, "pipeline_runs"),
+                reverse=True,
+            )
+            if self._is_backtest_summary(row)
+        ]
+        return [self._backtest(row) for row in rows[:limit]]
+
+    def strategy_comparison(self, backtest_ids: list[str]) -> DashboardStrategyComparison:
+        requested_ids = [item.strip() for item in backtest_ids if item.strip()]
+        items: list[DashboardStrategyComparisonItem] = []
+        for backtest_id in requested_ids:
+            summary_row = self._latest_backtest_summary_row(backtest_id)
+            if summary_row is None:
+                continue
+            payload = _payload(summary_row, "pipeline_runs")
+            if not payload.get("strategy_params_version"):
+                continue
+            items.append(self._strategy_comparison_item(backtest_id, payload))
+        return DashboardStrategyComparison(backtest_ids=requested_ids, items=items)
 
     def day_summary(self, trade_date: date) -> DashboardDaySummary:
         runs = self._pipeline_runs_for_day(trade_date)
@@ -410,11 +476,14 @@ class DashboardQueryAgent:
         return [
             self._paper_order(row)
             for row in self.repository.payload_rows("paper_orders", trade_date=trade_date)
+            if _is_normal_row(row, "paper_orders")
         ]
 
     def positions_as_of(self, trade_date: date) -> list[DashboardPosition]:
         latest_by_symbol: dict[str, PayloadRecord] = {}
         for row in self.repository.payload_rows("paper_positions"):
+            if not _is_normal_row(row, "paper_positions"):
+                continue
             if _row_date(row, "paper_positions") > trade_date:
                 continue
             payload = _payload(row, "paper_positions")
@@ -432,14 +501,19 @@ class DashboardQueryAgent:
         rows = [
             row
             for row in self.repository.payload_rows("portfolio_snapshots")
-            if _row_date(row, "portfolio_snapshots") <= trade_date
+            if _is_normal_row(row, "portfolio_snapshots")
+            and _row_date(row, "portfolio_snapshots") <= trade_date
         ]
         if not rows:
             return None
         return self._portfolio_snapshot(rows[-1])
 
     def latest_review_report(self, trade_date: date) -> DashboardReviewReport | None:
-        rows = self.repository.payload_rows("review_reports", trade_date=trade_date)
+        rows = [
+            row
+            for row in self.repository.payload_rows("review_reports", trade_date=trade_date)
+            if _is_normal_row(row, "review_reports")
+        ]
         if not rows:
             return None
         return self._review_report(rows[-1])
@@ -455,25 +529,62 @@ class DashboardQueryAgent:
         return [
             self._source_snapshot(row, stages)
             for row in self.repository.payload_rows("raw_source_snapshots", trade_date=trade_date)
+            if _is_normal_row(row, "raw_source_snapshots")
         ]
 
     def data_quality_reports(self, trade_date: date) -> list[DashboardDataQualityReport]:
         return [
             self._data_quality_report(row)
             for row in self.repository.payload_rows("data_quality_reports", trade_date=trade_date)
+            if _is_normal_row(row, "data_quality_reports")
         ]
 
     def _pipeline_runs_for_day(self, trade_date: date) -> list[DashboardPipelineRun]:
         rows = sorted(
-            self.repository.payload_rows("pipeline_runs", trade_date=trade_date),
+            [
+                row
+                for row in self.repository.payload_rows("pipeline_runs", trade_date=trade_date)
+                if _is_normal_row(row, "pipeline_runs")
+            ],
             key=lambda row: _row_id(row, "pipeline_runs"),
             reverse=True,
         )
         return [self._pipeline_run(row) for row in rows]
 
+    def _is_backtest_summary(self, row: PayloadRecord) -> bool:
+        payload = _payload(row, "pipeline_runs")
+        return (
+            payload.get("stage") == "backtest"
+            and payload.get("run_mode") == "backtest"
+            and bool(payload.get("backtest_id"))
+            and bool(payload.get("strategy_params_version"))
+        )
+
+    def _latest_backtest_summary_row(self, backtest_id: str) -> PayloadRecord | None:
+        latest: PayloadRecord | None = None
+        for row in self.repository.payload_rows("pipeline_runs"):
+            payload = _payload(row, "pipeline_runs")
+            if (
+                payload.get("stage") == "backtest"
+                and payload.get("run_mode") == "backtest"
+                and payload.get("backtest_id") == backtest_id
+            ):
+                latest = row
+        return latest
+
+    def _backtest_rows(self, table_name: str, backtest_id: str) -> list[PayloadRecord]:
+        return [
+            row
+            for row in self.repository.payload_rows(table_name)
+            if _payload(row, table_name).get("run_mode") == "backtest"
+            and _payload(row, table_name).get("backtest_id") == backtest_id
+        ]
+
     def _latest_successful_run_id(self, trade_date: date, stage: str) -> str | None:
         rows = self.repository.payload_rows("pipeline_runs", trade_date=trade_date)
         for row in reversed(rows):
+            if not _is_normal_row(row, "pipeline_runs"):
+                continue
             payload = _payload(row, "pipeline_runs")
             if payload.get("stage") == stage and payload.get("status") == "success":
                 return _row_run_id(row, "pipeline_runs")
@@ -493,6 +604,8 @@ class DashboardQueryAgent:
             trade_day = _row_date(row, "pipeline_runs")
             if trade_day < start_date or trade_day > end_date:
                 continue
+            if not _is_normal_row(row, "pipeline_runs"):
+                continue
             payload = _payload(row, "pipeline_runs")
             if payload.get("stage") == stage and payload.get("status") == "success":
                 latest_by_date[trade_day] = _row_run_id(row, "pipeline_runs")
@@ -511,6 +624,8 @@ class DashboardQueryAgent:
             "data_quality_reports",
         ):
             for row in self.repository.payload_rows(table_name):
+                if not _is_normal_row(row, table_name):
+                    continue
                 trade_day = _row_date(row, table_name)
                 if start_date <= trade_day <= end_date:
                     trend_dates.add(trade_day)
@@ -528,6 +643,8 @@ class DashboardQueryAgent:
         ):
             trade_day = _row_date(row, "portfolio_snapshots")
             if start_date <= trade_day <= end_date:
+                if not _is_normal_row(row, "portfolio_snapshots"):
+                    continue
                 latest_by_date[trade_day] = self._portfolio_snapshot(row).total_value
         return latest_by_date
 
@@ -543,6 +660,8 @@ class DashboardQueryAgent:
         for row in self.repository.payload_rows("data_quality_reports"):
             trade_day = _row_date(row, "data_quality_reports")
             if trade_day < start_date or trade_day > end_date:
+                continue
+            if not _is_normal_row(row, "data_quality_reports"):
                 continue
             report = self._data_quality_report(row)
             source_failure_rate_by_date[trade_day] = max(
@@ -577,6 +696,162 @@ class DashboardQueryAgent:
             failure_reason=_optional_str(payload.get("failure_reason")),
             created_at=_optional_str(payload.get("created_at")),
         )
+
+    def _backtest(self, row: PayloadRecord) -> DashboardBacktest:
+        payload = _payload(row, "pipeline_runs")
+        return DashboardBacktest(
+            backtest_id=_required_str(payload, "pipeline_runs", "backtest_id"),
+            strategy_params_version=_required_str(
+                payload,
+                "pipeline_runs",
+                "strategy_params_version",
+            ),
+            provider=_required_str(payload, "pipeline_runs", "provider"),
+            start_date=_required_str(payload, "pipeline_runs", "start_date"),
+            end_date=_required_str(payload, "pipeline_runs", "end_date"),
+            status=_required_str(payload, "pipeline_runs", "status"),
+            attempted_days=_required_int(payload, "pipeline_runs", "attempted_days"),
+            succeeded_days=_required_int(payload, "pipeline_runs", "succeeded_days"),
+            failed_days=_required_int(payload, "pipeline_runs", "failed_days"),
+            created_at=_optional_str(payload.get("created_at")),
+        )
+
+    def _strategy_comparison_item(
+        self,
+        backtest_id: str,
+        summary_payload: Mapping[str, object],
+    ) -> DashboardStrategyComparisonItem:
+        attempted_days = _required_int(summary_payload, "pipeline_runs", "attempted_days")
+        return DashboardStrategyComparisonItem(
+            backtest_id=backtest_id,
+            strategy_params_version=_required_str(
+                summary_payload,
+                "pipeline_runs",
+                "strategy_params_version",
+            ),
+            provider=_required_str(summary_payload, "pipeline_runs", "provider"),
+            start_date=_required_str(summary_payload, "pipeline_runs", "start_date"),
+            end_date=_required_str(summary_payload, "pipeline_runs", "end_date"),
+            attempted_days=attempted_days,
+            succeeded_days=_required_int(summary_payload, "pipeline_runs", "succeeded_days"),
+            failed_days=_required_int(summary_payload, "pipeline_runs", "failed_days"),
+            win_rate=self._backtest_win_rate(backtest_id),
+            max_drawdown=self._backtest_max_drawdown(backtest_id),
+            total_return=self._backtest_total_return(backtest_id, summary_payload),
+            risk_reject_rate=self._backtest_risk_reject_rate(backtest_id),
+            data_quality_failure_rate=self._backtest_data_quality_failure_rate(
+                backtest_id,
+                attempted_days,
+            ),
+        )
+
+    def _backtest_win_rate(self, backtest_id: str) -> float:
+        latest_positions_by_symbol: dict[str, PayloadRecord] = {}
+        for row in self._backtest_rows("paper_positions", backtest_id):
+            payload = _payload(row, "paper_positions")
+            symbol = _required_str(payload, "paper_positions", "symbol")
+            latest_positions_by_symbol[symbol] = row
+        closed_positions = [
+            _payload(row, "paper_positions")
+            for row in latest_positions_by_symbol.values()
+            if _required_str(_payload(row, "paper_positions"), "paper_positions", "status")
+            == "closed"
+        ]
+        if not closed_positions:
+            return 0.0
+        wins = 0
+        for payload in closed_positions:
+            entry = _required_decimal_value(payload, "paper_positions", "entry_price")
+            exit_price = _required_decimal_value(payload, "paper_positions", "exit_price")
+            if exit_price > entry:
+                wins += 1
+        return wins / len(closed_positions)
+
+    def _backtest_max_drawdown(self, backtest_id: str) -> float:
+        values = [
+            _required_decimal_value(
+                _payload(row, "portfolio_snapshots"),
+                "portfolio_snapshots",
+                "total_value",
+            )
+            for row in sorted(
+                self._backtest_rows("portfolio_snapshots", backtest_id),
+                key=lambda item: _row_id(item, "portfolio_snapshots"),
+            )
+        ]
+        peak: Decimal | None = None
+        max_drawdown = Decimal("0")
+        for value in values:
+            peak = value if peak is None else max(peak, value)
+            if peak == 0:
+                continue
+            drawdown = (peak - value) / peak
+            max_drawdown = max(max_drawdown, drawdown)
+        return float(max_drawdown)
+
+    def _backtest_total_return(
+        self,
+        backtest_id: str,
+        summary_payload: Mapping[str, object],
+    ) -> float:
+        snapshots = sorted(
+            self._backtest_rows("portfolio_snapshots", backtest_id),
+            key=lambda item: _row_id(item, "portfolio_snapshots"),
+        )
+        if not snapshots:
+            return 0.0
+        latest_total = _required_decimal_value(
+            _payload(snapshots[-1], "portfolio_snapshots"),
+            "portfolio_snapshots",
+            "total_value",
+        )
+        strategy_snapshot = _required_mapping(
+            summary_payload,
+            "pipeline_runs",
+            "strategy_params_snapshot",
+        )
+        paper_trader = _required_mapping(
+            strategy_snapshot,
+            "strategy_params_snapshot",
+            "paper_trader",
+        )
+        initial_cash = _required_decimal_value(
+            paper_trader,
+            "strategy_params_snapshot.paper_trader",
+            "initial_cash",
+        )
+        if initial_cash == 0:
+            return 0.0
+        return float((latest_total - initial_cash) / initial_cash)
+
+    def _backtest_risk_reject_rate(self, backtest_id: str) -> float:
+        decisions = [
+            self._risk_decision(row)
+            for row in self._backtest_rows("risk_decisions", backtest_id)
+        ]
+        if not decisions:
+            return 0.0
+        rejected = len([decision for decision in decisions if not decision.approved])
+        return rejected / len(decisions)
+
+    def _backtest_data_quality_failure_rate(self, backtest_id: str, attempted_days: int) -> float:
+        if attempted_days <= 0:
+            return 0.0
+        failed_dates = {
+            _required_date(
+                _payload(row, "data_quality_reports"),
+                "data_quality_reports",
+                "trade_date",
+            )
+            for row in self._backtest_rows("data_quality_reports", backtest_id)
+            if _required_str(
+                _payload(row, "data_quality_reports"),
+                "data_quality_reports",
+                "status",
+            )
+            == "failed"
+        }
+        return len(failed_dates) / attempted_days
 
     def _watchlist_item(self, row: PayloadRecord) -> DashboardWatchlistItem:
         payload = _payload(row, "watchlist_candidates")
@@ -811,6 +1086,14 @@ def _payload(row: PayloadRecord, table_name: str) -> Mapping[str, object]:
     if not isinstance(raw, Mapping):
         raise ValueError(f"{table_name} payload 必须是 JSON object")
     return cast(Mapping[str, object], raw)
+
+
+def _is_normal_row(row: PayloadRecord, table_name: str) -> bool:
+    payload = _payload(row, table_name)
+    backtest_id = payload.get("backtest_id")
+    return payload.get("run_mode", "normal") == "normal" and (
+        backtest_id is None or str(backtest_id) == ""
+    )
 
 
 def _row_id(row: PayloadRecord, table_name: str) -> int:

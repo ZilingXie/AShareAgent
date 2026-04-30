@@ -39,6 +39,7 @@ from ashare_agent.domain import (
     PositionStatus,
     ReviewReport,
     RiskDecision,
+    RunMode,
     Signal,
     SignalAction,
     SourceSnapshot,
@@ -91,6 +92,28 @@ def _payload_dict(payload: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("payload 必须能序列化为 JSON object")
     return cast(dict[str, Any], value)
+
+
+def _payload_with_scope(context: PipelineRunContext, payload: object) -> dict[str, Any]:
+    row_payload = _payload_dict(payload)
+    row_payload["run_mode"] = context.run_mode
+    row_payload["backtest_id"] = context.backtest_id
+    return row_payload
+
+
+def _scope_matches(
+    payload: Mapping[str, object],
+    *,
+    run_mode: RunMode,
+    backtest_id: str | None,
+) -> bool:
+    payload_run_mode = str(payload.get("run_mode", "normal"))
+    payload_backtest_id = payload.get("backtest_id")
+    if payload_run_mode != run_mode:
+        return False
+    if run_mode == "backtest":
+        return str(payload_backtest_id) == str(backtest_id)
+    return payload_backtest_id is None or str(payload_backtest_id) == ""
 
 
 def _date_value(value: object) -> date:
@@ -279,15 +302,38 @@ class PipelineRepository(Protocol):
 
     def save_review_report(self, context: PipelineRunContext, report: ReviewReport) -> None: ...
 
-    def load_latest_risk_decisions(self, trade_date: date) -> list[RiskDecision]: ...
+    def load_latest_risk_decisions(
+        self,
+        trade_date: date,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> list[RiskDecision]: ...
 
-    def load_open_positions(self) -> list[PaperPosition]: ...
+    def load_open_positions(
+        self,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> list[PaperPosition]: ...
 
-    def load_paper_orders(self, trade_date: date | None = None) -> list[PaperOrder]: ...
+    def load_paper_orders(
+        self,
+        trade_date: date | None = None,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> list[PaperOrder]: ...
 
-    def load_latest_cash(self, default_cash: Decimal) -> Decimal: ...
+    def load_latest_cash(
+        self,
+        default_cash: Decimal,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> Decimal: ...
 
-    def load_latest_portfolio_snapshot(self) -> PortfolioSnapshot | None: ...
+    def load_latest_portfolio_snapshot(
+        self,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> PortfolioSnapshot | None: ...
 
     def payload_rows(
         self,
@@ -345,11 +391,17 @@ class RepositoryBase:
             context.run_id,
             context.trade_date,
             None,
-            row_payload,
+            _payload_with_scope(context, row_payload),
         )
 
     def save_llm_analysis(self, context: PipelineRunContext, analysis: LLMAnalysis) -> None:
-        self._save_payload("llm_analyses", context.run_id, context.trade_date, None, analysis)
+        self._save_payload(
+            "llm_analyses",
+            context.run_id,
+            context.trade_date,
+            None,
+            _payload_with_scope(context, analysis),
+        )
 
     def save_universe_assets(self, context: PipelineRunContext, assets: list[Asset]) -> None:
         for asset in assets:
@@ -358,7 +410,7 @@ class RepositoryBase:
                 context.run_id,
                 context.trade_date,
                 asset.symbol,
-                asset,
+                _payload_with_scope(context, asset),
             )
 
     def save_raw_source_snapshots(
@@ -372,7 +424,7 @@ class RepositoryBase:
                 context.run_id,
                 snapshot.trade_date,
                 None,
-                snapshot,
+                _payload_with_scope(context, snapshot),
             )
 
     def save_market_bars(self, context: PipelineRunContext, bars: list[MarketBar]) -> None:
@@ -382,7 +434,7 @@ class RepositoryBase:
                 context.run_id,
                 bar.trade_date,
                 bar.symbol,
-                bar,
+                _payload_with_scope(context, bar),
             )
 
     def save_announcements(
@@ -396,7 +448,7 @@ class RepositoryBase:
                 context.run_id,
                 announcement.trade_date,
                 announcement.symbol,
-                announcement,
+                _payload_with_scope(context, announcement),
             )
 
     def save_news_items(self, context: PipelineRunContext, news_items: list[NewsItem]) -> None:
@@ -406,7 +458,7 @@ class RepositoryBase:
                 context.run_id,
                 item.trade_date,
                 item.symbol,
-                item,
+                _payload_with_scope(context, item),
             )
 
     def save_policy_items(
@@ -420,7 +472,7 @@ class RepositoryBase:
                 context.run_id,
                 item.trade_date,
                 None,
-                item,
+                _payload_with_scope(context, item),
             )
 
     def save_technical_indicators(
@@ -434,7 +486,7 @@ class RepositoryBase:
                 context.run_id,
                 indicator.trade_date,
                 indicator.symbol,
-                indicator,
+                _payload_with_scope(context, indicator),
             )
 
     def save_data_quality_report(
@@ -447,7 +499,7 @@ class RepositoryBase:
             context.run_id,
             report.trade_date,
             None,
-            report,
+            _payload_with_scope(context, report),
         )
 
     def save_watchlist_candidates(
@@ -461,7 +513,7 @@ class RepositoryBase:
                 context.run_id,
                 candidate.trade_date,
                 candidate.symbol,
-                candidate,
+                _payload_with_scope(context, candidate),
             )
 
     def save_signals(self, context: PipelineRunContext, signals: list[Signal]) -> None:
@@ -471,7 +523,7 @@ class RepositoryBase:
                 context.run_id,
                 signal.trade_date,
                 signal.symbol,
-                signal,
+                _payload_with_scope(context, signal),
             )
 
     def save_risk_decisions(
@@ -485,7 +537,7 @@ class RepositoryBase:
                 context.run_id,
                 decision.trade_date,
                 decision.symbol,
-                decision,
+                _payload_with_scope(context, decision),
             )
 
     def save_paper_orders(self, context: PipelineRunContext, orders: list[PaperOrder]) -> None:
@@ -495,7 +547,7 @@ class RepositoryBase:
                 context.run_id,
                 order.trade_date,
                 order.symbol,
-                order,
+                _payload_with_scope(context, order),
             )
 
     def save_paper_positions(
@@ -509,7 +561,7 @@ class RepositoryBase:
                 context.run_id,
                 context.trade_date,
                 position.symbol,
-                position,
+                _payload_with_scope(context, position),
             )
 
     def save_portfolio_snapshot(
@@ -522,25 +574,52 @@ class RepositoryBase:
             context.run_id,
             snapshot.trade_date,
             None,
-            snapshot,
+            _payload_with_scope(context, snapshot),
         )
 
     def save_review_report(self, context: PipelineRunContext, report: ReviewReport) -> None:
-        self._save_payload("review_reports", context.run_id, report.trade_date, None, report)
+        self._save_payload(
+            "review_reports",
+            context.run_id,
+            report.trade_date,
+            None,
+            _payload_with_scope(context, report),
+        )
 
-    def load_latest_risk_decisions(self, trade_date: date) -> list[RiskDecision]:
-        run_id = self._latest_successful_run_id(trade_date=trade_date, stage="pre_market")
+    def load_latest_risk_decisions(
+        self,
+        trade_date: date,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> list[RiskDecision]:
+        run_id = self._latest_successful_run_id(
+            trade_date=trade_date,
+            stage="pre_market",
+            run_mode=run_mode,
+            backtest_id=backtest_id,
+        )
         if run_id is None:
             return []
         return [
             _risk_decision_from_payload(cast(Mapping[str, object], row["payload"]))
             for row in self._rows("risk_decisions", trade_date=trade_date, run_id=run_id)
+            if _scope_matches(
+                cast(Mapping[str, object], row["payload"]),
+                run_mode=run_mode,
+                backtest_id=backtest_id,
+            )
         ]
 
-    def load_open_positions(self) -> list[PaperPosition]:
+    def load_open_positions(
+        self,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> list[PaperPosition]:
         latest_by_symbol: dict[str, Mapping[str, object]] = {}
         for row in self._rows("paper_positions"):
             payload = cast(Mapping[str, object], row["payload"])
+            if not _scope_matches(payload, run_mode=run_mode, backtest_id=backtest_id):
+                continue
             symbol = str(row.get("symbol") or payload.get("symbol", ""))
             if symbol:
                 latest_by_symbol[symbol] = payload
@@ -550,29 +629,72 @@ class RepositoryBase:
             if payload.get("status") == "open"
         ]
 
-    def load_paper_orders(self, trade_date: date | None = None) -> list[PaperOrder]:
+    def load_paper_orders(
+        self,
+        trade_date: date | None = None,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> list[PaperOrder]:
         return [
             _paper_order_from_payload(cast(Mapping[str, object], row["payload"]))
             for row in self._rows("paper_orders", trade_date=trade_date)
+            if _scope_matches(
+                cast(Mapping[str, object], row["payload"]),
+                run_mode=run_mode,
+                backtest_id=backtest_id,
+            )
         ]
 
-    def load_latest_cash(self, default_cash: Decimal) -> Decimal:
-        rows = self._rows("portfolio_snapshots")
+    def load_latest_cash(
+        self,
+        default_cash: Decimal,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> Decimal:
+        rows = [
+            row
+            for row in self._rows("portfolio_snapshots")
+            if _scope_matches(
+                cast(Mapping[str, object], row["payload"]),
+                run_mode=run_mode,
+                backtest_id=backtest_id,
+            )
+        ]
         if not rows:
             return default_cash
         payload = cast(Mapping[str, object], rows[-1]["payload"])
         return _decimal_value(payload.get("cash", default_cash))
 
-    def load_latest_portfolio_snapshot(self) -> PortfolioSnapshot | None:
-        rows = self._rows("portfolio_snapshots")
+    def load_latest_portfolio_snapshot(
+        self,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> PortfolioSnapshot | None:
+        rows = [
+            row
+            for row in self._rows("portfolio_snapshots")
+            if _scope_matches(
+                cast(Mapping[str, object], row["payload"]),
+                run_mode=run_mode,
+                backtest_id=backtest_id,
+            )
+        ]
         if not rows:
             return None
         return _portfolio_snapshot_from_payload(cast(Mapping[str, object], rows[-1]["payload"]))
 
-    def _latest_successful_run_id(self, trade_date: date, stage: str) -> str | None:
+    def _latest_successful_run_id(
+        self,
+        trade_date: date,
+        stage: str,
+        run_mode: RunMode = "normal",
+        backtest_id: str | None = None,
+    ) -> str | None:
         latest_run_id: str | None = None
         for row in self._rows("pipeline_runs", trade_date=trade_date):
             payload = cast(Mapping[str, object], row["payload"])
+            if not _scope_matches(payload, run_mode=run_mode, backtest_id=backtest_id):
+                continue
             if payload.get("stage") == stage and payload.get("status") == "success":
                 latest_run_id = str(row["run_id"])
         return latest_run_id

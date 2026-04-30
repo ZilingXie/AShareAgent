@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/reports-explainability`：新增策略实验 Markdown 报告和 dashboard 可解释性展示，重点覆盖 LLM 盘前分析、模拟订单原因、卖出原因和风控拒绝原因。
+正在做 `codex/strategy-experiments`：在已合入的策略实验 Markdown 报告和 dashboard 可解释性展示基础上，实现策略实验闭环，把 SignalEngine 参数迁入 `configs/strategy_params.yml`，新增多日 backtest 回放，并在 dashboard 展示按 `backtest_id` 的策略版本对比。
 
 ## 上次停在哪
 
@@ -37,6 +37,9 @@
 - 本轮更新 AGENTS.md：worktree 任务验证通过后默认进入 `finalizing-to-main`，自动提交、合并、复验、清理 task worktree/分支，并在远端没有分叉时自动 push。
 - 本轮新增独立 `strategy-experiment.md` 策略实验报告，在盘后复盘阶段生成，集中展示盘前 LLM 分析、风控拒绝原因、模拟订单、卖出原因、组合复盘摘要和累计复盘指标。
 - 本轮将 `llm_analyses` 接入 `DashboardQueryAgent.day_summary().llm_analysis` DTO，并在前端只读观察台展示“LLM 盘前分析”；模拟订单表同步展示 `PaperOrder.reason` 原文。
+- 本轮新增 `signal` 策略参数，SignalEngine 权重、最低分阈值和每日最大信号数已由 `StrategyParamsAgent` 加载并进入完整策略快照。
+- 本轮新增 `BacktestRunner` 和 `ashare backtest`，按 provider 交易日历多日执行 `pre_market + post_market_review`，并用 `run_mode=backtest`、`backtest_id` 隔离回放状态。
+- 本轮新增 dashboard backtest 列表和策略版本对比 DTO/API/前端区块，按 `backtest_id` 展示胜率、最大回撤、总收益率、风控拒绝率和数据质量失败率。
 
 ## 近期关键决定和原因
 
@@ -50,7 +53,9 @@
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
-- 策略参数使用显式版本号加完整快照，不使用自动哈希；本轮只覆盖风控和模拟交易参数，不迁移 SignalEngine 评分权重。
+- 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
+- backtest 结果不新增数据库表，使用现有 payload 专表和 `backtest_id` 隔离；普通模拟账户状态不能读取 backtest 持仓、订单或现金。
+- backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 - 公告分析继续使用可解释规则，不引入 LLM 判断；误判追踪先落在固定样本 `case_id` 层，不改变运行时模型或落库边界。
@@ -67,4 +72,4 @@
 
 ## 下一步
 
-- 下一步可接真实 `DATABASE_URL` 做 dashboard API + 前端联调 smoke，或继续补充报告下载/浏览入口。
+- 下一步可用真实 `DATABASE_URL` 跑 mock backtest smoke，在 dashboard 对比多个策略参数版本，并继续补充策略实验报告下载/浏览入口。

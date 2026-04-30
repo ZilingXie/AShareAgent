@@ -207,6 +207,44 @@ const trendsFixture: DashboardTrends = {
   },
 };
 
+const strategyComparisonFixture = {
+  backtest_ids: ["bt-signal-v1", "bt-signal-v2"],
+  items: [
+    {
+      backtest_id: "bt-signal-v1",
+      strategy_params_version: "signal-v1",
+      provider: "mock",
+      start_date: "2026-04-27",
+      end_date: "2026-04-29",
+      attempted_days: 3,
+      succeeded_days: 3,
+      failed_days: 0,
+      win_rate: 0.5,
+      max_drawdown: 0.06862745098,
+      total_return: 0.0125,
+      risk_reject_rate: 0.25,
+      data_quality_failure_rate: 0.3333333333,
+    },
+  ],
+};
+
+const backtestsFixture = {
+  backtests: [
+    {
+      backtest_id: "bt-signal-v1",
+      strategy_params_version: "signal-v1",
+      provider: "mock",
+      start_date: "2026-04-27",
+      end_date: "2026-04-29",
+      status: "success",
+      attempted_days: 3,
+      succeeded_days: 3,
+      failed_days: 0,
+      created_at: "2026-04-29T09:00:00+00:00",
+    },
+  ],
+};
+
 describe("dashboard", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -266,6 +304,19 @@ describe("dashboard", () => {
     expect(screen.getByText("warning 2")).toBeInTheDocument();
   });
 
+  it("renders strategy version comparison for backtests", async () => {
+    mockFetch(dayFixture, trendsFixture, strategyComparisonFixture);
+
+    render(<App />);
+
+    expect(await screen.findByText("策略版本对比")).toBeInTheDocument();
+    expect(screen.getByText("bt-signal-v1")).toBeInTheDocument();
+    expect(screen.getByText("signal-v1")).toBeInTheDocument();
+    expect(screen.getByText("收益 1.25%")).toBeInTheDocument();
+    expect(screen.getByText("拒绝率 25.00%")).toBeInTheDocument();
+    expect(screen.getByText("质量失败率 33.33%")).toBeInTheDocument();
+  });
+
   it("renders empty states for a quiet trading day", async () => {
     mockFetch({
       ...dayFixture,
@@ -290,11 +341,19 @@ describe("dashboard", () => {
   });
 });
 
-function mockFetch(day: DashboardDay, trends: DashboardTrends = trendsFixture): void {
+function mockFetch(
+  day: DashboardDay,
+  trends: DashboardTrends = trendsFixture,
+  strategyComparison = strategyComparisonFixture
+): void {
   vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.includes("/api/dashboard/runs")
       ? { runs: runsFixture }
+      : url.includes("/api/dashboard/backtests")
+        ? backtestsFixture
+      : url.includes("/api/dashboard/strategy-comparison")
+        ? strategyComparison
       : url.includes("/api/dashboard/trends")
         ? trends
         : day;

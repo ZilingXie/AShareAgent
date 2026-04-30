@@ -29,6 +29,14 @@ paper_trader:
   initial_cash: "100000"
   position_size_pct: "0.10"
   slippage_pct: "0.001"
+signal:
+  min_score: "0.55"
+  max_daily_signals: 1
+  weights:
+    technical: "0.45"
+    market: "0.25"
+    event: "0.20"
+    risk_penalty: "0.10"
 """,
         encoding="utf-8",
     )
@@ -153,6 +161,48 @@ def test_cli_strategy_params_config_env_controls_pipeline_params(
     run_payload = created_repositories[0].records_for("pipeline_runs")[-1]["payload"]
     assert run_payload["strategy_params_version"] == "cli-test-params"
     assert run_payload["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.11"
+
+
+def test_cli_backtest_runs_with_mock_llm_and_backtest_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_repositories: list[InMemoryRepository] = []
+    strategy_config = tmp_path / "strategy_params.yml"
+    _write_strategy_params(strategy_config)
+
+    class FakePostgresRepository(InMemoryRepository):
+        def __init__(self, database_url: str) -> None:
+            super().__init__()
+            created_repositories.append(self)
+
+    monkeypatch.setenv("ASHARE_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("ASHARE_STRATEGY_PARAMS_CONFIG", str(strategy_config))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "backtest",
+            "--start-date",
+            "2026-04-27",
+            "--end-date",
+            "2026-04-28",
+            "--backtest-id",
+            "cli-bt-v1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "回放完成" in result.output
+    pipeline_runs = created_repositories[0].records_for("pipeline_runs")
+    assert pipeline_runs[-1]["payload"]["stage"] == "backtest"
+    assert {row["payload"]["backtest_id"] for row in pipeline_runs} == {"cli-bt-v1"}
+    assert {row["payload"]["run_mode"] for row in pipeline_runs} == {"backtest"}
 
 
 def test_cli_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:

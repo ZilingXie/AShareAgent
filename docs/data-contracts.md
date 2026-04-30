@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -24,6 +24,7 @@
 - 决策原因。
 - 失败原因或排除原因。
 - 策略参数版本和参数快照。
+- 运行模式 `run_mode` 和回放批次 `backtest_id`。
 
 ## 核心模型
 
@@ -42,10 +43,12 @@
 
 ## 策略参数契约
 
-默认策略参数配置位于 `configs/strategy_params.yml`，由 `StrategyParamsAgent` 加载和校验。配置必须包含显式 `version`、`risk` 和 `paper_trader` 两组参数。百分比字段必须在 0 到 1 之间，最多持有交易日不能小于最少持有交易日。每次 `pipeline_runs.payload` 必须写入：
+默认策略参数配置位于 `configs/strategy_params.yml`，由 `StrategyParamsAgent` 加载和校验。配置必须包含显式 `version`、`risk`、`paper_trader` 和 `signal` 四组参数。百分比字段必须在 0 到 1 之间，最多持有交易日不能小于最少持有交易日，`signal.max_daily_signals` 必须大于等于 1。每次 `pipeline_runs.payload` 必须写入：
 
 - `strategy_params_version`：本次运行使用的配置版本。
 - `strategy_params_snapshot`：JSON-safe 完整参数快照，Decimal 以字符串保存，黑名单以排序列表保存。
+
+`signal` 参数控制 SignalEngine 的 `min_score`、`max_daily_signals` 和 `weights.technical/market/event/risk_penalty`。每条 `watchlist_candidates` 和 `signals` payload 也必须保留完整策略版本和快照；历史数据缺失这些字段时不参与策略版本对比。
 
 ## PostgreSQL schema
 
@@ -73,12 +76,13 @@ Alembic 迁移创建以下表分组：
 - `review_reports`
 - `artifacts`
 
-当前 repository 已将核心运行结果写入专表，`pipeline_runs.payload` 额外保存策略参数版本和完整参数快照，不新增数据库列：
+当前 repository 已将核心运行结果写入专表，payload 额外保存策略参数版本、完整参数快照、`run_mode` 和 `backtest_id`，不新增数据库列：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`market_bars`、`announcements`、`news_items`、`policy_items`，再写入 `data_quality_reports`；质量通过或仅警告后继续写 `technical_indicators`、`pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
 - `intraday-watch` 写入 `pipeline_runs` 和 `artifacts`。
 - `post-market-review` 从 repository 读取当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有模拟订单；若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。盘后还会生成 `strategy-experiment.md`，并在 `post_market_review` artifact 与 pipeline run payload 中记录 `experiment_report_path`。
 - `paper_positions` 中的 payload 可保存 `open` 和 `closed` 状态；repository 恢复开放持仓时只返回每个 symbol 的最新 `open` payload。
+- `backtest` 不新增表；每条回放 payload 使用 `run_mode=backtest` 和同一个 `backtest_id`。repository 恢复持仓、订单、现金和最新 snapshot 时按运行模式隔离，普通 `run_mode=normal` 不读取回放状态。
 
 真实 provider 下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败、必需源空数据、交易日缺失当日行情或行情价格异常时，`pre-market` 会先保存失败的 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`，再明确失败。交易日历本轮只保存采集快照和摘要，不新增 `trading_calendar` 表。
 
@@ -105,9 +109,11 @@ Alembic 迁移创建以下表分组：
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
-- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots、data quality reports 和 range trends。
+- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots、data quality reports、range trends 和 strategy comparison。
 - `DashboardDaySummary.llm_analysis` 使用所选交易日最新成功 `pre_market` run 对应的 `llm_analyses` 记录；没有成功盘前 run 或没有 LLM 记录时为 `null`，记录存在但 payload 缺字段或类型错误时显式失败。
 - `DashboardLLMAnalysis` 字段包括 `run_id`、`trade_date`、`model`、`summary`、`key_points`、`risk_notes` 和 `created_at`。DTO 只展示已落库 LLM 审计内容，不在查询时重新调用 LLM。
+- `list_backtests(limit)` 返回最近的 backtest summary run；`strategy_comparison(backtest_ids)` 只比较明确传入的 backtest 批次。
+- 策略对比 DTO 按 `backtest_id` 输出 `strategy_params_version`、provider、日期范围、尝试/成功/失败天数、胜率、最大回撤、总收益率、风控拒绝率和数据质量失败率。
 - `trends(start_date, end_date)` 使用闭区间日期范围，输出 `DashboardTrendSummary`：
   - `points` 按日期升序排列，只包含范围内有 pipeline run、组合快照或数据质量报告的日期。
   - 权益曲线使用范围内每个交易日最新一条 `portfolio_snapshots.total_value`；没有快照时为 `null`。

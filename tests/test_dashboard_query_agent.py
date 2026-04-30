@@ -501,6 +501,163 @@ def test_dashboard_query_builds_range_trends_from_latest_successful_pre_market_r
     }
 
 
+def test_dashboard_query_compares_strategy_versions_by_backtest_id() -> None:
+    repository = InMemoryRepository()
+    first_day = date(2026, 4, 27)
+    second_day = date(2026, 4, 28)
+    strategy_snapshot = {
+        "version": "signal-v1",
+        "paper_trader": {"initial_cash": "100000"},
+        "signal": {"max_daily_signals": 2},
+    }
+    summary_context = PipelineRunContext(
+        trade_date=second_day,
+        run_id="bt-1-summary",
+        run_mode="backtest",
+        backtest_id="bt-1",
+    )
+    pre_context = PipelineRunContext(
+        trade_date=first_day,
+        run_id="bt-1-pre",
+        run_mode="backtest",
+        backtest_id="bt-1",
+    )
+    post_context = PipelineRunContext(
+        trade_date=second_day,
+        run_id="bt-1-post",
+        run_mode="backtest",
+        backtest_id="bt-1",
+    )
+    repository.save_pipeline_run(
+        summary_context,
+        "backtest",
+        "success",
+        {
+            "provider": "mock",
+            "start_date": first_day.isoformat(),
+            "end_date": second_day.isoformat(),
+            "attempted_days": 2,
+            "succeeded_days": 2,
+            "failed_days": 0,
+            "strategy_params_version": "signal-v1",
+            "strategy_params_snapshot": strategy_snapshot,
+        },
+    )
+    repository.save_risk_decisions(
+        pre_context,
+        [
+            RiskDecision(
+                symbol="510300",
+                trade_date=first_day,
+                signal_action="paper_buy",
+                approved=True,
+                reasons=["通过"],
+                target_position_pct=Decimal("0.1"),
+            ),
+            RiskDecision(
+                symbol="159915",
+                trade_date=first_day,
+                signal_action="paper_buy",
+                approved=False,
+                reasons=["接近涨停，不买入"],
+                target_position_pct=Decimal("0"),
+            ),
+        ],
+    )
+    repository.save_paper_positions(
+        post_context,
+        [
+            PaperPosition(
+                symbol="510300",
+                opened_at=first_day,
+                quantity=100,
+                entry_price=Decimal("100"),
+                current_price=Decimal("110"),
+                status="closed",
+                closed_at=second_day,
+                exit_price=Decimal("110"),
+            )
+        ],
+    )
+    repository.save_portfolio_snapshot(
+        pre_context,
+        PortfolioSnapshot(
+            trade_date=first_day,
+            cash=Decimal("90000"),
+            market_value=Decimal("10000"),
+            total_value=Decimal("100000"),
+            open_positions=1,
+        ),
+    )
+    repository.save_portfolio_snapshot(
+        post_context,
+        PortfolioSnapshot(
+            trade_date=second_day,
+            cash=Decimal("101000"),
+            market_value=Decimal("0"),
+            total_value=Decimal("101000"),
+            open_positions=0,
+        ),
+    )
+    repository.save_data_quality_report(
+        pre_context,
+        DataQualityReport(
+            trade_date=first_day,
+            stage="pre_market",
+            status="failed",
+            source_failure_rate=0.5,
+            total_sources=2,
+            failed_source_count=1,
+            empty_source_count=0,
+            missing_market_bar_count=1,
+            abnormal_price_count=0,
+            is_trade_date=True,
+            issues=[],
+        ),
+    )
+    second_summary_context = PipelineRunContext(
+        trade_date=second_day,
+        run_id="bt-2-summary",
+        run_mode="backtest",
+        backtest_id="bt-2",
+    )
+    repository.save_pipeline_run(
+        second_summary_context,
+        "backtest",
+        "failed",
+        {
+            "provider": "mock",
+            "start_date": first_day.isoformat(),
+            "end_date": second_day.isoformat(),
+            "attempted_days": 2,
+            "succeeded_days": 1,
+            "failed_days": 1,
+            "strategy_params_version": "signal-v2",
+            "strategy_params_snapshot": {
+                "version": "signal-v2",
+                "paper_trader": {"initial_cash": "100000"},
+            },
+        },
+    )
+
+    agent = DashboardQueryAgent(repository)
+    backtests = agent.list_backtests(limit=10)
+    comparison = agent.strategy_comparison(["bt-1", "bt-2"])
+
+    assert [item.backtest_id for item in backtests] == ["bt-2", "bt-1"]
+    assert comparison.backtest_ids == ["bt-1", "bt-2"]
+    first = comparison.items[0]
+    assert first.backtest_id == "bt-1"
+    assert first.strategy_params_version == "signal-v1"
+    assert first.provider == "mock"
+    assert first.win_rate == 1.0
+    assert first.total_return == 0.01
+    assert first.risk_reject_rate == 0.5
+    assert first.data_quality_failure_rate == 0.5
+    assert first.failed_days == 0
+    assert comparison.items[1].failed_days == 1
+
+
 def test_dashboard_query_keeps_failed_runs_visible_without_successful_pre_market() -> None:
     repository = InMemoryRepository()
     trade_date = date(2026, 4, 29)
@@ -575,6 +732,70 @@ def test_dashboard_query_positions_as_of_date_use_latest_record_per_symbol() -> 
     assert closed_day.positions[0].status == "closed"
     assert closed_day.positions[0].exit_price == "95.9040"
     assert closed_day.positions[0].pnl_amount == "-409.60"
+
+
+def test_dashboard_day_summary_ignores_backtest_state_for_normal_views() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 29)
+    normal_context = PipelineRunContext(trade_date=trade_date, run_id="normal-pre")
+    backtest_context = PipelineRunContext(
+        trade_date=trade_date,
+        run_id="backtest-pre",
+        run_mode="backtest",
+        backtest_id="bt-hidden",
+    )
+    repository.save_pipeline_run(normal_context, "pre_market", "success", {"report_path": "n.md"})
+    repository.save_pipeline_run(
+        backtest_context,
+        "pre_market",
+        "success",
+        {"report_path": "bt.md", "strategy_params_version": "bt-v1"},
+    )
+    repository.save_signals(
+        normal_context,
+        [
+            Signal(
+                symbol="510300",
+                trade_date=trade_date,
+                action="paper_buy",
+                score=0.8,
+                score_breakdown={"technical": 0.5},
+                reasons=["normal"],
+            )
+        ],
+    )
+    repository.save_signals(
+        backtest_context,
+        [
+            Signal(
+                symbol="159915",
+                trade_date=trade_date,
+                action="paper_buy",
+                score=0.99,
+                score_breakdown={"technical": 0.9},
+                reasons=["backtest"],
+            )
+        ],
+    )
+    repository.save_paper_positions(
+        backtest_context,
+        [
+            PaperPosition(
+                symbol="159915",
+                opened_at=trade_date,
+                quantity=100,
+                entry_price=Decimal("10"),
+                current_price=Decimal("11"),
+                status="open",
+            )
+        ],
+    )
+
+    day = DashboardQueryAgent(repository).day_summary(trade_date)
+
+    assert [run.run_id for run in day.runs] == ["normal-pre"]
+    assert [signal.symbol for signal in day.signals] == ["510300"]
+    assert day.positions == []
 
 
 def test_dashboard_query_rejects_malformed_payload() -> None:

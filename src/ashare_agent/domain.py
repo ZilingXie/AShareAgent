@@ -14,6 +14,7 @@ PositionStatus = Literal["open", "closed"]
 ExitReason = Literal["stop_loss", "trend_weakness", "max_holding_days"]
 DataQualitySeverity = Literal["warning", "error"]
 DataQualityStatus = Literal["passed", "warning", "failed"]
+RunMode = Literal["normal", "backtest"]
 
 
 def now_utc() -> datetime:
@@ -213,6 +214,8 @@ class WatchlistCandidate:
     score: float
     score_breakdown: dict[str, float]
     reasons: list[str]
+    strategy_params_version: str | None = None
+    strategy_params_snapshot: dict[str, Any] = field(default_factory=empty_dict)
 
 
 @dataclass(frozen=True)
@@ -223,6 +226,8 @@ class Signal:
     score: float
     score_breakdown: dict[str, float]
     reasons: list[str]
+    strategy_params_version: str | None = None
+    strategy_params_snapshot: dict[str, Any] = field(default_factory=empty_dict)
 
 
 @dataclass(frozen=True)
@@ -311,6 +316,8 @@ class PipelineRunContext:
     trade_date: date
     run_id: str = field(default_factory=lambda: str(uuid4()))
     created_at: datetime = field(default_factory=now_utc)
+    run_mode: RunMode = "normal"
+    backtest_id: str | None = None
 
 
 @dataclass(frozen=True)

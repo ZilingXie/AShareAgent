@@ -1,4 +1,10 @@
-import type { DashboardDay, DashboardRun, DashboardTrends } from "./types";
+import type {
+  DashboardBacktest,
+  DashboardDay,
+  DashboardRun,
+  DashboardStrategyComparison,
+  DashboardTrends,
+} from "./types";
 
 async function readJson<T>(response: Response): Promise<T> {
   if (response.ok) {
@@ -32,4 +38,18 @@ export async function fetchDashboardTrends(
   const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
   const response = await fetch(`/api/dashboard/trends?${params.toString()}`);
   return readJson<DashboardTrends>(response);
+}
+
+export async function fetchBacktests(limit = 50): Promise<DashboardBacktest[]> {
+  const response = await fetch(`/api/dashboard/backtests?limit=${limit}`);
+  const body = await readJson<{ backtests: DashboardBacktest[] }>(response);
+  return body.backtests;
+}
+
+export async function fetchStrategyComparison(
+  backtestIds: string[]
+): Promise<DashboardStrategyComparison> {
+  const params = new URLSearchParams({ backtest_ids: backtestIds.join(",") });
+  const response = await fetch(`/api/dashboard/strategy-comparison?${params.toString()}`);
+  return readJson<DashboardStrategyComparison>(response);
 }

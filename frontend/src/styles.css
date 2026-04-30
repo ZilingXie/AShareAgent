@@ -449,6 +449,38 @@ td {
   gap: 8px;
 }
 
+.comparison-list {
+  display: grid;
+  gap: 10px;
+}
+
+.comparison-row {
+  border-top: 1px solid #e6eaee;
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.comparison-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.comparison-row > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.comparison-row strong {
+  color: #22313f;
+}
+
+.comparison-row span {
+  color: #6a7783;
+  font-size: 12px;
+}
+
 .mini-bars {
   background: #eef1f4;
   border-radius: 999px;

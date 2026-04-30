@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/data-quality-agent` 已完成并合入本地 `main`：策略参数版本审计、DataQualityAgent、质量报告落库和 dashboard 展示均已完成。当前正在做收尾清理：更新状态记录、清理已合入的 `codex/alembic-transaction-fix` worktree/本地分支，并准备将 `main` push 到 GitHub。
+`codex/data-quality-agent` 已完成并合入 `main`：策略参数版本审计、DataQualityAgent、质量报告落库和 dashboard 展示均已完成。`codex/alembic-transaction-fix` 也已合入，相关 worktree/本地分支已清理，`main` 已同步到 GitHub `origin/main`。
 
 ## 上次停在哪
 
@@ -31,6 +31,7 @@
 - 本轮新增 DataQualityAgent，检查必需源失败/空数据、缺失当日行情、异常价格、source 失败率和非交易日运行提示。
 - 新增 `data_quality_reports` 专表和 DashboardQueryAgent DTO，dashboard 已显示每次 run 的数据质量状态和问题明细。
 - 已将 `codex/data-quality-agent` 和 `codex/alembic-transaction-fix` 合并回本地 `main`；其中 Alembic 修复确保 schema 状态检查在迁移前提交事务，避免 PostgreSQL aborted transaction 影响后续迁移。
+- 已清理 `codex/alembic-transaction-fix` worktree 和本地分支，并将 `main` 同步到 GitHub `origin/main`。
 
 ## 近期关键决定和原因
 

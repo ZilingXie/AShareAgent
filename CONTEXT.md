@@ -37,6 +37,8 @@
 - 本轮更新 AGENTS.md：worktree 任务验证通过后默认进入 `finalizing-to-main`，自动提交、合并、复验、清理 task worktree/分支，并在远端没有分叉时自动 push。
 - 本轮新增结构化 `trading_calendar` 表、`DataReliabilityAgent`、`data_reliability_reports`、`ashare daily-run` 和 `scripts/daily_run.sh`。
 - dashboard 日汇总和趋势 DTO 已接入交易日历与运行可靠性报告，前端新增“运行可靠性”只读面板。
+- 本轮新增独立 `strategy-experiment.md` 策略实验报告，在盘后复盘阶段生成，集中展示盘前 LLM 分析、风控拒绝原因、模拟订单、卖出原因、组合复盘摘要和累计复盘指标。
+- 本轮将 `llm_analyses` 接入 `DashboardQueryAgent.day_summary().llm_analysis` DTO，并在前端只读观察台展示“LLM 盘前分析”；模拟订单表同步展示 `PaperOrder.reason` 原文。
 
 ## 近期关键决定和原因
 
@@ -63,7 +65,9 @@
 - 数据质量趋势按天取最大 source 失败率，阻断次数统计 `status=failed` 报告数，warning 次数统计 `severity=warning` issue 数。
 - 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动完整收尾：提交 task 分支、合并回 `main`、复验、清理 worktree/分支，并在远端没有分叉时自动 push。
 - `CONTEXT.md` 保持极简，只记录当前状态、停靠点和关键决定。
+- 策略实验报告和 dashboard LLM 展示只读取已落库审计数据；dashboard 查询没有 LLM 记录时返回 `null`，记录存在但 payload 坏数据时显式失败。
+- 模拟订单原因统一展示 `PaperOrder.reason` 原文；卖出原因只按卖单原因计数，不做自动归类。
 
 ## 下一步
 
-- 下一步可接真实 `DATABASE_URL` 执行 Alembic `upgrade head` 后跑一次 `ashare daily-run` smoke，再用 dashboard 检查可靠性面板。
+- 下一步可接真实 `DATABASE_URL` 执行 Alembic `upgrade head` 后跑一次 `ashare daily-run` smoke，再用 dashboard 检查可靠性面板和 LLM 盘前分析展示。

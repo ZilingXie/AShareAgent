@@ -153,6 +153,41 @@ def test_mock_pipeline_runs_pre_market_and_post_market_with_audit_outputs(tmp_pa
     )
 
 
+def test_post_market_review_writes_strategy_experiment_report(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    _seed_open_position(
+        repository,
+        opened_at=date(2026, 4, 28),
+        trade_date=date(2026, 4, 28),
+        current_price=Decimal("100"),
+    )
+    pipeline = ASharePipeline(
+        provider=MockProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+    review = pipeline.run_post_market_review(trade_date)
+
+    report_path = tmp_path / "2026-04-29" / "strategy-experiment.md"
+    content = report_path.read_text(encoding="utf-8")
+
+    assert review.payload["experiment_report_path"] == str(report_path)
+    assert "## LLM 盘前分析" in content
+    assert "Mock 盘前分析" in content
+    assert "## 风控拒绝原因" in content
+    assert "已有持仓，避免重复买入" in content
+    assert "## 模拟订单" in content
+    assert "| side | symbol | quantity | price | amount | reason | real_trade |" in content
+    assert "| sell | 510300" in content
+    assert "触发止损" in content
+    assert "## 卖出原因" in content
+    assert "触发止损: 1" in content
+
+
 def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) -> None:
     trade_date = date(2026, 4, 29)
     repository = InMemoryRepository()

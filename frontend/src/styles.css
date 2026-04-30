@@ -249,10 +249,7 @@ h3 {
   padding: 15px;
 }
 
-.panel:nth-child(5),
-.panel:nth-child(6),
-.panel:nth-child(7),
-.panel:nth-child(8) {
+.panel:nth-child(n + 5) {
   grid-column: 1 / -1;
 }
 
@@ -492,6 +489,34 @@ td {
   gap: 8px;
   grid-template-columns: max-content minmax(80px, 120px) minmax(70px, 100px) minmax(0, 1fr);
   padding: 8px 10px;
+}
+
+.llm-list {
+  display: grid;
+  gap: 7px;
+}
+
+.llm-row {
+  align-items: start;
+  background: #f8fafb;
+  border: 1px solid #e6eaee;
+  border-radius: 7px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  padding: 8px 10px;
+}
+
+.llm-row span {
+  color: #6a7783;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.llm-row strong {
+  color: #22313f;
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .muted,

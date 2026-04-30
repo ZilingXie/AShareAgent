@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、DashboardQueryAgent 只读 DTO 契约、复盘指标 DTO、日期范围趋势 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -79,7 +79,7 @@ Alembic 迁移创建以下表分组：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`trading_calendar`、`market_bars`、`announcements`、`news_items`、`policy_items`，再写入 `data_quality_reports`；质量通过或仅警告后继续写 `technical_indicators`、`pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
 - `intraday-watch` 写入 `pipeline_runs` 和 `artifacts`。
-- `post-market-review` 从 repository 读取当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有模拟订单；若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。
+- `post-market-review` 从 repository 读取当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有模拟订单；若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。盘后还会生成 `strategy-experiment.md`，并在 `post_market_review` artifact 与 pipeline run payload 中记录 `experiment_report_path`。
 - `daily-run` 先采集并 upsert 结构化 `trading_calendar`；非交易日写 `pipeline_runs(stage=daily_run,status=skipped)` 和 `data_reliability_reports` 后退出；交易日依次运行盘前、盘中和复盘，并在成功或失败后写 `data_reliability_reports` 和 `daily_run` 审计。
 - `paper_positions` 中的 payload 可保存 `open` 和 `closed` 状态；repository 恢复开放持仓时只返回每个 symbol 的最新 `open` payload。
 
@@ -118,7 +118,9 @@ Alembic 迁移创建以下表分组：
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
-- DTO 覆盖 pipeline runs、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports 和 range trends。
+- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports 和 range trends。
+- `DashboardDaySummary.llm_analysis` 使用所选交易日最新成功 `pre_market` run 对应的 `llm_analyses` 记录；没有成功盘前 run 或没有 LLM 记录时为 `null`，记录存在但 payload 缺字段或类型错误时显式失败。
+- `DashboardLLMAnalysis` 字段包括 `run_id`、`trade_date`、`model`、`summary`、`key_points`、`risk_notes` 和 `created_at`。DTO 只展示已落库 LLM 审计内容，不在查询时重新调用 LLM。
 - `trends(start_date, end_date)` 使用闭区间日期范围，输出 `DashboardTrendSummary`：
   - `points` 按日期升序排列，只包含范围内有 pipeline run、组合快照、数据质量报告或运行可靠性报告的日期。
   - 权益曲线使用范围内每个交易日最新一条 `portfolio_snapshots.total_value`；没有快照时为 `null`。
@@ -135,7 +137,7 @@ Alembic 迁移创建以下表分组：
   - `average_holding_days`：只统计 closed trade，沿用自然日口径；无 closed trade 时为 `0`。
   - `sell_reason_distribution`：按截至所选日所有模拟卖单的 `reason` 原文计数，不做额外归类。
   - `max_drawdown`：按截至所选日 `portfolio_snapshots.total_value` 序列计算峰值到谷值最大跌幅，输出正数百分比小数。
-- `PaperOrder.is_real_trade` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，前端也会显式展示该字段。
+- `DashboardPaperOrder.reason` 使用 `PaperOrder.reason` 原文；卖出原因不做自动归类。`PaperOrder.is_real_trade` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，前端也会显式展示该字段。
 - 查询层遇到缺字段、字段类型错误、未知枚举或 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底；复盘指标计算也遵守同一规则。
 
 ## 后续维护

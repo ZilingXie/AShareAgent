@@ -60,6 +60,17 @@ class DashboardSignalItem:
 
 
 @dataclass(frozen=True)
+class DashboardLLMAnalysis:
+    run_id: str
+    trade_date: str
+    model: str
+    summary: str
+    key_points: list[str]
+    risk_notes: list[str]
+    created_at: str
+
+
+@dataclass(frozen=True)
 class DashboardRiskDecision:
     run_id: str
     symbol: str
@@ -303,6 +314,7 @@ class DashboardDaySummary:
     runs: list[DashboardPipelineRun] = field(default_factory=_empty_runs)
     watchlist: list[DashboardWatchlistItem] = field(default_factory=_empty_watchlist)
     signals: list[DashboardSignalItem] = field(default_factory=_empty_signals)
+    llm_analysis: DashboardLLMAnalysis | None = None
     risk_decisions: list[DashboardRiskDecision] = field(default_factory=_empty_risk_decisions)
     paper_orders: list[DashboardPaperOrder] = field(default_factory=_empty_paper_orders)
     positions: list[DashboardPosition] = field(default_factory=_empty_positions)
@@ -343,6 +355,7 @@ class DashboardQueryAgent:
             runs=runs,
             watchlist=self.watchlist(trade_date, pre_market_run_id),
             signals=self.signals(trade_date, pre_market_run_id),
+            llm_analysis=self.llm_analysis(trade_date, pre_market_run_id),
             risk_decisions=self.risk_decisions(trade_date, pre_market_run_id),
             paper_orders=self.paper_orders(trade_date),
             positions=self.positions_as_of(trade_date),
@@ -441,6 +454,23 @@ class DashboardQueryAgent:
             self._signal_item(row)
             for row in self.repository.payload_rows("signals", trade_date=trade_date, run_id=run_id)
         ]
+
+    def llm_analysis(
+        self,
+        trade_date: date,
+        run_id: str | None = None,
+    ) -> DashboardLLMAnalysis | None:
+        run_id = run_id or self._latest_successful_run_id(trade_date, "pre_market")
+        if run_id is None:
+            return None
+        rows = self.repository.payload_rows(
+            "llm_analyses",
+            trade_date=trade_date,
+            run_id=run_id,
+        )
+        if not rows:
+            return None
+        return self._llm_analysis(rows[-1])
 
     def risk_decisions(
         self,
@@ -720,6 +750,19 @@ class DashboardQueryAgent:
             reasons=_required_str_list(payload, "signals", "reasons"),
         )
 
+    def _llm_analysis(self, row: PayloadRecord) -> DashboardLLMAnalysis:
+        payload = _payload(row, "llm_analyses")
+        _required_mapping(payload, "llm_analyses", "raw_response")
+        return DashboardLLMAnalysis(
+            run_id=_row_run_id(row, "llm_analyses"),
+            trade_date=_required_date(payload, "llm_analyses", "trade_date").isoformat(),
+            model=_required_json_str(payload, "llm_analyses", "model"),
+            summary=_required_json_str(payload, "llm_analyses", "summary"),
+            key_points=_required_json_str_list(payload, "llm_analyses", "key_points"),
+            risk_notes=_required_json_str_list(payload, "llm_analyses", "risk_notes"),
+            created_at=_required_json_str(payload, "llm_analyses", "created_at"),
+        )
+
     def _risk_decision(self, row: PayloadRecord) -> DashboardRiskDecision:
         payload = _payload(row, "risk_decisions")
         return DashboardRiskDecision(
@@ -988,6 +1031,13 @@ def _required_str(payload: Mapping[str, object], table_name: str, field_name: st
     return str(_required(payload, table_name, field_name))
 
 
+def _required_json_str(payload: Mapping[str, object], table_name: str, field_name: str) -> str:
+    value = _required(payload, table_name, field_name)
+    if not isinstance(value, str):
+        raise ValueError(f"{table_name} 字段 {field_name} 必须是 string")
+    return value
+
+
 def _required_bool(payload: Mapping[str, object], table_name: str, field_name: str) -> bool:
     value = _required(payload, table_name, field_name)
     if not isinstance(value, bool):
@@ -1033,6 +1083,20 @@ def _required_str_list(
         raise ValueError(f"{table_name} 字段 {field_name} 必须是 list")
     values = cast(list[object], value)
     return [str(item) for item in values]
+
+
+def _required_json_str_list(
+    payload: Mapping[str, object],
+    table_name: str,
+    field_name: str,
+) -> list[str]:
+    value = _required(payload, table_name, field_name)
+    if not isinstance(value, list):
+        raise ValueError(f"{table_name} 字段 {field_name} 必须是 list")
+    values = cast(list[object], value)
+    if not all(isinstance(item, str) for item in values):
+        raise ValueError(f"{table_name} 字段 {field_name} 必须是 string list")
+    return cast(list[str], values)
 
 
 def _required_mapping(

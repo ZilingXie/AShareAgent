@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/review-metrics-agent` 已完成：复盘区域已新增累计复盘指标，并接入只读 dashboard，准备提交并合并回 `main`。
+`codex/review-metrics-agent` 已完成：当前分支已合入本地 `main` 上的策略参数版本审计，并完成复盘指标 dashboard 接入，准备最终验证后合并回 `main`。
 
 ## 上次停在哪
 
@@ -27,6 +27,7 @@
 - 已清理已合入的本地 `codex/announcement-golden-tests` worktree 和本地分支。
 - 已新增 `ReviewMetricsAgent`，按截至所选交易日累计统计已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤。
 - 已将复盘指标接入 `DashboardQueryAgent` 的 `review_report.metrics` DTO，并在前端复盘报告区域展示。
+- 本轮新增 `StrategyParamsAgent`，从 `configs/strategy_params.yml` 加载风控和模拟交易参数，并在每次 `pipeline_runs.payload` 记录 `strategy_params_version` 和 `strategy_params_snapshot`。
 
 ## 近期关键决定和原因
 
@@ -39,6 +40,7 @@
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
+- 策略参数使用显式版本号加完整快照，不使用自动哈希；本轮只覆盖风控和模拟交易参数，不迁移 SignalEngine 评分权重。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 - 公告分析继续使用可解释规则，不引入 LLM 判断；误判追踪先落在固定样本 `case_id` 层，不改变运行时模型或落库边界。
@@ -51,4 +53,4 @@
 
 ## 下一步
 
-- 下一步可继续做策略参数版本、数据质量检查，或补充更细的 dashboard 筛选/趋势图。
+- 下一步可继续做数据质量检查，或补充更细的 dashboard 筛选/趋势图。

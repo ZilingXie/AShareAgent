@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
+from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyParamsAgent
 from ashare_agent.domain import (
     Asset,
     MarketBar,
@@ -48,6 +50,44 @@ class ExitScenarioProvider(MockProvider):
 
     def get_trade_calendar(self) -> list[date]:
         return list(self._calendar)
+
+
+def _write_strategy_params(
+    path: Path,
+    *,
+    version: str = "pipeline-test-params",
+    stop_loss_pct: str = "0.05",
+    max_daily_loss_pct: str = "0.02",
+    price_limit_pct: str = "0.098",
+    min_holding_trade_days: int = 2,
+    max_holding_trade_days: int = 10,
+) -> None:
+    path.write_text(
+        f"""
+version: "{version}"
+risk:
+  max_positions: 5
+  target_position_pct: "0.10"
+  min_cash: "100"
+  max_daily_loss_pct: "{max_daily_loss_pct}"
+  stop_loss_pct: "{stop_loss_pct}"
+  price_limit_pct: "{price_limit_pct}"
+  min_holding_trade_days: {min_holding_trade_days}
+  max_holding_trade_days: {max_holding_trade_days}
+  blacklist: []
+paper_trader:
+  initial_cash: "100000"
+  position_size_pct: "0.10"
+  slippage_pct: "0.001"
+""",
+        encoding="utf-8",
+    )
+
+
+def _strategy_params(tmp_path: Path, **overrides: Any) -> StrategyParams:
+    config_path = tmp_path / "strategy_params.yml"
+    _write_strategy_params(config_path, **overrides)
+    return StrategyParamsAgent(config_path).load()
 
 
 def _seed_open_position(
@@ -99,6 +139,18 @@ def test_mock_pipeline_runs_pre_market_and_post_market_with_audit_outputs(tmp_pa
     assert "paper" in review.payload["report_path"]
     assert (tmp_path / "2026-04-29" / "pre-market.md").exists()
     assert (tmp_path / "2026-04-29" / "post-market-review.md").exists()
+
+    repository = pipeline.repository
+    assert isinstance(repository, InMemoryRepository)
+    pipeline_runs = repository.records_for("pipeline_runs")
+    assert [row["payload"]["strategy_params_version"] for row in pipeline_runs] == [
+        "strategy-params-v1",
+        "strategy-params-v1",
+        "strategy-params-v1",
+    ]
+    assert (
+        pipeline_runs[0]["payload"]["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.05"
+    )
 
 
 def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) -> None:
@@ -185,6 +237,34 @@ def test_pipeline_closes_position_on_stop_loss(tmp_path: Path) -> None:
     assert sell_orders[0]["is_real_trade"] is False
     assert positions[-1]["payload"]["status"] == "closed"
     assert positions[-1]["payload"]["closed_at"] == trade_date.isoformat()
+
+
+def test_pipeline_uses_configured_strategy_params_for_stop_loss(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 30)
+    repository = InMemoryRepository()
+    _seed_open_position(
+        repository,
+        opened_at=date(2026, 4, 29),
+        trade_date=trade_date,
+        current_price=Decimal("100"),
+    )
+    pipeline = ASharePipeline(
+        provider=ExitScenarioProvider(
+            close=Decimal("94"),
+            calendar_start=date(2026, 4, 29),
+            calendar_days=2,
+        ),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+        strategy_params=_strategy_params(tmp_path, stop_loss_pct="0.10"),
+    )
+
+    pipeline.run_post_market_review(trade_date)
+
+    assert repository.records_for("paper_orders") == []
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.10"
 
 
 def test_pipeline_rejects_t_plus_one_stop_loss_sell(tmp_path: Path) -> None:
@@ -274,6 +354,9 @@ def test_pipeline_records_required_source_failure_before_raising(tmp_path: Path)
         for row in snapshots
     )
     assert repository.records_for("pipeline_runs")[-1]["payload"]["status"] == "failed"
+    failed_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert failed_run["strategy_params_version"] == "strategy-params-v1"
+    assert failed_run["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.05"
 
 
 def test_post_market_records_required_source_failure_before_raising(tmp_path: Path) -> None:
@@ -305,3 +388,5 @@ def test_post_market_records_required_source_failure_before_raising(tmp_path: Pa
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert latest_run["stage"] == "post_market_review"
     assert latest_run["status"] == "failed"
+    assert latest_run["strategy_params_version"] == "strategy-params-v1"
+    assert latest_run["strategy_params_snapshot"]["risk"]["max_daily_loss_pct"] == "0.02"

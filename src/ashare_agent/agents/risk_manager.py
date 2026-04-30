@@ -33,6 +33,11 @@ def _elapsed_trade_days(opened_at: date, trade_date: date, trade_calendar: list[
     return len([item for item in calendar if opened_at < item <= trade_date])
 
 
+def _pct_text(value: Decimal) -> str:
+    text = format((value * Decimal("100")).normalize(), "f")
+    return text.rstrip("0").rstrip(".") or "0"
+
+
 class RiskManager:
     def __init__(
         self,
@@ -88,7 +93,7 @@ class RiskManager:
             if cash <= self._min_cash:
                 reasons.append("可用现金不足")
             if daily_loss_triggered:
-                reasons.append("单日最大亏损超过 2%")
+                reasons.append(f"单日最大亏损超过 {_pct_text(self._max_daily_loss_pct)}%")
             if bars is not None:
                 symbol_bars = bars_by_symbol.get(signal.symbol, [])
                 if len(symbol_bars) < 2:

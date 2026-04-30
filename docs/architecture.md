@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：已落地 Python 后端骨架、Mock pipeline、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema。前端观察台尚未开始。
+当前状态：已落地 Python 后端骨架、Mock pipeline、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema 和核心持久化接线。前端观察台尚未开始。
 
 ## 目标架构
 
@@ -29,7 +29,9 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 - 当前入口是 CLI：`pre-market`、`intraday-watch`、`post-market-review`。
 - 默认 provider 是 `MockProvider`；真实公开源通过 `AKShareProvider` 适配，后续再加外部测试标记。
 - 默认 LLM 是 mock；`.env` 中设置 `ASHARE_LLM_PROVIDER=openai` 或 `deepseek` 后才调用真实 API。
-- PostgreSQL 通过 Alembic 创建 `ashare_agent` schema，业务结果先可写入审计 artifact，核心表分组已预留。
+- CLI 必须配置 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
+- PostgreSQL 通过 Alembic 创建 `ashare_agent` schema，pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 已写入专表。
+- `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策和已有开放持仓，用于跨 CLI 命令的连续模拟交易基础。
 - Streamlit/React dashboard 放到第二阶段，第一阶段只输出 Markdown 报告。
 - 模块边界发生变化时，同步更新本文件。
 
@@ -46,5 +48,5 @@ src/ashare_agent/
 ├── indicators.py        # 基础技术指标
 ├── pipeline.py          # 三段流程编排
 ├── reports.py           # Markdown 输出
-└── repository.py        # PostgreSQL artifact repository
+└── repository.py        # In-memory/PostgreSQL repository
 ```

@@ -36,8 +36,11 @@ class PaperTrader:
     ) -> PaperTradeResult:
         latest_bars = {bar.symbol: bar for bar in sorted(bars, key=lambda item: item.trade_date)}
         new_orders: list[PaperOrder] = []
+        open_symbols = {position.symbol for position in self.open_positions()}
         for decision in decisions:
             if not decision.approved or decision.signal_action != "paper_buy":
+                continue
+            if decision.symbol in open_symbols:
                 continue
             bar = latest_bars.get(decision.symbol)
             if bar is None:
@@ -77,6 +80,7 @@ class PaperTrader:
                     status="open",
                 )
             )
+            open_symbols.add(decision.symbol)
         return PaperTradeResult(cash=self.cash, orders=new_orders, positions=self.open_positions())
 
     def mark_to_market(self, bars: list[MarketBar]) -> None:

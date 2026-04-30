@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约和 PostgreSQL 初始 schema。
+当前状态：已落地第一版 domain models、provider 契约、PostgreSQL 初始 schema 和核心 pipeline 持久化。
 
 ## DataProvider 原则
 
@@ -55,7 +55,13 @@ Alembic 初始迁移创建 `ashare_agent` schema，并预留以下表分组：
 - `review_reports`
 - `artifacts`
 
-第一版 repository 先写通用 `artifacts` 审计表；后续 Agent 分支可以逐步切到专表写入。
+当前 repository 已将核心运行结果写入专表：
+
+- `pre-market` 写入 `pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
+- `intraday-watch` 写入 `pipeline_runs` 和 `artifacts`。
+- `post-market-review` 从 repository 读取当日最新 pre-market 风控决策和开放持仓，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。
+
+`artifacts` 仍保留为报告和聚合 payload 的审计表；专表 payload 是后续连续模拟交易和只读观察台的数据基础。
 
 ## 后续维护
 

@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Mock Pipeline`
+当前状态：`Foundation MVP / Mock Pipeline / PostgreSQL Persistence`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -188,6 +188,7 @@ cp .env.example .env
 ```bash
 ASHARE_PROVIDER=mock
 ASHARE_LLM_PROVIDER=openai
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_API_KEY=你的 key
 ```
@@ -196,7 +197,10 @@ OPENAI_API_KEY=你的 key
 
 ```bash
 ASHARE_LLM_PROVIDER=mock
+DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare
 ```
+
+运行 CLI 前必须先配置 `DATABASE_URL` 并完成迁移。CLI 不配置数据库会明确失败，避免误以为结果已持久化。
 
 运行 CLI：
 
@@ -222,6 +226,8 @@ DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare \
 ```
 
 迁移只创建 `ashare_agent` schema 和本项目表，不主动删除已有对象。
+
+当前 CLI 会把 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。
 
 ## 文档导航
 

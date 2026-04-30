@@ -9,6 +9,7 @@ from ashare_agent.config import load_settings
 from ashare_agent.llm.factory import create_llm_client
 from ashare_agent.pipeline import ASharePipeline
 from ashare_agent.providers.mock import MockProvider
+from ashare_agent.repository import PostgresRepository
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -26,6 +27,8 @@ def _build_pipeline() -> ASharePipeline:
         raise typer.BadParameter(
             "第一版 CLI 默认只启用 mock provider；真实 AKShare 入口后续单独加外部标记"
         )
+    if not settings.database_url:
+        raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
     return ASharePipeline(
         provider=MockProvider(),
         llm_client=create_llm_client(
@@ -36,6 +39,7 @@ def _build_pipeline() -> ASharePipeline:
             deepseek_model=settings.deepseek_model,
         ),
         report_root=Path(settings.report_root),
+        repository=PostgresRepository(settings.database_url),
     )
 
 

@@ -1,0 +1,127 @@
+- case_id: distribution_cash_dividend
+  scenario: 分红
+  symbol: "510300"
+  name: 沪深300ETF
+  title: 关于2025年年度权益分派提高分红比例的公告
+  source_category: 重大事项
+  expected:
+    category: distribution
+    sentiment: positive
+    is_material: true
+    exclude: false
+    reason_keywords:
+      - 分红
+
+- case_id: share_reduction_plan
+  scenario: 减持
+  symbol: "600000"
+  name: 样本银行
+  title: 关于控股股东拟减持公司股份的预披露公告
+  source_category: 持股变动
+  expected:
+    category: share_reduction
+    sentiment: negative
+    is_material: true
+    exclude: true
+    reason_keywords:
+      - 减持
+
+- case_id: material_litigation
+  scenario: 诉讼
+  symbol: "600001"
+  name: 样本制造
+  title: 关于公司涉及重大诉讼的公告
+  source_category: 重大事项
+  expected:
+    category: litigation
+    sentiment: negative
+    is_material: true
+    exclude: true
+    reason_keywords:
+      - 诉讼
+
+- case_id: administrative_penalty
+  scenario: 处罚
+  symbol: "600002"
+  name: 样本科技
+  title: 关于收到行政处罚决定书暨立案调查进展的公告
+  source_category: 风险提示
+  expected:
+    category: penalty
+    sentiment: negative
+    is_material: true
+    exclude: true
+    reason_keywords:
+      - 处罚
+      - 立案
+
+- case_id: restructuring_neutral
+  scenario: 重组
+  symbol: "600003"
+  name: 样本能源
+  title: 关于筹划重大资产重组停牌的公告
+  source_category: 资产重组
+  expected:
+    category: restructuring
+    sentiment: neutral
+    is_material: true
+    exclude: false
+    reason_keywords:
+      - 资产重组
+
+- case_id: restructuring_approved
+  scenario: 重组获批
+  symbol: "600004"
+  name: 样本装备
+  title: 关于资产重组事项获批的公告
+  source_category: 资产重组
+  expected:
+    category: restructuring
+    sentiment: positive
+    is_material: true
+    exclude: false
+    reason_keywords:
+      - 获批
+
+- case_id: delisting_risk_warning
+  scenario: 风险提示
+  symbol: "600005"
+  name: 样本零售
+  title: 关于公司股票可能被实施退市风险警示的风险提示公告
+  source_category: 风险提示
+  expected:
+    category: risk
+    sentiment: negative
+    is_material: true
+    exclude: true
+    reason_keywords:
+      - 风险
+      - 退市
+
+- case_id: loss_warning
+  scenario: 亏损风险
+  symbol: "600006"
+  name: 样本医药
+  title: 2025年度业绩预告亏损风险提示公告
+  source_category: 风险提示
+  expected:
+    category: risk
+    sentiment: negative
+    is_material: true
+    exclude: true
+    reason_keywords:
+      - 亏损
+
+- case_id: neutral_shareholder_meeting
+  scenario: 中性公告
+  symbol: "600007"
+  name: 样本消费
+  title: 关于召开年度股东大会的通知
+  source_category: 信息变更
+  expected:
+    category: general
+    sentiment: neutral
+    is_material: false
+    exclude: false
+    reason_keywords:
+      - 未命中明确关键词

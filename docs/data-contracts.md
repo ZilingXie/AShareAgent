@@ -34,6 +34,10 @@
 - 模拟交易：`PaperOrder`、`PaperPosition`、`PortfolioSnapshot`、`ReviewReport`。
 - 流程审计：`SourceSnapshot`、`MarketDataset`、`PipelineRunContext`、`AgentResult`。
 
+## 公告分析规则契约
+
+`AnnouncementAnalyzer` 保持输出 `AnnouncementEvent`，不新增运行时字段或数据库表。当前规则用标题和来源分类做可解释判断：分红归为 `distribution`，减持归为 `share_reduction`，诉讼归为 `litigation`，处罚或立案归为 `penalty`，资产重组归为 `restructuring`，风险提示、退市或亏损风险归为 `risk`。减持、诉讼、处罚和风险提示默认作为排除类负面事件；资产重组默认重大，情绪仍由标题关键词决定。固定样本放在 `tests/fixtures/announcement_golden_cases.yml`，每条样本用 `case_id` 追踪误判。
+
 ## PostgreSQL schema
 
 本地开发复用现有 Podman PostgreSQL 的 `supportportal` 数据库，但所有 AShareAgent 对象都放在独立 `ashare_agent` schema。Alembic 版本表固定为 `ashare_agent.alembic_version`，避免污染共享数据库中其他项目的迁移状态。若 schema 已存在但缺少该版本表，迁移会停止，避免在状态不明的共享库里继续写入。

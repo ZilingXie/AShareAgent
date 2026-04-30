@@ -64,6 +64,14 @@ export interface DashboardPortfolioSnapshot {
   open_positions: number;
 }
 
+export interface DashboardReviewMetrics {
+  realized_pnl: string;
+  win_rate: number;
+  average_holding_days: number;
+  sell_reason_distribution: Record<string, number>;
+  max_drawdown: number;
+}
+
 export interface DashboardReviewReport {
   run_id: string;
   trade_date: string;
@@ -71,6 +79,7 @@ export interface DashboardReviewReport {
   stats: Record<string, number>;
   attribution: string[];
   parameter_suggestions: string[];
+  metrics: DashboardReviewMetrics;
 }
 
 export interface DashboardSourceSnapshot {

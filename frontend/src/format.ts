@@ -19,6 +19,13 @@ export function percent(value: number | null | undefined): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+export function days(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "-";
+  }
+  return `${value.toFixed(2)} 天`;
+}
+
 export function score(value: number): string {
   return value.toFixed(2);
 }
@@ -40,4 +47,12 @@ export function listText(values: string[]): string {
     return "-";
   }
   return values.join("；");
+}
+
+export function distributionText(value: Record<string, number>): string {
+  const entries = Object.entries(value);
+  if (entries.length === 0) {
+    return "-";
+  }
+  return entries.map(([key, item]) => `${key}: ${item}`).join("；");
 }

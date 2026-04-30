@@ -6,6 +6,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
+from ashare_agent.agents.review_metrics_agent import ReviewMetricsAgent
 from ashare_agent.repository import PayloadRecord
 
 
@@ -104,6 +105,15 @@ class DashboardPortfolioSnapshot:
 
 
 @dataclass(frozen=True)
+class DashboardReviewMetrics:
+    realized_pnl: str
+    win_rate: float
+    average_holding_days: float
+    sell_reason_distribution: dict[str, int]
+    max_drawdown: float
+
+
+@dataclass(frozen=True)
 class DashboardReviewReport:
     run_id: str
     trade_date: str
@@ -111,6 +121,8 @@ class DashboardReviewReport:
     stats: dict[str, float]
     attribution: list[str]
     parameter_suggestions: list[str]
+    metrics: DashboardReviewMetrics
+
 
 
 @dataclass(frozen=True)
@@ -173,6 +185,7 @@ class DashboardDaySummary:
 class DashboardQueryAgent:
     def __init__(self, repository: DashboardQueryRepository) -> None:
         self.repository = repository
+        self.review_metrics_agent = ReviewMetricsAgent(repository)
 
     def list_pipeline_runs(self, limit: int = 50) -> list[DashboardPipelineRun]:
         rows = sorted(
@@ -446,9 +459,10 @@ class DashboardQueryAgent:
 
     def _review_report(self, row: PayloadRecord) -> DashboardReviewReport:
         payload = _payload(row, "review_reports")
+        trade_date = _required_date(payload, "review_reports", "trade_date")
         return DashboardReviewReport(
             run_id=_row_run_id(row, "review_reports"),
-            trade_date=_required_date(payload, "review_reports", "trade_date").isoformat(),
+            trade_date=trade_date.isoformat(),
             summary=_required_str(payload, "review_reports", "summary"),
             stats=_float_mapping(
                 _required_mapping(payload, "review_reports", "stats"),
@@ -461,6 +475,17 @@ class DashboardQueryAgent:
                 "review_reports",
                 "parameter_suggestions",
             ),
+            metrics=self._review_metrics(trade_date),
+        )
+
+    def _review_metrics(self, trade_date: date) -> DashboardReviewMetrics:
+        metrics = self.review_metrics_agent.metrics_as_of(trade_date)
+        return DashboardReviewMetrics(
+            realized_pnl=_decimal_text(metrics.realized_pnl.quantize(Decimal("0.01"))),
+            win_rate=metrics.win_rate,
+            average_holding_days=metrics.average_holding_days,
+            sell_reason_distribution=metrics.sell_reason_distribution,
+            max_drawdown=metrics.max_drawdown,
         )
 
     def _source_snapshot(

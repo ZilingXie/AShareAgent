@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema、核心持久化接线、模拟持仓生命周期和第一版只读观察台。
+当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、CLI、LLM adapter、PostgreSQL/Alembic 初始 schema、核心持久化接线、模拟持仓生命周期、复盘指标查询和第一版只读观察台。
 
 ## 目标架构
 
@@ -23,6 +23,7 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 | `RiskManager` | 处理仓位、涨跌停、T+1、黑名单和单日最大亏损等交易前风控。 |
 | `PaperTrader` | 执行模拟买入、模拟卖出、成交价格估算、滑点估算和持仓记录。 |
 | `ReviewAgent` | 生成收盘复盘、策略统计、错误归因和参数调整建议。 |
+| `ReviewMetricsAgent` | 基于已落库模拟交易审计数据计算累计复盘指标，不参与交易执行。 |
 
 ## 当前边界
 
@@ -35,6 +36,7 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 - 交易日历本轮不建结构化专表，只作为 `raw_source_snapshots` 的 `trade_calendar` 采集快照记录。
 - `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策、开放持仓、最新现金和当日已有订单，执行买入、盯市、退出评估、卖出、closed position 落库和复盘。
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`。
+- `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、风控、模拟订单、持仓、组合快照、复盘和数据源快照查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。

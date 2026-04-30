@@ -127,6 +127,17 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
                 amount=Decimal("410.41"),
                 slippage=Decimal("0.001"),
                 reason="通过",
+            ),
+            PaperOrder(
+                order_id="paper-2026-04-29-159915-sell",
+                symbol="159915",
+                trade_date=trade_date,
+                side="sell",
+                quantity=50,
+                price=Decimal("110"),
+                amount=Decimal("5500"),
+                slippage=Decimal("0.001"),
+                reason="趋势走弱卖出",
             )
         ],
     )
@@ -140,8 +151,28 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
                 entry_price=Decimal("4.00"),
                 current_price=Decimal("4.20"),
                 status="open",
+            ),
+            PaperPosition(
+                symbol="159915",
+                opened_at=date(2026, 4, 27),
+                quantity=50,
+                entry_price=Decimal("100"),
+                current_price=Decimal("110"),
+                status="closed",
+                closed_at=trade_date,
+                exit_price=Decimal("110"),
             )
         ],
+    )
+    repository.save_portfolio_snapshot(
+        PipelineRunContext(trade_date=date(2026, 4, 28), run_id="previous-snapshot"),
+        PortfolioSnapshot(
+            trade_date=date(2026, 4, 28),
+            cash=Decimal("90000"),
+            market_value=Decimal("11000"),
+            total_value=Decimal("101000"),
+            open_positions=1,
+        ),
     )
     repository.save_portfolio_snapshot(
         review_context,
@@ -193,6 +224,11 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert day.portfolio_snapshot.total_value == "100009.59"
     assert day.review_report is not None
     assert day.review_report.summary == "模拟账户总资产 100009.59。"
+    assert day.review_report.metrics.realized_pnl == "500.00"
+    assert day.review_report.metrics.win_rate == 1.0
+    assert day.review_report.metrics.average_holding_days == 2.0
+    assert day.review_report.metrics.sell_reason_distribution == {"趋势走弱卖出": 1}
+    assert round(day.review_report.metrics.max_drawdown, 10) == 0.0098060396
     assert day.source_snapshots[0].stage == "pre_market"
     assert day.source_snapshots[0].failure_reason == "EastMoney endpoint disconnected"
 

@@ -319,6 +319,18 @@ td {
   margin: 2px 0 0;
 }
 
+.review-metrics {
+  margin-top: 2px;
+}
+
+.reason-distribution {
+  background: #f8fafb;
+  border-left: 3px solid #c9d1d8;
+  color: #4d5e6b;
+  font-size: 13px;
+  padding: 8px 10px;
+}
+
 .report {
   display: grid;
   gap: 7px;

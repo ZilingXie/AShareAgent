@@ -14,7 +14,16 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { fetchDashboardDay, fetchRuns } from "./api";
-import { boolText, breakdown, listText, money, percent, score } from "./format";
+import {
+  boolText,
+  breakdown,
+  days,
+  distributionText,
+  listText,
+  money,
+  percent,
+  score,
+} from "./format";
 import type {
   DashboardDay,
   DashboardPaperOrder,
@@ -232,6 +241,36 @@ export default function App(): JSX.Element {
               ) : null}
               {day.review_report ? (
                 <div className="report">
+                  <dl className="metrics review-metrics">
+                    <div>
+                      <dt>已实现盈亏</dt>
+                      <dd
+                        className={
+                          Number(day.review_report.metrics.realized_pnl) >= 0
+                            ? "positive"
+                            : "negative"
+                        }
+                      >
+                        {money(day.review_report.metrics.realized_pnl)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>胜率</dt>
+                      <dd>{percent(day.review_report.metrics.win_rate)}</dd>
+                    </div>
+                    <div>
+                      <dt>平均持仓天数</dt>
+                      <dd>{days(day.review_report.metrics.average_holding_days)}</dd>
+                    </div>
+                    <div>
+                      <dt>最大回撤</dt>
+                      <dd className="negative">{percent(day.review_report.metrics.max_drawdown)}</dd>
+                    </div>
+                  </dl>
+                  <p className="reason-distribution">
+                    卖出原因分布：
+                    {distributionText(day.review_report.metrics.sell_reason_distribution)}
+                  </p>
                   <p>{day.review_report.summary}</p>
                   <p className="muted">{listText(day.review_report.parameter_suggestions)}</p>
                 </div>

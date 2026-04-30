@@ -94,6 +94,13 @@ const dayFixture: DashboardDay = {
     stats: { total_value: 100009.59 },
     attribution: ["510300: 当前价 4.20, 成本 4.00"],
     parameter_suggestions: ["继续观察。"],
+    metrics: {
+      realized_pnl: "500.00",
+      win_rate: 0.5,
+      average_holding_days: 2,
+      sell_reason_distribution: { 趋势走弱卖出: 1 },
+      max_drawdown: 0.06862745098,
+    },
   },
   source_snapshots: [
     {
@@ -124,6 +131,13 @@ describe("dashboard", () => {
     expect(await screen.findAllByText("510300")).toHaveLength(4);
     expect(screen.getByText("趋势改善")).toBeInTheDocument();
     expect(screen.getByText("20.00 / 5.00%")).toBeInTheDocument();
+    expect(screen.getByText("已实现盈亏")).toBeInTheDocument();
+    expect(screen.getByText("500.00")).toBeInTheDocument();
+    expect(screen.getByText("胜率")).toBeInTheDocument();
+    expect(screen.getByText("50.00%")).toBeInTheDocument();
+    expect(screen.getByText("2.00 天")).toBeInTheDocument();
+    expect(screen.getByText(/趋势走弱卖出: 1/)).toBeInTheDocument();
+    expect(screen.getByText("6.86%")).toBeInTheDocument();
   });
 
   it("shows failure reasons and the real-trade false flag", async () => {
@@ -132,7 +146,7 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByText("必需数据源失败: market_bars")).toBeInTheDocument();
-    expect(screen.getByText("EastMoney endpoint disconnected")).toBeInTheDocument();
+    expect(await screen.findByText("EastMoney endpoint disconnected")).toBeInTheDocument();
     expect(screen.getByText("False")).toBeInTheDocument();
   });
 

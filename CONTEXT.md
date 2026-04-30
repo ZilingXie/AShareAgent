@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-收尾清理已完成，当前 `main` 已同步到 GitHub，可继续进入策略参数版本、数据质量检查或 dashboard 筛选/趋势图。
+`codex/review-metrics-agent` 已完成：复盘区域已新增累计复盘指标，并接入只读 dashboard，准备提交并合并回 `main`。
 
 ## 上次停在哪
 
@@ -25,6 +25,8 @@
 - 已实现 dashboard query layer、FastAPI 只读 API 和 React/Vite/TypeScript 前端。
 - 已用本地 `DATABASE_URL` 启动 API 和前端，通过 Chrome smoke 确认页面能显示 pipeline runs、观察名单、风控结果、模拟订单、持仓、复盘报告、数据源状态和真实源失败原因。
 - 已清理已合入的本地 `codex/announcement-golden-tests` worktree 和本地分支。
+- 已新增 `ReviewMetricsAgent`，按截至所选交易日累计统计已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤。
+- 已将复盘指标接入 `DashboardQueryAgent` 的 `review_report.metrics` DTO，并在前端复盘报告区域展示。
 
 ## 近期关键决定和原因
 
@@ -42,6 +44,8 @@
 - 公告分析继续使用可解释规则，不引入 LLM 判断；误判追踪先落在固定样本 `case_id` 层，不改变运行时模型或落库边界。
 - 观察台只读，不直接连接 PostgreSQL，不提供交易操作入口；`PaperOrder.is_real_trade` 必须在 API DTO 和 UI 中显式展示，正常值为 `False`。
 - dashboard 第一版持有天数用自然日差计算，后续有结构化交易日历表后再替换为交易日口径。
+- 复盘指标只基于已落库模拟交易审计数据，不新增数据库迁移，不接真实交易；卖出原因分布使用模拟卖单 `reason` 原文。
+- 最大回撤按 `portfolio_snapshots.total_value` 序列计算，不基于单票价格或未落库临时估值。
 - 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动提交 task 分支并合并回 `main`。
 - `CONTEXT.md` 保持极简，只记录当前状态、停靠点和关键决定。
 

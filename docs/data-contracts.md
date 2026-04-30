@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、PostgreSQL 初始 schema、核心 pipeline 持久化、DashboardQueryAgent 只读 DTO 契约和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、PostgreSQL 初始 schema、核心 pipeline 持久化、DashboardQueryAgent 只读 DTO 契约、复盘指标 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -81,10 +81,16 @@ Alembic 初始迁移创建以下表分组：
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
-- DTO 覆盖 pipeline runs、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshot、review report 和 source snapshots。
+- DTO 覆盖 pipeline runs、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics 和 source snapshots。
 - `holding_days` 第一版用自然日差计算；后续如果新增结构化交易日历表，再替换为交易日口径。
+- `DashboardReviewReport.metrics` 是截至所选交易日的累计复盘指标，字段包括：
+  - `realized_pnl`：只统计已关闭模拟持仓，按 `(exit_price - entry_price) * quantity` 计算，DTO 用金额字符串。
+  - `win_rate`：盈利 closed trade 数 / closed trade 总数；无 closed trade 时为 `0`。
+  - `average_holding_days`：只统计 closed trade，沿用自然日口径；无 closed trade 时为 `0`。
+  - `sell_reason_distribution`：按截至所选日所有模拟卖单的 `reason` 原文计数，不做额外归类。
+  - `max_drawdown`：按截至所选日 `portfolio_snapshots.total_value` 序列计算峰值到谷值最大跌幅，输出正数百分比小数。
 - `PaperOrder.is_real_trade` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，前端也会显式展示该字段。
-- 查询层遇到缺字段、字段类型错误、未知枚举或 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底。
+- 查询层遇到缺字段、字段类型错误、未知枚举或 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底；复盘指标计算也遵守同一规则。
 
 ## 后续维护
 

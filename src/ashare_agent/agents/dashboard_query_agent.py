@@ -138,6 +138,33 @@ class DashboardSourceSnapshot:
     collected_at: str | None
 
 
+@dataclass(frozen=True)
+class DashboardDataQualityIssue:
+    severity: str
+    check_name: str
+    source: str | None
+    symbol: str | None
+    message: str
+    metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class DashboardDataQualityReport:
+    run_id: str
+    stage: str
+    trade_date: str
+    status: str
+    source_failure_rate: float
+    total_sources: int
+    failed_source_count: int
+    empty_source_count: int
+    missing_market_bar_count: int
+    abnormal_price_count: int
+    is_trade_date: bool | None
+    issues: list[DashboardDataQualityIssue]
+    created_at: str | None
+
+
 def _empty_runs() -> list[DashboardPipelineRun]:
     return []
 
@@ -166,6 +193,10 @@ def _empty_source_snapshots() -> list[DashboardSourceSnapshot]:
     return []
 
 
+def _empty_data_quality_reports() -> list[DashboardDataQualityReport]:
+    return []
+
+
 @dataclass(frozen=True)
 class DashboardDaySummary:
     trade_date: str
@@ -179,6 +210,9 @@ class DashboardDaySummary:
     review_report: DashboardReviewReport | None = None
     source_snapshots: list[DashboardSourceSnapshot] = field(
         default_factory=_empty_source_snapshots
+    )
+    data_quality_reports: list[DashboardDataQualityReport] = field(
+        default_factory=_empty_data_quality_reports
     )
 
 
@@ -211,6 +245,7 @@ class DashboardQueryAgent:
             portfolio_snapshot=self.latest_portfolio_snapshot(trade_date),
             review_report=self.latest_review_report(trade_date),
             source_snapshots=self.source_snapshots(trade_date, run_stage_by_id),
+            data_quality_reports=self.data_quality_reports(trade_date),
         )
 
     def watchlist(
@@ -309,6 +344,12 @@ class DashboardQueryAgent:
         return [
             self._source_snapshot(row, stages)
             for row in self.repository.payload_rows("raw_source_snapshots", trade_date=trade_date)
+        ]
+
+    def data_quality_reports(self, trade_date: date) -> list[DashboardDataQualityReport]:
+        return [
+            self._data_quality_report(row)
+            for row in self.repository.payload_rows("data_quality_reports", trade_date=trade_date)
         ]
 
     def _pipeline_runs_for_day(self, trade_date: date) -> list[DashboardPipelineRun]:
@@ -510,6 +551,49 @@ class DashboardQueryAgent:
             collected_at=_optional_str(payload.get("collected_at")),
         )
 
+    def _data_quality_report(self, row: PayloadRecord) -> DashboardDataQualityReport:
+        payload = _payload(row, "data_quality_reports")
+        status = _required_str(payload, "data_quality_reports", "status")
+        if status not in {"passed", "warning", "failed"}:
+            raise ValueError(f"data_quality_reports 字段 status 未知: {status}")
+        return DashboardDataQualityReport(
+            run_id=_row_run_id(row, "data_quality_reports"),
+            stage=_required_str(payload, "data_quality_reports", "stage"),
+            trade_date=_required_date(payload, "data_quality_reports", "trade_date").isoformat(),
+            status=status,
+            source_failure_rate=_required_float(
+                payload,
+                "data_quality_reports",
+                "source_failure_rate",
+            ),
+            total_sources=_required_int(payload, "data_quality_reports", "total_sources"),
+            failed_source_count=_required_int(
+                payload,
+                "data_quality_reports",
+                "failed_source_count",
+            ),
+            empty_source_count=_required_int(
+                payload,
+                "data_quality_reports",
+                "empty_source_count",
+            ),
+            missing_market_bar_count=_required_int(
+                payload,
+                "data_quality_reports",
+                "missing_market_bar_count",
+            ),
+            abnormal_price_count=_required_int(
+                payload,
+                "data_quality_reports",
+                "abnormal_price_count",
+            ),
+            is_trade_date=_optional_bool(payload.get("is_trade_date"), "data_quality_reports"),
+            issues=_data_quality_issues(
+                _required_list(payload, "data_quality_reports", "issues")
+            ),
+            created_at=_optional_str(payload.get("created_at")),
+        )
+
 
 def _payload(row: PayloadRecord, table_name: str) -> Mapping[str, object]:
     raw = row.get("payload")
@@ -604,10 +688,29 @@ def _required_mapping(
     return cast(Mapping[str, object], value)
 
 
+def _required_list(
+    payload: Mapping[str, object],
+    table_name: str,
+    field_name: str,
+) -> list[object]:
+    value = _required(payload, table_name, field_name)
+    if not isinstance(value, list):
+        raise ValueError(f"{table_name} 字段 {field_name} 必须是 list")
+    return cast(list[object], value)
+
+
 def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _optional_bool(value: object, table_name: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"{table_name} 字段 is_trade_date 必须是 bool 或 null")
+    return value
 
 
 def _optional_date(value: object, table_name: str, field_name: str) -> date | None:
@@ -658,3 +761,27 @@ def _float_mapping(
 
 def _decimal_text(value: Decimal) -> str:
     return str(value)
+
+
+def _data_quality_issues(values: list[object]) -> list[DashboardDataQualityIssue]:
+    issues: list[DashboardDataQualityIssue] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("data_quality_reports 字段 issues 必须是 object list")
+        payload = cast(Mapping[str, object], value)
+        severity = _required_str(payload, "data_quality_reports.issues", "severity")
+        if severity not in {"warning", "error"}:
+            raise ValueError(f"data_quality_reports.issues 字段 severity 未知: {severity}")
+        issues.append(
+            DashboardDataQualityIssue(
+                severity=severity,
+                check_name=_required_str(payload, "data_quality_reports.issues", "check_name"),
+                source=_optional_str(payload.get("source")),
+                symbol=_optional_str(payload.get("symbol")),
+                message=_required_str(payload, "data_quality_reports.issues", "message"),
+                metadata=dict(
+                    _required_mapping(payload, "data_quality_reports.issues", "metadata")
+                ),
+            )
+        )
+    return issues

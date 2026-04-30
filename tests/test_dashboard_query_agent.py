@@ -8,6 +8,8 @@ import pytest
 
 from ashare_agent.agents.dashboard_query_agent import DashboardQueryAgent
 from ashare_agent.domain import (
+    DataQualityIssue,
+    DataQualityReport,
     PaperOrder,
     PaperPosition,
     PipelineRunContext,
@@ -205,6 +207,31 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
             )
         ],
     )
+    repository.save_data_quality_report(
+        failed_context,
+        DataQualityReport(
+            trade_date=trade_date,
+            stage="pre_market",
+            status="failed",
+            source_failure_rate=0.2,
+            total_sources=5,
+            failed_source_count=1,
+            empty_source_count=0,
+            missing_market_bar_count=1,
+            abnormal_price_count=0,
+            is_trade_date=True,
+            issues=[
+                DataQualityIssue(
+                    severity="error",
+                    check_name="missing_market_bar",
+                    source="market_bars",
+                    symbol="510300",
+                    message="510300 缺少 2026-04-29 当日行情",
+                    metadata={"trade_date": "2026-04-29"},
+                )
+            ],
+        ),
+    )
 
     agent = DashboardQueryAgent(repository)
     runs = agent.list_pipeline_runs(limit=10)
@@ -231,6 +258,8 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert round(day.review_report.metrics.max_drawdown, 10) == 0.0098060396
     assert day.source_snapshots[0].stage == "pre_market"
     assert day.source_snapshots[0].failure_reason == "EastMoney endpoint disconnected"
+    assert day.data_quality_reports[0].status == "failed"
+    assert day.data_quality_reports[0].issues[0].symbol == "510300"
 
 
 def test_dashboard_query_keeps_failed_runs_visible_without_successful_pre_market() -> None:
@@ -346,4 +375,31 @@ def test_dashboard_query_rejects_real_trade_order_payload() -> None:
     )
 
     with pytest.raises(ValueError, match="真实交易"):
+        DashboardQueryAgent(repository).day_summary(context.trade_date)
+
+
+def test_dashboard_query_rejects_malformed_data_quality_payload() -> None:
+    repository = RawPayloadRepository()
+    context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="quality-run")
+    repository.save_pipeline_run(context, "pre_market", "success", {"report_path": "x.md"})
+    repository.save_raw_payload(
+        "data_quality_reports",
+        context,
+        None,
+        {
+            "trade_date": "2026-04-29",
+            "stage": "pre_market",
+            "status": "unknown",
+            "source_failure_rate": 0,
+            "total_sources": 1,
+            "failed_source_count": 0,
+            "empty_source_count": 0,
+            "missing_market_bar_count": 0,
+            "abnormal_price_count": 0,
+            "is_trade_date": True,
+            "issues": [],
+        },
+    )
+
+    with pytest.raises(ValueError, match="data_quality_reports"):
         DashboardQueryAgent(repository).day_summary(context.trade_date)

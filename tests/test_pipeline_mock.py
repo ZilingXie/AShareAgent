@@ -172,6 +172,7 @@ def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) ->
     assert repository.records_for("announcements")
     assert repository.records_for("news_items")
     assert repository.records_for("policy_items")
+    assert repository.records_for("data_quality_reports")
     assert repository.records_for("technical_indicators")
     assert repository.records_for("pipeline_runs")
     assert repository.records_for("watchlist_candidates")
@@ -193,6 +194,9 @@ def test_pipeline_persists_state_for_later_post_market_review(tmp_path: Path) ->
     assert repository.records_for("paper_positions")
     assert repository.records_for("portfolio_snapshots")
     assert repository.records_for("review_reports")
+    assert repository.records_for("data_quality_reports")[-1]["payload"]["stage"] == (
+        "post_market_review"
+    )
 
     repeat_pipeline = ASharePipeline(
         provider=MockProvider(),
@@ -349,14 +353,51 @@ def test_pipeline_records_required_source_failure_before_raising(tmp_path: Path)
         raise AssertionError("必需数据源失败时 pre-market 必须失败")
 
     snapshots = repository.records_for("raw_source_snapshots")
+    quality_reports = repository.records_for("data_quality_reports")
     assert any(
         row["payload"]["source"] == "market_bars" and row["payload"]["status"] == "failed"
         for row in snapshots
     )
+    assert quality_reports[-1]["payload"]["status"] == "failed"
+    assert quality_reports[-1]["payload"]["stage"] == "pre_market"
     assert repository.records_for("pipeline_runs")[-1]["payload"]["status"] == "failed"
     failed_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert failed_run["strategy_params_version"] == "strategy-params-v1"
     assert failed_run["strategy_params_snapshot"]["risk"]["stop_loss_pct"] == "0.05"
+
+
+def test_pipeline_records_data_quality_failure_before_raising(tmp_path: Path) -> None:
+    class MissingLatestBarProvider(MockProvider):
+        def get_market_bars(self, trade_date: date, lookback_days: int = 30) -> list[MarketBar]:
+            return [
+                bar
+                for bar in super().get_market_bars(trade_date, lookback_days)
+                if not (bar.symbol == "510300" and bar.trade_date == trade_date)
+            ]
+
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=MissingLatestBarProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+        required_data_sources={"market_bars", "trade_calendar"},
+    )
+
+    try:
+        pipeline.run_pre_market(trade_date)
+    except DataProviderError as exc:
+        assert "数据质量检查失败" in str(exc)
+    else:
+        raise AssertionError("缺失交易日行情时 pre-market 必须失败")
+
+    latest_quality = repository.records_for("data_quality_reports")[-1]["payload"]
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_quality["status"] == "failed"
+    assert latest_quality["missing_market_bar_count"] == 1
+    assert latest_run["status"] == "failed"
+    assert "数据质量检查失败" in latest_run["failure_reason"]
 
 
 def test_post_market_records_required_source_failure_before_raising(tmp_path: Path) -> None:

@@ -115,6 +115,32 @@ const dayFixture: DashboardDay = {
       collected_at: "2026-04-29T07:00:00+00:00",
     },
   ],
+  data_quality_reports: [
+    {
+      run_id: "run-failed",
+      stage: "pre_market",
+      trade_date: "2026-04-29",
+      status: "failed",
+      source_failure_rate: 0.2,
+      total_sources: 5,
+      failed_source_count: 1,
+      empty_source_count: 0,
+      missing_market_bar_count: 1,
+      abnormal_price_count: 0,
+      is_trade_date: true,
+      created_at: "2026-04-29T07:00:00+00:00",
+      issues: [
+        {
+          severity: "error",
+          check_name: "missing_market_bar",
+          source: "market_bars",
+          symbol: "510300",
+          message: "510300 缺少 2026-04-29 当日行情",
+          metadata: { trade_date: "2026-04-29" },
+        },
+      ],
+    },
+  ],
 };
 
 describe("dashboard", () => {
@@ -128,7 +154,7 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByText("只读观察台")).toBeInTheDocument();
-    expect(await screen.findAllByText("510300")).toHaveLength(4);
+    expect(await screen.findAllByText("510300")).toHaveLength(5);
     expect(screen.getByText("趋势改善")).toBeInTheDocument();
     expect(screen.getByText("20.00 / 5.00%")).toBeInTheDocument();
     expect(screen.getByText("已实现盈亏")).toBeInTheDocument();
@@ -147,6 +173,8 @@ describe("dashboard", () => {
 
     expect(await screen.findByText("必需数据源失败: market_bars")).toBeInTheDocument();
     expect(await screen.findByText("EastMoney endpoint disconnected")).toBeInTheDocument();
+    expect(await screen.findByText("数据质量失败")).toBeInTheDocument();
+    expect(screen.getByText("510300 缺少 2026-04-29 当日行情")).toBeInTheDocument();
     expect(screen.getByText("False")).toBeInTheDocument();
   });
 
@@ -158,6 +186,7 @@ describe("dashboard", () => {
       paper_orders: [],
       positions: [],
       source_snapshots: [],
+      data_quality_reports: [],
       review_report: null,
       portfolio_snapshot: null,
     });
@@ -168,6 +197,7 @@ describe("dashboard", () => {
     expect(screen.getByText("暂无模拟订单")).toBeInTheDocument();
     expect(screen.getByText("暂无持仓")).toBeInTheDocument();
     expect(screen.getByText("暂无 source snapshot")).toBeInTheDocument();
+    expect(screen.getByText("暂无数据质量报告")).toBeInTheDocument();
   });
 });
 

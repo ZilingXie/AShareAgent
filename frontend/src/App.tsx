@@ -5,6 +5,7 @@ import {
   ClipboardList,
   Database,
   FileText,
+  Gauge,
   ListChecks,
   RefreshCw,
   ShieldCheck,
@@ -26,6 +27,7 @@ import {
 } from "./format";
 import type {
   DashboardDay,
+  DashboardDataQualityReport,
   DashboardPaperOrder,
   DashboardPosition,
   DashboardRun,
@@ -40,6 +42,8 @@ const stageLabels: Record<string, string> = {
 const statusLabels: Record<string, string> = {
   success: "成功",
   failed: "失败",
+  passed: "通过",
+  warning: "警告",
 };
 
 export default function App(): JSX.Element {
@@ -144,6 +148,7 @@ export default function App(): JSX.Element {
             <span>{selectedRuns.length} 次运行</span>
             <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
             <span>{day?.positions.length ?? 0} 个持仓状态</span>
+            <span>{day ? qualityStatusSummary(day) : "无质量报告"}</span>
           </div>
         </header>
 
@@ -279,6 +284,10 @@ export default function App(): JSX.Element {
               )}
             </Section>
 
+            <Section icon={Gauge} title="数据质量">
+              <DataQualityTable reports={day.data_quality_reports} />
+            </Section>
+
             <Section icon={Database} title="数据源状态">
               {day.source_snapshots.length === 0 ? (
                 <EmptyState text="暂无 source snapshot" />
@@ -370,13 +379,91 @@ function Section({
 }
 
 function StatusBadge({ status }: { status: string }): JSX.Element {
-  const className = status === "success" ? "safe" : status === "failed" ? "danger" : "neutral";
-  const icon = status === "failed" ? <AlertTriangle size={13} aria-hidden="true" /> : null;
+  const className =
+    status === "success" || status === "passed"
+      ? "safe"
+      : status === "failed"
+        ? "danger"
+        : status === "warning"
+          ? "warning"
+          : "neutral";
+  const icon =
+    status === "failed" || status === "warning" ? (
+      <AlertTriangle size={13} aria-hidden="true" />
+    ) : null;
   return (
     <span className={`badge ${className}`}>
       {icon}
       {statusLabels[status] ?? status}
     </span>
+  );
+}
+
+function qualityStatusSummary(day: DashboardDay): string {
+  if (day.data_quality_reports.some((report) => report.status === "failed")) {
+    return "数据质量失败";
+  }
+  if (day.data_quality_reports.some((report) => report.status === "warning")) {
+    return "数据质量警告";
+  }
+  if (day.data_quality_reports.length > 0) {
+    return "数据质量通过";
+  }
+  return "无质量报告";
+}
+
+function DataQualityTable({ reports }: { reports: DashboardDataQualityReport[] }): JSX.Element {
+  if (reports.length === 0) {
+    return <EmptyState text="暂无数据质量报告" />;
+  }
+  return (
+    <div className="quality-block">
+      <table>
+        <thead>
+          <tr>
+            <th>stage</th>
+            <th>status</th>
+            <th>失败率</th>
+            <th>失败/空源</th>
+            <th>缺失行情</th>
+            <th>异常价格</th>
+            <th>交易日</th>
+          </tr>
+        </thead>
+        <tbody>
+          {reports.map((report) => (
+            <tr key={`${report.run_id}-${report.stage}`}>
+              <td>{stageLabels[report.stage] ?? report.stage}</td>
+              <td>
+                <StatusBadge status={report.status} />
+              </td>
+              <td>{percent(report.source_failure_rate)}</td>
+              <td>
+                {report.failed_source_count}/{report.empty_source_count}
+              </td>
+              <td>{report.missing_market_bar_count}</td>
+              <td>{report.abnormal_price_count}</td>
+              <td>{report.is_trade_date === null ? "-" : boolText(report.is_trade_date)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="issue-list">
+        {reports.flatMap((report) =>
+          report.issues.map((issue) => (
+            <div
+              className="issue-row"
+              key={`${report.run_id}-${issue.check_name}-${issue.message}`}
+            >
+              <StatusBadge status={issue.severity === "error" ? "failed" : "warning"} />
+              <span>{issue.source ?? "-"}</span>
+              <span>{issue.symbol ?? "-"}</span>
+              <strong>{issue.message}</strong>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
   );
 }
 

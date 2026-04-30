@@ -26,6 +26,7 @@ from sqlalchemy.sql import func
 from ashare_agent.domain import (
     AnnouncementItem,
     Asset,
+    DataQualityReport,
     LLMAnalysis,
     MarketBar,
     NewsItem,
@@ -55,6 +56,7 @@ PAYLOAD_TABLES = (
     "policy_items",
     "industry_snapshots",
     "technical_indicators",
+    "data_quality_reports",
     "llm_analyses",
     "watchlist_candidates",
     "signals",
@@ -232,6 +234,13 @@ class PipelineRepository(Protocol):
         self,
         context: PipelineRunContext,
         indicators: list[TechnicalIndicator],
+    ) -> None:
+        ...
+
+    def save_data_quality_report(
+        self,
+        context: PipelineRunContext,
+        report: DataQualityReport,
     ) -> None:
         ...
 
@@ -427,6 +436,19 @@ class RepositoryBase:
                 indicator.symbol,
                 indicator,
             )
+
+    def save_data_quality_report(
+        self,
+        context: PipelineRunContext,
+        report: DataQualityReport,
+    ) -> None:
+        self._save_payload(
+            "data_quality_reports",
+            context.run_id,
+            report.trade_date,
+            None,
+            report,
+        )
 
     def save_watchlist_candidates(
         self,

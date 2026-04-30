@@ -38,6 +38,7 @@ def test_dashboard_api_returns_runs_and_day_summary() -> None:
     assert runs_response.json()["runs"][0]["stage"] == "pre_market"
     assert day_response.status_code == 200
     assert day_response.json()["trade_date"] == "2026-04-29"
+    assert day_response.json()["data_quality_reports"] == []
 
 
 def test_dashboard_api_fails_clearly_without_database_url(

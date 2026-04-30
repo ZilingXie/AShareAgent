@@ -8,6 +8,7 @@ from typing import Any
 
 from ashare_agent.agents.announcement_analyzer import AnnouncementAnalyzer
 from ashare_agent.agents.data_collector import DataCollector
+from ashare_agent.agents.data_quality_agent import DataQualityAgent
 from ashare_agent.agents.market_regime_analyzer import MarketRegimeAnalyzer
 from ashare_agent.agents.paper_trader import PaperTrader
 from ashare_agent.agents.review_agent import ReviewAgent
@@ -49,6 +50,7 @@ class ASharePipeline:
             Path("configs/strategy_params.yml")
         ).load()
         self.collector = DataCollector(provider)
+        self.data_quality_agent = DataQualityAgent(required_data_sources=required_data_sources)
         self.announcement_analyzer = AnnouncementAnalyzer()
         self.market_regime_analyzer = MarketRegimeAnalyzer()
         self.signal_engine = SignalEngine()
@@ -72,7 +74,6 @@ class ASharePipeline:
         self.llm_client = llm_client
         self.report_root = report_root
         self.repository = repository or InMemoryRepository()
-        self.required_data_sources = required_data_sources or set()
         self._last_dataset: MarketDataset | None = None
         self._last_signal_result: SignalResult | None = None
         self._last_risk_decisions: list[RiskDecision] = []
@@ -102,47 +103,33 @@ class ASharePipeline:
         self.repository.save_news_items(context, dataset.news)
         self.repository.save_policy_items(context, dataset.policy_items)
 
-    def _required_source_failure_reason(self, dataset: MarketDataset) -> str | None:
-        failures = [
-            snapshot
-            for snapshot in dataset.source_snapshots
-            if snapshot.source in self.required_data_sources and snapshot.status == "failed"
-        ]
-        if not failures:
-            return None
-        return "; ".join(
-            f"{snapshot.source}: {snapshot.failure_reason or 'unknown failure'}"
-            for snapshot in failures
-        )
-
-    def _fail_if_required_sources_failed(
+    def _run_data_quality_gate(
         self,
         context: PipelineRunContext,
         stage: str,
         dataset: MarketDataset,
     ) -> None:
-        required_failure = self._required_source_failure_reason(dataset)
-        if required_failure is None:
+        report = self.data_quality_agent.analyze(stage=stage, dataset=dataset)
+        self.repository.save_data_quality_report(context, report)
+        if report.status != "failed":
             return
+        failure_detail = "; ".join(
+            issue.message for issue in report.issues if issue.severity == "error"
+        )
         payload = {
             "run_id": context.run_id,
-            "failure_reason": f"必需数据源失败: {required_failure}",
+            "failure_reason": f"数据质量检查失败: {failure_detail}",
             **self._strategy_params_payload(),
         }
         self.repository.save_artifact(context.trade_date, f"{stage}_failed", payload)
-        self.repository.save_pipeline_run(
-            context,
-            stage,
-            "failed",
-            payload,
-        )
+        self.repository.save_pipeline_run(context, stage, "failed", payload)
         raise DataProviderError(payload["failure_reason"])
 
     def run_pre_market(self, trade_date: date) -> AgentResult:
         context = PipelineRunContext(trade_date=trade_date)
         dataset = self.collector.collect(trade_date=trade_date)
         self._save_dataset(context, dataset)
-        self._fail_if_required_sources_failed(context, "pre_market", dataset)
+        self._run_data_quality_gate(context, "pre_market", dataset)
         events = self.announcement_analyzer.analyze(dataset.announcements)
         regime = self.market_regime_analyzer.analyze(trade_date=trade_date, bars=dataset.bars)
         indicators = calculate_indicators(trade_date=trade_date, bars=dataset.bars)
@@ -246,9 +233,9 @@ class ASharePipeline:
         if self._last_dataset is None:
             dataset = self.collector.collect(trade_date=trade_date)
             self._save_dataset(context, dataset)
-            self._fail_if_required_sources_failed(context, "post_market_review", dataset)
         else:
             dataset = self._last_dataset
+        self._run_data_quality_gate(context, "post_market_review", dataset)
         decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
             trade_date
         )

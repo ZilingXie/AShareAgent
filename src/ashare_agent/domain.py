@@ -12,6 +12,8 @@ SignalAction = Literal["observe", "paper_buy", "paper_sell"]
 OrderSide = Literal["buy", "sell"]
 PositionStatus = Literal["open", "closed"]
 ExitReason = Literal["stop_loss", "trend_weakness", "max_holding_days"]
+DataQualitySeverity = Literal["warning", "error"]
+DataQualityStatus = Literal["passed", "warning", "failed"]
 
 
 def now_utc() -> datetime:
@@ -154,6 +156,32 @@ class TechnicalIndicator:
     return_5d: float
     return_20d: float
     volume_ratio: float
+
+
+@dataclass(frozen=True)
+class DataQualityIssue:
+    severity: DataQualitySeverity
+    check_name: str
+    message: str
+    source: str | None = None
+    symbol: str | None = None
+    metadata: dict[str, Any] = field(default_factory=empty_dict)
+
+
+@dataclass(frozen=True)
+class DataQualityReport:
+    trade_date: date
+    stage: str
+    status: DataQualityStatus
+    source_failure_rate: float
+    total_sources: int
+    failed_source_count: int
+    empty_source_count: int
+    missing_market_bar_count: int
+    abnormal_price_count: int
+    is_trade_date: bool | None
+    issues: list[DataQualityIssue]
+    created_at: datetime = field(default_factory=now_utc)
 
 
 @dataclass(frozen=True)

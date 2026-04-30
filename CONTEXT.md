@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/review-metrics-agent` 已完成：当前分支已合入本地 `main` 上的策略参数版本审计，并完成复盘指标 dashboard 接入，准备最终验证后合并回 `main`。
+正在做 `codex/data-quality-agent`：已基于本地 `main` 上的策略参数版本审计和复盘指标接入，完成 DataQualityAgent、质量报告落库和 dashboard 展示，准备最终验证后合并回 `main`。
 
 ## 上次停在哪
 
@@ -28,6 +28,8 @@
 - 已新增 `ReviewMetricsAgent`，按截至所选交易日累计统计已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤。
 - 已将复盘指标接入 `DashboardQueryAgent` 的 `review_report.metrics` DTO，并在前端复盘报告区域展示。
 - 本轮新增 `StrategyParamsAgent`，从 `configs/strategy_params.yml` 加载风控和模拟交易参数，并在每次 `pipeline_runs.payload` 记录 `strategy_params_version` 和 `strategy_params_snapshot`。
+- 本轮新增 DataQualityAgent，检查必需源失败/空数据、缺失当日行情、异常价格、source 失败率和非交易日运行提示。
+- 新增 `data_quality_reports` 专表和 DashboardQueryAgent DTO，dashboard 已显示每次 run 的数据质量状态和问题明细。
 
 ## 近期关键决定和原因
 
@@ -37,6 +39,7 @@
 - CLI 现在必须配置 `DATABASE_URL`；缺失时明确失败，不做静默内存兜底。
 - 本地数据库复用共享 PostgreSQL，但 AShareAgent 只使用 `ashare_agent` schema 和 `ashare_agent.alembic_version`，不在 `public` 或 `supportportal` schema 建业务表。
 - 真实公开源下 `universe`、`market_bars`、`trade_calendar` 是必需源；失败时流程明确失败，不能自动切回 Mock。
+- 数据质量门禁按“严重阻断”执行：必需源失败/空数据、交易日缺失当日行情和异常价格会阻断 pipeline；非交易日运行只提示。
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
@@ -53,4 +56,4 @@
 
 ## 下一步
 
-- 下一步可继续做数据质量检查，或补充更细的 dashboard 筛选/趋势图。
+- 下一步可继续补充 dashboard 筛选/趋势图，或补更细的数据质量趋势统计。

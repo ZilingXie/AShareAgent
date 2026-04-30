@@ -94,6 +94,31 @@ export interface DashboardSourceSnapshot {
   collected_at: string | null;
 }
 
+export interface DashboardDataQualityIssue {
+  severity: string;
+  check_name: string;
+  source: string | null;
+  symbol: string | null;
+  message: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface DashboardDataQualityReport {
+  run_id: string;
+  stage: string;
+  trade_date: string;
+  status: string;
+  source_failure_rate: number;
+  total_sources: number;
+  failed_source_count: number;
+  empty_source_count: number;
+  missing_market_bar_count: number;
+  abnormal_price_count: number;
+  is_trade_date: boolean | null;
+  issues: DashboardDataQualityIssue[];
+  created_at: string | null;
+}
+
 export interface DashboardDay {
   trade_date: string;
   runs: DashboardRun[];
@@ -104,4 +129,5 @@ export interface DashboardDay {
   portfolio_snapshot: DashboardPortfolioSnapshot | null;
   review_report: DashboardReviewReport | null;
   source_snapshots: DashboardSourceSnapshot[];
+  data_quality_reports: DashboardDataQualityReport[];
 }

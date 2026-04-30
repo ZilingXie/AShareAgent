@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / PostgreSQL Persistence / Paper Trading Lifecycle / Strategy Params Audit / Read-only Dashboard`
+当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / PostgreSQL Persistence / Paper Trading Lifecycle / Strategy Params Audit / Read-only Dashboard`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -18,7 +18,7 @@
 
 第一阶段目标是跑通一个可测试的最小闭环：
 
-`DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine -> RiskManager -> PaperTrader -> ReviewAgent`
+`DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine -> RiskManager -> PaperTrader -> ReviewAgent`
 
 这个闭环应支持：
 
@@ -39,6 +39,13 @@ AShareAgent
 │   ├── 行情抓取
 │   ├── 指数/板块数据
 │   └── 交易日历
+│
+├── DataQualityAgent
+│   ├── 缺失行情检查
+│   ├── 异常价格检查
+│   ├── 空数据源检查
+│   ├── source 失败率统计
+│   └── 非交易日运行提示
 │
 ├── AnnouncementAnalyzer
 │   ├── 公告分类
@@ -85,6 +92,7 @@ AShareAgent
 ### 模块职责边界
 
 - `DataCollector`：负责数据获取、标准化和缓存，不直接做投资判断。
+- `DataQualityAgent`：负责真实数据质量门禁和质量报告，不生成交易信号。
 - `AnnouncementAnalyzer`：负责将公告转成结构化事件和规则判断结果，不直接生成交易指令。
 - `MarketRegimeAnalyzer`：负责判断市场环境、板块强弱和风险偏好，为信号和风控提供上下文。
 - `SignalEngine`：负责策略规则、候选股票评分和观察名单决策，不绕过风控。
@@ -177,7 +185,7 @@ AShareAgent
 
 - [x] 增加公告样本 golden tests。
 - [x] 增加 provider contract tests。
-- [ ] 增加数据质量检查。
+- [x] 增加数据质量检查。
 - [ ] 增加 pipeline run 审计日志。
 - [x] 增加策略参数版本记录。
 
@@ -220,7 +228,7 @@ ASHARE_LLM_PROVIDER=mock
 DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal
 ```
 
-`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败时 CLI 会明确失败，并把失败原因写入 `raw_source_snapshots` 和失败的 `pipeline_runs`。公告、新闻和政策为空可以继续，接口异常仍会记录失败快照。
+`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败、必需源空数据、交易日缺失当日行情或行情价格异常时，CLI 会明确失败，并把失败原因写入 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`。公告、新闻和政策为空会作为质量警告记录，接口异常仍会记录失败快照。
 
 策略参数默认从 `configs/strategy_params.yml` 读取，也可用 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向另一份配置。策略参数配置缺字段、百分比非法或持有期范围非法时，CLI 会明确失败，不会使用代码里的静默默认值。
 
@@ -259,7 +267,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 本地开发复用现有 Podman PostgreSQL：容器 `deployment_local_postgres_1`，宿主端口 `15432`，数据库 `supportportal`，用户 `supportportal`。迁移只创建 `ashare_agent` schema、本项目表和 `ashare_agent.alembic_version`，不主动删除已有对象，也不在 `public` 或 `supportportal` schema 建业务表。若 `ashare_agent` schema 已存在但缺少 `ashare_agent.alembic_version`，迁移会停止并要求先人工确认。
 
-当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
+当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、DataQualityAgent 的 data quality reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 
 `post-market-review` 会从数据库恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。卖出订单写入 `paper_orders`，closed position 写入 `paper_positions`；重复运行同一交易日不会重复买入或卖出。
 
@@ -270,7 +278,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `data_quality_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情和异常价格问题。
 
 前端观察台：
 

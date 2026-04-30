@@ -40,6 +40,19 @@ def test_initial_migration_defines_core_table_groups() -> None:
         assert f'"{table}"' in text
 
 
+def test_data_quality_migration_adds_payload_table_without_destructive_operations() -> None:
+    migration = Path("migrations/versions/0002_data_quality_reports.py")
+
+    text = migration.read_text(encoding="utf-8")
+
+    assert 'revision = "0002_data_quality_reports"' in text
+    assert 'down_revision = "0001_initial_schema"' in text
+    assert '"data_quality_reports"' in text
+    assert "create_table" in text
+    assert "drop_table" not in text
+    assert "drop_schema" not in text
+
+
 def test_initial_migration_does_not_create_trading_calendar_table() -> None:
     text = Path("migrations/versions/0001_initial_schema.py").read_text(encoding="utf-8")
 

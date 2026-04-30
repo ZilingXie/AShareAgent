@@ -4,6 +4,7 @@ from datetime import date
 from decimal import Decimal
 
 from ashare_agent.domain import (
+    DataQualityReport,
     PaperOrder,
     PaperPosition,
     PipelineRunContext,
@@ -95,6 +96,33 @@ def test_repository_payload_rows_filter_by_table_date_and_run_id() -> None:
     assert repository.payload_rows("pipeline_runs", run_id="second-run")[0][
         "run_id"
     ] == "second-run"
+
+
+def test_repository_saves_data_quality_report_payload() -> None:
+    repository = InMemoryRepository()
+    context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="quality-run")
+
+    repository.save_data_quality_report(
+        context,
+        DataQualityReport(
+            trade_date=context.trade_date,
+            stage="pre_market",
+            status="passed",
+            source_failure_rate=0,
+            total_sources=2,
+            failed_source_count=0,
+            empty_source_count=0,
+            missing_market_bar_count=0,
+            abnormal_price_count=0,
+            is_trade_date=True,
+            issues=[],
+        ),
+    )
+
+    rows = repository.payload_rows("data_quality_reports")
+
+    assert rows[0]["run_id"] == "quality-run"
+    assert rows[0]["payload"]["status"] == "passed"
 
 
 def test_repository_payload_rows_rejects_unknown_table() -> None:

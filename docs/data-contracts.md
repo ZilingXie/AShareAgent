@@ -34,7 +34,9 @@
 
 ## PostgreSQL schema
 
-Alembic 初始迁移创建 `ashare_agent` schema，并预留以下表分组：
+本地开发复用现有 Podman PostgreSQL 的 `supportportal` 数据库，但所有 AShareAgent 对象都放在独立 `ashare_agent` schema。Alembic 版本表固定为 `ashare_agent.alembic_version`，避免污染共享数据库中其他项目的迁移状态。若 schema 已存在但缺少该版本表，迁移会停止，避免在状态不明的共享库里继续写入。
+
+Alembic 初始迁移创建以下表分组：
 
 - `pipeline_runs`
 - `universe_assets`

@@ -30,7 +30,8 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 - 默认 provider 是 `MockProvider`；真实公开源通过 `AKShareProvider` 适配，后续再加外部测试标记。
 - 默认 LLM 是 mock；`.env` 中设置 `ASHARE_LLM_PROVIDER=openai` 或 `deepseek` 后才调用真实 API。
 - CLI 必须配置 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
-- PostgreSQL 通过 Alembic 创建 `ashare_agent` schema，pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 已写入专表。
+- 本地开发复用现有 Podman PostgreSQL 容器 `deployment_local_postgres_1` 的 `supportportal` 数据库；AShareAgent 只使用独立 `ashare_agent` schema。
+- PostgreSQL 通过 Alembic 创建 `ashare_agent` schema、`ashare_agent.alembic_version` 和业务表，pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 已写入专表。
 - `post-market-review` 可从 repository 恢复当日最新 pre-market 风控决策和已有开放持仓，用于跨 CLI 命令的连续模拟交易基础。
 - Streamlit/React dashboard 放到第二阶段，第一阶段只输出 Markdown 报告。
 - 模块边界发生变化时，同步更新本文件。

@@ -35,10 +35,14 @@ def test_cli_pre_market_writes_markdown_report(
     assert (tmp_path / "2026-04-29" / "pre-market.md").exists()
 
 
-def test_cli_pre_market_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_cli_pre_market_requires_database_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASHARE_PROVIDER", "mock")
     monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.chdir(tmp_path)
     runner = CliRunner()
 
     result = runner.invoke(app, ["pre-market", "--trade-date", "2026-04-29"])

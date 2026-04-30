@@ -38,3 +38,26 @@ def test_initial_migration_defines_core_table_groups() -> None:
 
     for table in expected_tables:
         assert f'"{table}"' in text
+
+
+def test_alembic_version_table_is_isolated_in_project_schema() -> None:
+    text = Path("migrations/env.py").read_text(encoding="utf-8")
+
+    assert 'PROJECT_SCHEMA = "ashare_agent"' in text
+    assert "version_table_schema=PROJECT_SCHEMA" in text
+
+
+def test_alembic_env_creates_project_schema_before_version_table() -> None:
+    text = Path("migrations/env.py").read_text(encoding="utf-8")
+
+    assert "CreateSchema" in text
+    assert 'if_not_exists=True' in text
+    assert "_ensure_project_schema(connection)" in text
+
+
+def test_alembic_env_stops_on_unknown_existing_project_schema() -> None:
+    text = Path("migrations/env.py").read_text(encoding="utf-8")
+
+    assert "information_schema.schemata" in text
+    assert "information_schema.tables" in text
+    assert "迁移状态不明" in text

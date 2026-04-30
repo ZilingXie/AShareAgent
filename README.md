@@ -188,7 +188,7 @@ cp .env.example .env
 ```bash
 ASHARE_PROVIDER=mock
 ASHARE_LLM_PROVIDER=openai
-DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare
+DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal
 OPENAI_MODEL=gpt-4.1-mini
 OPENAI_API_KEY=你的 key
 ```
@@ -197,7 +197,7 @@ OPENAI_API_KEY=你的 key
 
 ```bash
 ASHARE_LLM_PROVIDER=mock
-DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare
+DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal
 ```
 
 运行 CLI 前必须先配置 `DATABASE_URL` 并完成迁移。CLI 不配置数据库会明确失败，避免误以为结果已持久化。
@@ -221,11 +221,11 @@ uv run pyright
 PostgreSQL 迁移：
 
 ```bash
-DATABASE_URL=postgresql+psycopg://user:password@localhost:5432/ashare \
+DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal \
   uv run alembic upgrade head
 ```
 
-迁移只创建 `ashare_agent` schema 和本项目表，不主动删除已有对象。
+本地开发复用现有 Podman PostgreSQL：容器 `deployment_local_postgres_1`，宿主端口 `15432`，数据库 `supportportal`，用户 `supportportal`。迁移只创建 `ashare_agent` schema、本项目表和 `ashare_agent.alembic_version`，不主动删除已有对象，也不在 `public` 或 `supportportal` schema 建业务表。若 `ashare_agent` schema 已存在但缺少 `ashare_agent.alembic_version`，迁移会停止并要求先人工确认。
 
 当前 CLI 会把 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。
 

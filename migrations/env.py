@@ -4,7 +4,8 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, schema, text
+from sqlalchemy.engine import Connection
 
 from ashare_agent.repository import metadata
 
@@ -14,6 +15,55 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = metadata
+PROJECT_SCHEMA = "ashare_agent"
+
+
+def _schema_exists(connection: Connection) -> bool:
+    return bool(
+        connection.execute(
+            text(
+                """
+                select exists (
+                    select 1
+                    from information_schema.schemata
+                    where schema_name = :schema_name
+                )
+                """
+            ),
+            {"schema_name": PROJECT_SCHEMA},
+        ).scalar_one()
+    )
+
+
+def _version_table_exists(connection: Connection) -> bool:
+    return bool(
+        connection.execute(
+            text(
+                """
+                select exists (
+                    select 1
+                    from information_schema.tables
+                    where table_schema = :schema_name
+                    and table_name = 'alembic_version'
+                )
+                """
+            ),
+            {"schema_name": PROJECT_SCHEMA},
+        ).scalar_one()
+    )
+
+
+def _ensure_project_schema(connection: Connection) -> None:
+    if _schema_exists(connection):
+        if not _version_table_exists(connection):
+            raise RuntimeError(
+                "ashare_agent schema 已存在但缺少 ashare_agent.alembic_version，"
+                "迁移状态不明；请先人工确认后再运行迁移"
+            )
+        return
+
+    connection.execute(schema.CreateSchema(PROJECT_SCHEMA, if_not_exists=True))
+    connection.commit()
 
 
 def run_migrations_offline() -> None:
@@ -26,6 +76,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_schemas=True,
+        version_table_schema=PROJECT_SCHEMA,
     )
 
     with context.begin_transaction():
@@ -45,10 +96,12 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        _ensure_project_schema(connection)
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             include_schemas=True,
+            version_table_schema=PROJECT_SCHEMA,
         )
         with context.begin_transaction():
             context.run_migrations()

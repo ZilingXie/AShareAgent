@@ -78,3 +78,31 @@ def test_repository_restores_latest_snapshot_and_paper_orders() -> None:
     assert repository.load_paper_orders(date(2026, 4, 30))[0].side == "sell"
     assert repository.load_paper_orders(date(2026, 4, 30))[0].is_real_trade is False
     assert repository.load_latest_portfolio_snapshot() == snapshot
+
+
+def test_repository_payload_rows_filter_by_table_date_and_run_id() -> None:
+    repository = InMemoryRepository()
+    first_context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="first-run")
+    second_context = PipelineRunContext(trade_date=date(2026, 4, 30), run_id="second-run")
+
+    repository.save_pipeline_run(first_context, "pre_market", "success", {"report_path": "a.md"})
+    repository.save_pipeline_run(second_context, "pre_market", "success", {"report_path": "b.md"})
+
+    assert len(repository.payload_rows("pipeline_runs")) == 2
+    assert repository.payload_rows("pipeline_runs", trade_date=date(2026, 4, 29))[0][
+        "run_id"
+    ] == "first-run"
+    assert repository.payload_rows("pipeline_runs", run_id="second-run")[0][
+        "run_id"
+    ] == "second-run"
+
+
+def test_repository_payload_rows_rejects_unknown_table() -> None:
+    repository = InMemoryRepository()
+
+    try:
+        repository.payload_rows("unknown_table")
+    except ValueError as exc:
+        assert "unknown_table" in str(exc)
+    else:
+        raise AssertionError("未知 payload table 必须显式失败")

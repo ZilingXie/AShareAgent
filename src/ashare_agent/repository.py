@@ -280,6 +280,13 @@ class PipelineRepository(Protocol):
 
     def load_latest_portfolio_snapshot(self) -> PortfolioSnapshot | None: ...
 
+    def payload_rows(
+        self,
+        table_name: str,
+        trade_date: date | None = None,
+        run_id: str | None = None,
+    ) -> list[PayloadRecord]: ...
+
 
 class RepositoryBase:
     def _save_payload(
@@ -299,6 +306,16 @@ class RepositoryBase:
         run_id: str | None = None,
     ) -> list[PayloadRecord]:
         raise NotImplementedError
+
+    def payload_rows(
+        self,
+        table_name: str,
+        trade_date: date | None = None,
+        run_id: str | None = None,
+    ) -> list[PayloadRecord]:
+        if table_name not in PAYLOAD_TABLES:
+            raise ValueError(f"未知 payload table: {table_name}")
+        return self._rows(table_name, trade_date=trade_date, run_id=run_id)
 
     def save_pipeline_run(
         self,

@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/dashboard-readonly`：第一版只读观察台已实现，准备完成最终验证、提交并合并回 `main`。
+收尾清理已完成，当前 `main` 已同步到 GitHub，可继续进入策略参数版本、数据质量检查或 dashboard 筛选/趋势图。
 
 ## 上次停在哪
 
@@ -24,6 +24,7 @@
 - 本轮新增 DashboardQueryAgent 只读查询层，封装 pipeline runs、watchlist、signals、risk decisions、orders、positions、portfolio snapshots、review reports 和 source snapshots 查询。
 - 已实现 dashboard query layer、FastAPI 只读 API 和 React/Vite/TypeScript 前端。
 - 已用本地 `DATABASE_URL` 启动 API 和前端，通过 Chrome smoke 确认页面能显示 pipeline runs、观察名单、风控结果、模拟订单、持仓、复盘报告、数据源状态和真实源失败原因。
+- 已清理已合入的本地 `codex/announcement-golden-tests` worktree 和本地分支。
 
 ## 近期关键决定和原因
 
@@ -46,4 +47,4 @@
 
 ## 下一步
 
-- 合并 dashboard 后，下一步可继续做策略参数版本、数据质量检查，或补充更细的 dashboard 筛选/趋势图。
+- 下一步可继续做策略参数版本、数据质量检查，或补充更细的 dashboard 筛选/趋势图。

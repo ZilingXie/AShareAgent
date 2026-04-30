@@ -169,7 +169,7 @@ AShareAgent
 
 ### Phase 3: Hardening
 
-- [ ] 增加公告样本 golden tests。
+- [x] 增加公告样本 golden tests。
 - [x] 增加 provider contract tests。
 - [ ] 增加数据质量检查。
 - [ ] 增加 pipeline run 审计日志。

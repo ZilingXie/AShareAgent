@@ -1,7 +1,11 @@
 .DS_Store
 .mindfs/
 .venv/
+.pnpm-store/
 .env
 reports/
+node_modules/
+dist/
+*.tsbuildinfo
 __pycache__/
 *.py[cod]

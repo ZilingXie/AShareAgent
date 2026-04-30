@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、PostgreSQL 初始 schema、核心 pipeline 持久化和 DashboardQueryAgent 只读 DTO 契约。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、PostgreSQL 初始 schema、核心 pipeline 持久化、DashboardQueryAgent 只读 DTO 契约和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -77,9 +77,13 @@ Alembic 初始迁移创建以下表分组：
 ## Dashboard 查询契约
 
 - `DashboardQueryAgent` 是 dashboard 读取 pipeline 数据的稳定入口。
+- `src/ashare_agent/dashboard.py` 只提供 API 兼容封装：`DashboardQueryService.list_runs()` 委托 `DashboardQueryAgent.list_pipeline_runs()`，避免出现两套查询逻辑。
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
+- DTO 覆盖 pipeline runs、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshot、review report 和 source snapshots。
+- `holding_days` 第一版用自然日差计算；后续如果新增结构化交易日历表，再替换为交易日口径。
+- `PaperOrder.is_real_trade` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，前端也会显式展示该字段。
 - 查询层遇到缺字段、字段类型错误、未知枚举或 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底。
 
 ## 后续维护

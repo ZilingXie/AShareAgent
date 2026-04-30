@@ -1,6 +1,6 @@
 # AShareAgent 安全边界
 
-当前状态：已落地 Mock pipeline、真实数据入口和完整 PaperTrader 模拟持仓生命周期。本文记录项目必须长期遵守的交易和数据安全边界。
+当前状态：已落地 Mock pipeline、真实数据入口、完整 PaperTrader 模拟持仓生命周期和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
 
 ## 交易边界
 
@@ -15,6 +15,8 @@
 - `PaperTrader` 只允许生成模拟订单；卖出同样只写入 `paper_orders` 和 `paper_positions`，不接任何真实交易通道。
 - 当前默认退出规则为 T+1、止损 5%、趋势走弱、最多持有 10 个交易日；止损可在 T+1 后突破最少持有 2 个交易日限制。
 - `DashboardQueryAgent` 和未来 dashboard/API/frontend 只能读取模拟交易数据，不允许提供真实下单入口；查询到 `paper_orders.is_real_trade=True` 时必须显式失败。
+- 只读观察台只展示已有审计数据，不提供任何买入、卖出、调仓、真实交易或模拟交易执行按钮。
+- 观察台必须显式展示 `PaperOrder.is_real_trade`；正常模拟订单为 `False`。
 
 ## 数据边界
 

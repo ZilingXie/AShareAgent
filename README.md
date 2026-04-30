@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / PostgreSQL Persistence / Paper Trading Lifecycle`
+当前状态：`Foundation MVP / Real DataCollector / PostgreSQL Persistence / Paper Trading Lifecycle / Read-only Dashboard`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -27,6 +27,7 @@
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
 - 在收盘后完成模拟买卖、持仓状态更新、复盘结果和错误归因。
+- 通过只读观察台查看 pipeline run、观察名单、风控、模拟订单、持仓、复盘和数据源状态。
 
 ## 模块设计
 
@@ -103,6 +104,7 @@ AShareAgent
 
 - Python 3.12
 - Typer CLI
+- FastAPI
 - PostgreSQL
 - SQLAlchemy / Alembic
 - AKShare provider
@@ -133,7 +135,7 @@ AShareAgent
 ### Phase 0: Harness Engineering
 
 - [x] 建立后端工程骨架。
-- [ ] 建立前端工程骨架。
+- [x] 建立前端工程骨架。
 - [x] 创建根目录 `AGENTS.md`，定义开发 Agent 必须遵守的编码、测试和安全规则。
 - [x] 创建 `CONTEXT.md`，记录当前状态、停靠点和关键决定。
 - [x] 创建 `docs/architecture.md`，记录模块边界和数据流。
@@ -157,11 +159,13 @@ AShareAgent
 
 ### Phase 2: Read-only Web Console
 
-- [ ] 展示 pipeline run 列表。
-- [ ] 展示候选股票评分。
-- [ ] 展示风控拒绝原因。
-- [ ] 展示模拟持仓和资金曲线。
-- [ ] 展示收盘复盘结果。
+- [x] 展示 pipeline run 列表。
+- [x] 展示候选股票评分。
+- [x] 展示风控拒绝原因。
+- [x] 展示模拟订单和真实交易安全标记。
+- [x] 展示模拟持仓和资金曲线摘要。
+- [x] 展示收盘复盘结果。
+- [x] 展示 raw source snapshots 和真实源失败原因。
 
 ### Phase 3: Hardening
 
@@ -250,6 +254,31 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 
 `post-market-review` 会从数据库恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。卖出订单写入 `paper_orders`，closed position 写入 `paper_positions`；重复运行同一交易日不会重复买入或卖出。
+
+只读观察台 API：
+
+```bash
+DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal \
+  uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
+```
+
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。
+
+前端观察台：
+
+```bash
+pnpm --dir frontend install
+pnpm --dir frontend dev --host 127.0.0.1 --port 5173
+```
+
+前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何 `True` 都视为安全异常。
+
+前端验证：
+
+```bash
+pnpm --dir frontend test
+pnpm --dir frontend build
+```
 
 ## 文档导航
 

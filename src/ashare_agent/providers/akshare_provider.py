@@ -48,6 +48,19 @@ def _symbol_text(value: object) -> str:
     return text
 
 
+def _exchange_symbol(symbol: str) -> str:
+    if symbol.startswith(("5", "6", "9")):
+        return f"sh{symbol}"
+    return f"sz{symbol}"
+
+
+def _row_value(row: dict[str, object], *keys: str) -> object:
+    for key in keys:
+        if key in row and row[key] is not None:
+            return row[key]
+    raise KeyError(keys[0])
+
+
 class AKShareProvider:
     """AKShare adapter. All failures are explicit provider errors."""
 
@@ -71,18 +84,12 @@ class AKShareProvider:
         bars: list[MarketBar] = []
         for asset in self._universe:
             try:
+                market_symbol = _exchange_symbol(asset.symbol)
                 if asset.asset_type == "ETF":
-                    df = ak.fund_etf_hist_em(
-                        symbol=asset.symbol,
-                        period="daily",
-                        start_date=start_date,
-                        end_date=end_date,
-                        adjust="",
-                    )
+                    df = ak.fund_etf_hist_sina(symbol=market_symbol)
                 else:
-                    df = ak.stock_zh_a_hist(
-                        symbol=asset.symbol,
-                        period="daily",
+                    df = ak.stock_zh_a_daily(
+                        symbol=market_symbol,
                         start_date=start_date,
                         end_date=end_date,
                         adjust="",
@@ -90,20 +97,24 @@ class AKShareProvider:
             except Exception as exc:  # noqa: BLE001
                 raise DataProviderError(f"{asset.symbol} 行情获取失败: {exc}") from exc
             try:
-                records = df.tail(lookback_days).to_dict("records")
+                records = [
+                    row
+                    for row in df.to_dict("records")
+                    if _parse_date(_row_value(row, "date", "日期")) <= trade_date
+                ][-lookback_days:]
                 if not records:
                     raise DataProviderError(f"{asset.symbol} 行情为空")
                 for row in records:
                     bars.append(
                         MarketBar(
                             symbol=asset.symbol,
-                            trade_date=_parse_date(row["日期"]),
-                            open=_to_decimal(row["开盘"]),
-                            high=_to_decimal(row["最高"]),
-                            low=_to_decimal(row["最低"]),
-                            close=_to_decimal(row["收盘"]),
-                            volume=int(row["成交量"]),
-                            amount=_to_decimal(row["成交额"]),
+                            trade_date=_parse_date(_row_value(row, "date", "日期")),
+                            open=_to_decimal(_row_value(row, "open", "开盘")),
+                            high=_to_decimal(_row_value(row, "high", "最高")),
+                            low=_to_decimal(_row_value(row, "low", "最低")),
+                            close=_to_decimal(_row_value(row, "close", "收盘")),
+                            volume=int(_to_decimal(_row_value(row, "volume", "成交量"))),
+                            amount=_to_decimal(_row_value(row, "amount", "成交额")),
                             source="akshare",
                         )
                     )

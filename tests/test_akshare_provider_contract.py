@@ -27,43 +27,45 @@ class FakeDataFrame:
 def test_akshare_provider_returns_standard_audit_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def fund_etf_hist_em(**kwargs: object) -> FakeDataFrame:
-        assert kwargs["symbol"] == "510300"
+    def fund_etf_hist_sina(**kwargs: object) -> FakeDataFrame:
+        assert kwargs["symbol"] == "sh510300"
         return FakeDataFrame(
             [
                 {
-                    "日期": "2026-04-28",
-                    "开盘": "4.00",
-                    "最高": "4.10",
-                    "最低": "3.99",
-                    "收盘": "4.05",
-                    "成交量": 1000,
-                    "成交额": "4050",
+                    "date": "2026-04-28",
+                    "open": "4.00",
+                    "high": "4.10",
+                    "low": "3.99",
+                    "close": "4.05",
+                    "volume": 1000,
+                    "amount": "4050",
                 },
                 {
-                    "日期": "2026-04-29",
-                    "开盘": "4.05",
-                    "最高": "4.20",
-                    "最低": "4.01",
-                    "收盘": "4.18",
-                    "成交量": 1200,
-                    "成交额": "5016",
+                    "date": "2026-04-29",
+                    "open": "4.05",
+                    "high": "4.20",
+                    "low": "4.01",
+                    "close": "4.18",
+                    "volume": 1200,
+                    "amount": "5016",
                 },
             ]
         )
 
-    def stock_zh_a_hist(**kwargs: object) -> FakeDataFrame:
-        assert kwargs["symbol"] == "600000"
+    def stock_zh_a_daily(**kwargs: object) -> FakeDataFrame:
+        assert kwargs["symbol"] == "sh600000"
+        assert kwargs["start_date"] == "20250429"
+        assert kwargs["end_date"] == "20260429"
         return FakeDataFrame(
             [
                 {
-                    "日期": "2026-04-29",
-                    "开盘": "9.00",
-                    "最高": "9.20",
-                    "最低": "8.90",
-                    "收盘": "9.10",
-                    "成交量": 2000,
-                    "成交额": "18200",
+                    "date": "2026-04-29",
+                    "open": "9.00",
+                    "high": "9.20",
+                    "low": "8.90",
+                    "close": "9.10",
+                    "volume": 2000,
+                    "amount": "18200",
                 }
             ]
         )
@@ -115,8 +117,8 @@ def test_akshare_provider_returns_standard_audit_models(
     fake_akshare = ModuleType("akshare")
     fake_akshare.__dict__.update(
         {
-            "fund_etf_hist_em": fund_etf_hist_em,
-            "stock_zh_a_hist": stock_zh_a_hist,
+            "fund_etf_hist_sina": fund_etf_hist_sina,
+            "stock_zh_a_daily": stock_zh_a_daily,
             "stock_notice_report": stock_notice_report,
             "stock_news_em": stock_news_em,
             "news_cctv": news_cctv,
@@ -148,14 +150,14 @@ def test_akshare_provider_returns_standard_audit_models(
 def test_akshare_provider_wraps_market_bar_parse_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def broken_fund_etf_hist_em(**kwargs: object) -> FakeDataFrame:
-        assert kwargs["symbol"] == "510300"
+    def broken_fund_etf_hist_sina(**kwargs: object) -> FakeDataFrame:
+        assert kwargs["symbol"] == "sh510300"
         return FakeDataFrame([{"收盘": "4.18"}])
 
     fake_akshare = ModuleType("akshare")
     fake_akshare.__dict__.update(
         {
-            "fund_etf_hist_em": broken_fund_etf_hist_em,
+            "fund_etf_hist_sina": broken_fund_etf_hist_sina,
         }
     )
     monkeypatch.setitem(sys.modules, "akshare", fake_akshare)

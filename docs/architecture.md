@@ -27,7 +27,7 @@ DataCollector -> AnnouncementAnalyzer -> MarketRegimeAnalyzer -> SignalEngine ->
 ## 当前边界
 
 - 当前入口是 CLI：`pre-market`、`intraday-watch`、`post-market-review`。
-- 默认 provider 是 `MockProvider`；设置 `ASHARE_PROVIDER=akshare` 后，CLI 从 `configs/universe.yml` 读取 `enabled=true` 的固定 ETF/大盘股池，并使用 `AKShareProvider` 拉真实公开源。
+- 默认 provider 是 `MockProvider`；设置 `ASHARE_PROVIDER=akshare` 后，CLI 从 `configs/universe.yml` 读取 `enabled=true` 的固定 ETF/大盘股池，并使用 `AKShareProvider` 拉真实公开源。日线行情当前通过 AKShare 的 Sina 路径采集，ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`。
 - 默认 LLM 是 mock；`.env` 中设置 `ASHARE_LLM_PROVIDER=openai` 或 `deepseek` 后才调用真实 API。
 - CLI 必须配置 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 本地开发复用现有 Podman PostgreSQL 容器 `deployment_local_postgres_1` 的 `supportportal` 数据库；AShareAgent 只使用独立 `ashare_agent` schema。

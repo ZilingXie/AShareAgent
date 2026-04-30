@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-真实数据 DataCollector 接入已完成，当前在 `codex/data-collector` 收尾验证。
+真实数据 DataCollector 接入已完成，当前在 `codex/akshare-market-bars-fix` 修复 AKShare 行情外部验收。
 
 ## 上次停在哪
 
@@ -15,7 +15,9 @@
 - 已用 mock LLM 跑通 `pre-market`、`intraday-watch`、`post-market-review`，确认真实 PostgreSQL 中有对应 pipeline、信号、风控、模拟订单、持仓和复盘记录。
 - 已让 CLI 支持 `ASHARE_PROVIDER=akshare`，并从 `configs/universe.yml` 读取 enabled 固定池资产。
 - 已将 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、technical indicators 写入 PostgreSQL。
-- 已用 mock provider 验证 raw/source/indicator 专表落库；真实 AKShare 验收当前被 EastMoney 行情接口代理 `ProxyError` 阻塞，失败原因已写入 `raw_source_snapshots` 和失败的 `pipeline_runs`。
+- 已修复真实行情路径：ETF 日线改用 AKShare `fund_etf_hist_sina`，A 股日线改用 `stock_zh_a_daily`。
+- 已跑通 `uv run pytest -m external`，并用 `ASHARE_PROVIDER=akshare`、`ASHARE_LLM_PROVIDER=mock` 跑通 `pre-market --trade-date 2026-04-29`。
+- 已确认真实 PostgreSQL 中本次 AKShare run 写入 `raw_source_snapshots=7`、`market_bars=90`、`technical_indicators=3`，且 `public` / `supportportal` schema 未新增 AShareAgent 业务表。
 
 ## 近期关键决定和原因
 
@@ -25,6 +27,7 @@
 - CLI 现在必须配置 `DATABASE_URL`；缺失时明确失败，不做静默内存兜底。
 - 本地数据库复用共享 PostgreSQL，但 AShareAgent 只使用 `ashare_agent` schema 和 `ashare_agent.alembic_version`，不在 `public` 或 `supportportal` schema 建业务表。
 - 真实公开源下 `universe`、`market_bars`、`trade_calendar` 是必需源；失败时流程明确失败，不能自动切回 Mock。
+- EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
 - 前端 dashboard 放到第二阶段，第一版只做 CLI 和 Markdown 报告。
 - 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动提交 task 分支并合并回 `main`。
@@ -32,4 +35,4 @@
 
 ## 下一步
 
-- 修通本机访问 EastMoney 行情接口的代理/网络后，重跑 `ASHARE_PROVIDER=akshare` 的 `pre-market` 外部验收。
+- 下一步进入 RiskManager + PaperTrader 强化：T+1、涨跌停风险、单日最大亏损、持有期、止损/趋势走弱/到期卖出，以及 sell order 和 closed position 落库。

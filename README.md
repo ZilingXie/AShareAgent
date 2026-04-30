@@ -210,6 +210,8 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 `akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败时 CLI 会明确失败，并把失败原因写入 `raw_source_snapshots` 和失败的 `pipeline_runs`。公告、新闻和政策为空可以继续，接口异常仍会记录失败快照。
 
+当前真实日线行情使用 AKShare 的 Sina 路径：ETF 走 `fund_etf_hist_sina`，A 股走 `stock_zh_a_daily`。EastMoney 历史 K 线端点在本机代理和直连下都可能断开，provider 不会静默切回 Mock 或伪造行情。
+
 运行 CLI 前必须先配置 `DATABASE_URL` 并完成迁移。CLI 不配置数据库会明确失败，避免误以为结果已持久化。
 
 运行 CLI：

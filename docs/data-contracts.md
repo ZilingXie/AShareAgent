@@ -9,6 +9,7 @@
 - `MockProvider` 和真实 provider 应返回同一类标准 domain models。
 - 默认测试不访问外网；真实数据源测试必须单独标记。
 - `ASHARE_PROVIDER=akshare` 只读取 `configs/universe.yml` 中 `enabled=true` 的固定池资产。
+- `AKShareProvider` 的日线行情标准化为统一 `MarketBar`：ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`，返回的英文字段会映射为 `date/open/high/low/close/volume/amount` 对应的 domain 字段。
 
 ## 审计字段原则
 

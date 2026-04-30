@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-真实数据 DataCollector 和模拟持仓完整生命周期已完成，当前 `main` 可继续进入 dashboard 或策略参数硬化。
+DashboardQueryAgent 只读查询层已完成，用于让 dashboard 后续只依赖稳定 DTO，不直接解析 repository payload。
 
 ## 上次停在哪
 
@@ -19,6 +19,7 @@
 - 已跑通 `uv run pytest -m external`，并用 `ASHARE_PROVIDER=akshare`、`ASHARE_LLM_PROVIDER=mock` 跑通 `pre-market --trade-date 2026-04-29`。
 - 已确认真实 PostgreSQL 中本次 AKShare run 写入 `raw_source_snapshots=7`、`market_bars=90`、`technical_indicators=3`，且 `public` / `supportportal` schema 未新增 AShareAgent 业务表。
 - 已实现 RiskManager/PaperTrader 的模拟持仓生命周期：T+1、涨跌停、单日最大亏损、止损、趋势走弱、最多持有 10 个交易日、sell order 和 closed position 落库。
+- 本轮新增 DashboardQueryAgent 只读查询层，封装 pipeline runs、watchlist、signals、risk decisions、orders、positions、portfolio snapshots、review reports 和 source snapshots 查询。
 
 ## 近期关键决定和原因
 
@@ -31,11 +32,12 @@
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
+- dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历本轮只作为 `raw_source_snapshots` 审计快照保存，不新增结构化日历表。
-- 前端 dashboard 放到第二阶段，第一版只做 CLI 和 Markdown 报告。
+- 前端 dashboard 放到后续阶段；本轮只做后端只读查询层，不新增 API 或 React 页面。
 - 初始化基线提交后，repo-tracked 修改默认走 `codex/<thread-slug>` worktree。验证通过后默认自动提交 task 分支并合并回 `main`。
 - `CONTEXT.md` 保持极简，只记录当前状态、停靠点和关键决定。
 
 ## 下一步
 
-- 下一步可继续补 dashboard 只读观察台，或扩展策略参数版本与更细的数据质量检查。
+- 下一步可继续补 dashboard API/React 只读观察台，或扩展策略参数版本与更细的数据质量检查。

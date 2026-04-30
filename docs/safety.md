@@ -14,6 +14,7 @@
 - `PaperOrder.is_real_trade` 必须始终为 `False`。
 - `PaperTrader` 只允许生成模拟订单；卖出同样只写入 `paper_orders` 和 `paper_positions`，不接任何真实交易通道。
 - 当前默认退出规则为 T+1、止损 5%、趋势走弱、最多持有 10 个交易日；止损可在 T+1 后突破最少持有 2 个交易日限制。
+- `DashboardQueryAgent` 和未来 dashboard/API/frontend 只能读取模拟交易数据，不允许提供真实下单入口；查询到 `paper_orders.is_real_trade=True` 时必须显式失败。
 
 ## 数据边界
 

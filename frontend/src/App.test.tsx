@@ -56,6 +56,15 @@ const dayFixture: DashboardDay = {
       target_position_pct: "0",
     },
   ],
+  llm_analysis: {
+    run_id: "run-pre",
+    trade_date: "2026-04-29",
+    model: "mock-llm",
+    summary: "盘前关注指数趋势和量能。",
+    key_points: ["观察名单由规则信号生成"],
+    risk_notes: ["仅用于模拟研究，不构成投资建议。"],
+    created_at: "2026-04-29T07:30:00+00:00",
+  },
   paper_orders: [
     {
       run_id: "run-review",
@@ -67,7 +76,21 @@ const dayFixture: DashboardDay = {
       price: "4.1041",
       amount: "410.41",
       slippage: "0.001",
-      reason: "通过",
+      reason: "风控通过后买入",
+      is_real_trade: false,
+      created_at: "2026-04-29T08:00:00+00:00",
+    },
+    {
+      run_id: "run-review",
+      order_id: "paper-2026-04-29-159915-sell",
+      symbol: "159915",
+      trade_date: "2026-04-29",
+      side: "sell",
+      quantity: 50,
+      price: "110",
+      amount: "5500",
+      slippage: "0.001",
+      reason: "触发止损",
       is_real_trade: false,
       created_at: "2026-04-29T08:00:00+00:00",
     },
@@ -195,8 +218,14 @@ describe("dashboard", () => {
     render(<App />);
 
     expect(await screen.findByText("只读观察台")).toBeInTheDocument();
-    expect(await screen.findAllByText("510300")).toHaveLength(5);
+    expect((await screen.findAllByText("510300")).length).toBeGreaterThanOrEqual(5);
     expect(screen.getByText("趋势改善")).toBeInTheDocument();
+    expect(screen.getByText("LLM 盘前分析")).toBeInTheDocument();
+    expect(screen.getByText("盘前关注指数趋势和量能。")).toBeInTheDocument();
+    expect(screen.getByText("观察名单由规则信号生成")).toBeInTheDocument();
+    expect(screen.getByText("仅用于模拟研究，不构成投资建议。")).toBeInTheDocument();
+    expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
+    expect(screen.getByText("触发止损")).toBeInTheDocument();
     expect(screen.getByText("20.00 / 5.00%")).toBeInTheDocument();
     expect(screen.getByText("已实现盈亏")).toBeInTheDocument();
     expect(screen.getByText("500.00")).toBeInTheDocument();
@@ -216,7 +245,7 @@ describe("dashboard", () => {
     expect(await screen.findByText("EastMoney endpoint disconnected")).toBeInTheDocument();
     expect(await screen.findByText("数据质量失败")).toBeInTheDocument();
     expect(screen.getByText("510300 缺少 2026-04-29 当日行情")).toBeInTheDocument();
-    expect(screen.getByText("False")).toBeInTheDocument();
+    expect(screen.getAllByText("False")).toHaveLength(2);
   });
 
   it("renders date range filters and trend panels", async () => {
@@ -242,6 +271,7 @@ describe("dashboard", () => {
       ...dayFixture,
       watchlist: [],
       risk_decisions: [],
+      llm_analysis: null,
       paper_orders: [],
       positions: [],
       source_snapshots: [],

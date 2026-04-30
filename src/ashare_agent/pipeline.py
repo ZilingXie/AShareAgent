@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections import Counter
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from ashare_agent.agents.announcement_analyzer import AnnouncementAnalyzer
 from ashare_agent.agents.data_collector import DataCollector
@@ -12,13 +14,17 @@ from ashare_agent.agents.data_quality_agent import DataQualityAgent
 from ashare_agent.agents.market_regime_analyzer import MarketRegimeAnalyzer
 from ashare_agent.agents.paper_trader import PaperTrader
 from ashare_agent.agents.review_agent import ReviewAgent
+from ashare_agent.agents.review_metrics_agent import ReviewMetricsAgent
 from ashare_agent.agents.risk_manager import RiskManager
 from ashare_agent.agents.signal_engine import SignalEngine
 from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyParamsAgent
 from ashare_agent.domain import (
     AgentResult,
     MarketDataset,
+    PaperOrder,
     PipelineRunContext,
+    PortfolioSnapshot,
+    ReviewReport,
     RiskDecision,
     SignalResult,
 )
@@ -27,7 +33,7 @@ from ashare_agent.llm.base import LLMClient
 from ashare_agent.llm.mock import MockLLMClient
 from ashare_agent.providers.base import DataProvider, DataProviderError
 from ashare_agent.providers.mock import MockProvider
-from ashare_agent.reports import write_markdown_report
+from ashare_agent.reports import MarkdownTable, write_markdown_report
 from ashare_agent.repository import InMemoryRepository, PipelineRepository
 
 
@@ -93,6 +99,132 @@ class ASharePipeline:
         return self.trader.cash + sum(
             (position.market_value for position in self.trader.open_positions()),
             start=Decimal("0"),
+        )
+
+    def _latest_successful_run_id(self, trade_date: date, stage: str) -> str | None:
+        rows = self.repository.payload_rows("pipeline_runs", trade_date=trade_date)
+        for row in reversed(rows):
+            payload = row.get("payload")
+            if not isinstance(payload, Mapping):
+                raise ValueError("pipeline_runs payload 必须是 JSON object")
+            payload_map = cast(Mapping[str, object], payload)
+            if payload_map.get("stage") == stage and payload_map.get("status") == "success":
+                run_id = row.get("run_id")
+                if run_id is None:
+                    raise ValueError("pipeline_runs 缺少字段 run_id")
+                return str(run_id)
+        return None
+
+    def _latest_llm_analysis_payload(self, trade_date: date) -> Mapping[str, object] | None:
+        run_id = self._latest_successful_run_id(trade_date, "pre_market")
+        if run_id is None:
+            return None
+        rows = self.repository.payload_rows(
+            "llm_analyses",
+            trade_date=trade_date,
+            run_id=run_id,
+        )
+        if not rows:
+            return None
+        payload = rows[-1].get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("llm_analyses payload 必须是 JSON object")
+        return cast(Mapping[str, object], payload)
+
+    def _write_strategy_experiment_report(
+        self,
+        *,
+        context: PipelineRunContext,
+        decisions: list[RiskDecision],
+        orders: list[PaperOrder],
+        snapshot: PortfolioSnapshot,
+        report: ReviewReport,
+    ) -> Path:
+        llm_payload = self._latest_llm_analysis_payload(context.trade_date)
+        rejected_reasons: Counter[str] = Counter()
+        for decision in decisions:
+            if not decision.approved:
+                rejected_reasons.update(decision.reasons)
+        sell_reasons = Counter(order.reason for order in orders if order.side == "sell")
+        metrics = ReviewMetricsAgent(self.repository).metrics_as_of(context.trade_date)
+
+        llm_lines = ["无已落库 LLM 盘前分析"]
+        if llm_payload is not None:
+            model = llm_payload.get("model")
+            summary = llm_payload.get("summary")
+            key_points = llm_payload.get("key_points", [])
+            risk_notes = llm_payload.get("risk_notes", [])
+            if not isinstance(model, str) or not isinstance(summary, str):
+                raise ValueError("llm_analyses model/summary 必须是 string")
+            if not isinstance(key_points, list) or not isinstance(risk_notes, list):
+                raise ValueError("llm_analyses key_points/risk_notes 必须是 list")
+            key_point_values = cast(list[object], key_points)
+            risk_note_values = cast(list[object], risk_notes)
+            if not all(isinstance(point, str) for point in key_point_values) or not all(
+                isinstance(note, str) for note in risk_note_values
+            ):
+                raise ValueError("llm_analyses key_points/risk_notes 必须是 string list")
+            llm_lines = [
+                f"模型: {model}",
+                f"摘要: {summary}",
+                *[f"重点: {point}" for point in key_point_values],
+                *[f"风险: {note}" for note in risk_note_values],
+            ]
+
+        return write_markdown_report(
+            self.report_root,
+            context.trade_date.isoformat(),
+            "strategy-experiment.md",
+            {
+                "实验信息": [
+                    f"trade_date: {context.trade_date.isoformat()}",
+                    f"run_id: {context.run_id}",
+                    f"strategy_params_version: {self.strategy_params.version}",
+                ],
+                "LLM 盘前分析": llm_lines,
+                "风控拒绝原因": [
+                    f"{reason}: {count}" for reason, count in sorted(rejected_reasons.items())
+                ],
+                "模拟订单": MarkdownTable(
+                    headers=[
+                        "side",
+                        "symbol",
+                        "quantity",
+                        "price",
+                        "amount",
+                        "reason",
+                        "real_trade",
+                    ],
+                    rows=[
+                        [
+                            order.side,
+                            order.symbol,
+                            order.quantity,
+                            order.price,
+                            order.amount,
+                            order.reason,
+                            order.is_real_trade,
+                        ]
+                        for order in orders
+                    ],
+                ),
+                "卖出原因": [
+                    f"{reason}: {count}" for reason, count in sorted(sell_reasons.items())
+                ],
+                "复盘指标": [
+                    f"已实现盈亏: {metrics.realized_pnl.quantize(Decimal('0.01'))}",
+                    f"胜率: {metrics.win_rate:.2%}",
+                    f"平均持仓天数: {metrics.average_holding_days:.2f}",
+                    f"最大回撤: {metrics.max_drawdown:.2%}",
+                ],
+                "复盘摘要": [
+                    report.summary,
+                    f"total_value: {snapshot.total_value}",
+                    f"cash: {snapshot.cash}",
+                    f"market_value: {snapshot.market_value}",
+                    f"open_positions: {snapshot.open_positions}",
+                ],
+            },
         )
 
     def _save_dataset(self, context: PipelineRunContext, dataset: MarketDataset) -> None:
@@ -277,6 +409,17 @@ class ASharePipeline:
                 "参数建议": report.parameter_suggestions,
             },
         )
+        self.repository.save_paper_orders(context, orders)
+        self.repository.save_paper_positions(context, self.trader.positions)
+        self.repository.save_portfolio_snapshot(context, snapshot)
+        self.repository.save_review_report(context, report)
+        experiment_report_path = self._write_strategy_experiment_report(
+            context=context,
+            decisions=decisions,
+            orders=orders,
+            snapshot=snapshot,
+            report=report,
+        )
         payload: dict[str, Any] = {
             "run_id": context.run_id,
             "orders": _to_dict_list(orders),
@@ -284,11 +427,8 @@ class ASharePipeline:
             "portfolio": asdict(snapshot),
             "review": asdict(report),
             "report_path": f"paper:{report_path}",
+            "experiment_report_path": str(experiment_report_path),
         }
-        self.repository.save_paper_orders(context, orders)
-        self.repository.save_paper_positions(context, self.trader.positions)
-        self.repository.save_portfolio_snapshot(context, snapshot)
-        self.repository.save_review_report(context, report)
         self.repository.save_artifact(trade_date, "post_market_review", payload)
         self.repository.save_pipeline_run(
             context,
@@ -296,6 +436,7 @@ class ASharePipeline:
             "success",
             {
                 "report_path": str(report_path),
+                "experiment_report_path": str(experiment_report_path),
                 "order_count": len(orders),
                 "open_positions": snapshot.open_positions,
                 **self._strategy_params_payload(),

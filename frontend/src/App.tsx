@@ -28,6 +28,7 @@ import {
 import type {
   DashboardDay,
   DashboardDataQualityReport,
+  DashboardLLMAnalysis,
   DashboardPaperOrder,
   DashboardPosition,
   DashboardRun,
@@ -305,6 +306,10 @@ export default function App(): JSX.Element {
                   </tbody>
                 </table>
               )}
+            </Section>
+
+            <Section icon={FileText} title="LLM 盘前分析">
+              <LLMAnalysisPanel analysis={day.llm_analysis} />
             </Section>
 
             <Section icon={Activity} title="模拟订单">
@@ -707,6 +712,34 @@ function DataQualityTable({ reports }: { reports: DashboardDataQualityReport[] }
   );
 }
 
+function LLMAnalysisPanel({ analysis }: { analysis: DashboardLLMAnalysis | null }): JSX.Element {
+  if (!analysis) {
+    return <EmptyState text="暂无 LLM 盘前分析" />;
+  }
+  return (
+    <div className="report">
+      <p>
+        <strong>{analysis.model}</strong>
+      </p>
+      <p>{analysis.summary}</p>
+      <div className="llm-list">
+        {analysis.key_points.map((point) => (
+          <div className="llm-row" key={`point-${point}`}>
+            <span>重点</span>
+            <strong>{point}</strong>
+          </div>
+        ))}
+        {analysis.risk_notes.map((note) => (
+          <div className="llm-row" key={`risk-${note}`}>
+            <span>风险</span>
+            <strong>{note}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function OrdersTable({ orders }: { orders: DashboardPaperOrder[] }): JSX.Element {
   if (orders.length === 0) {
     return <EmptyState text="暂无模拟订单" />;
@@ -720,6 +753,7 @@ function OrdersTable({ orders }: { orders: DashboardPaperOrder[] }): JSX.Element
           <th>数量</th>
           <th>价格</th>
           <th>金额</th>
+          <th>原因</th>
           <th>滑点</th>
           <th>真实交易</th>
         </tr>
@@ -734,6 +768,7 @@ function OrdersTable({ orders }: { orders: DashboardPaperOrder[] }): JSX.Element
             <td>{order.quantity}</td>
             <td>{money(order.price)}</td>
             <td>{money(order.amount)}</td>
+            <td>{order.reason}</td>
             <td>{order.slippage}</td>
             <td>
               <span className={`badge ${order.is_real_trade ? "danger" : "safe"}`}>

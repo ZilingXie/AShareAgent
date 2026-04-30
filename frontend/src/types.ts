@@ -25,6 +25,16 @@ export interface DashboardRiskDecision {
   target_position_pct: string;
 }
 
+export interface DashboardLLMAnalysis {
+  run_id: string;
+  trade_date: string;
+  model: string;
+  summary: string;
+  key_points: string[];
+  risk_notes: string[];
+  created_at: string;
+}
+
 export interface DashboardPaperOrder {
   run_id: string;
   order_id: string;
@@ -143,6 +153,7 @@ export interface DashboardDay {
   runs: DashboardRun[];
   watchlist: DashboardWatchlistItem[];
   risk_decisions: DashboardRiskDecision[];
+  llm_analysis: DashboardLLMAnalysis | null;
   paper_orders: DashboardPaperOrder[];
   positions: DashboardPosition[];
   portfolio_snapshot: DashboardPortfolioSnapshot | null;

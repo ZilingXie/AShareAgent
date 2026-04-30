@@ -10,6 +10,7 @@ from ashare_agent.agents.dashboard_query_agent import DashboardQueryAgent
 from ashare_agent.domain import (
     DataQualityIssue,
     DataQualityReport,
+    LLMAnalysis,
     PaperOrder,
     PaperPosition,
     PipelineRunContext,
@@ -71,6 +72,17 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
         "pre_market",
         "success",
         {"report_path": "reports/2026-04-29/pre-market.md"},
+    )
+    repository.save_llm_analysis(
+        pre_market_context,
+        LLMAnalysis(
+            trade_date=trade_date,
+            model="mock-llm",
+            summary="盘前关注指数趋势和量能。",
+            key_points=["沪深300ETF 位于观察名单前列"],
+            risk_notes=["仅用于模拟研究，不构成投资建议。"],
+            raw_response={"provider": "mock"},
+        ),
     )
     repository.save_pipeline_run(
         review_context,
@@ -241,6 +253,12 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert any(run.failure_reason == "必需数据源失败: market_bars" for run in runs)
     assert day.trade_date == "2026-04-29"
     assert [item.symbol for item in day.watchlist] == ["510300"]
+    assert day.llm_analysis is not None
+    assert day.llm_analysis.run_id == "pre-market-run"
+    assert day.llm_analysis.model == "mock-llm"
+    assert day.llm_analysis.summary == "盘前关注指数趋势和量能。"
+    assert day.llm_analysis.key_points == ["沪深300ETF 位于观察名单前列"]
+    assert day.llm_analysis.risk_notes == ["仅用于模拟研究，不构成投资建议。"]
     assert day.signals[0].action == "paper_buy"
     assert day.risk_decisions[0].approved is False
     assert day.paper_orders[0].is_real_trade is False
@@ -509,6 +527,7 @@ def test_dashboard_query_keeps_failed_runs_visible_without_successful_pre_market
 
     assert day.runs[0].status == "failed"
     assert day.watchlist == []
+    assert day.llm_analysis is None
     assert day.signals == []
     assert day.risk_decisions == []
     assert day.source_snapshots[0].failure_reason == "行情接口失败"
@@ -570,6 +589,28 @@ def test_dashboard_query_rejects_malformed_payload() -> None:
     )
 
     with pytest.raises(ValueError, match="watchlist_candidates"):
+        DashboardQueryAgent(repository).day_summary(context.trade_date)
+
+
+def test_dashboard_query_rejects_malformed_llm_analysis_payload() -> None:
+    repository = RawPayloadRepository()
+    context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="pre-market-run")
+    repository.save_pipeline_run(context, "pre_market", "success", {"report_path": "x.md"})
+    repository.save_raw_payload(
+        "llm_analyses",
+        context,
+        None,
+        {
+            "trade_date": "2026-04-29",
+            "model": "mock-llm",
+            "summary": "缺少 key_points",
+            "risk_notes": [],
+            "raw_response": {},
+            "created_at": "2026-04-29T08:00:00+00:00",
+        },
+    )
+
+    with pytest.raises(ValueError, match="llm_analyses"):
         DashboardQueryAgent(repository).day_summary(context.trade_date)
 
 

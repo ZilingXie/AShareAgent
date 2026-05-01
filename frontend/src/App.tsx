@@ -84,12 +84,11 @@ export default function App(): JSX.Element {
       setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
-      if (loadedBacktests.length === 0) {
+      const backtestIds = uniqueStrings(loadedBacktests.map((item) => item.backtest_id));
+      if (backtestIds.length === 0) {
         setStrategyComparison(null);
       } else {
-        setStrategyComparison(
-          await fetchStrategyComparison(loadedBacktests.map((item) => item.backtest_id))
-        );
+        setStrategyComparison(await fetchStrategyComparison(backtestIds));
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Dashboard API 请求失败");
@@ -494,14 +493,15 @@ function StrategyComparisonPanel({
 }: {
   comparison: DashboardStrategyComparison | null;
 }): JSX.Element {
+  const items = comparison ? uniqueStrategyComparisonItems(comparison.items) : [];
   return (
     <div className="trend-grid">
       <Section icon={Gauge} title="策略版本对比">
-        {!comparison || comparison.items.length === 0 ? (
+        {items.length === 0 ? (
           <EmptyState text="暂无策略回放对比" />
         ) : (
           <div className="comparison-list">
-            {comparison.items.map((item) => (
+            {items.map((item) => (
               <StrategyComparisonItemRow item={item} key={item.backtest_id} />
             ))}
           </div>
@@ -509,6 +509,35 @@ function StrategyComparisonPanel({
       </Section>
     </div>
   );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const normalized = value.trim();
+    if (normalized === "" || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    unique.push(normalized);
+  }
+  return unique;
+}
+
+function uniqueStrategyComparisonItems(
+  items: DashboardStrategyComparisonItem[]
+): DashboardStrategyComparisonItem[] {
+  const seen = new Set<string>();
+  const unique: DashboardStrategyComparisonItem[] = [];
+  for (const item of items) {
+    if (seen.has(item.backtest_id)) {
+      continue;
+    }
+    seen.add(item.backtest_id);
+    unique.push(item);
+  }
+  return unique;
 }
 
 function StrategyComparisonItemRow({

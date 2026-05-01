@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-本次真实三阶段日常运行验收已完成：`intraday-minute-source-fallback` 已合并、清理并推送，`ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 已写入本机 ignored `.env`；盘前成功，盘中在日线数据质量门禁失败，盘后按规则未继续执行。
+真实三阶段日常运行已重新跑通，`ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 生效；当前完成 dashboard 策略版本对比 duplicate key warning 清理，准备进入策略评估。
 
 ## 上次停在哪
 
@@ -55,9 +55,10 @@
 - 本轮已新增 `akshare_sina` 备用分钟线源：默认仍只用 `akshare_em`，只有显式配置 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 时才按链路尝试备用源；`raw_source_snapshots.metadata.source_attempts` 会记录每个 source/symbol 的状态、retry、timeout 和最后错误。
 - dashboard 已新增“分钟线源健康”只读展示，读取 `raw_source_snapshots.metadata.source_attempts`，展示 source、symbol、状态、retry、timeout、返回行数和最后错误。
 - 已将本机 ignored `.env` 明确配置为 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina`，用于后续真实盘中分钟线验收。
-- 本轮真实三阶段验收结果：`pre-market --trade-date 2026-04-29` 成功；`intraday-watch --trade-date 2026-04-29` 失败并停止后续 `post-market-review`。失败发生在重新采集日线后的数据质量门禁，原因是 `600000` 的 Sina 日线接口 `stock.finance.sina.com.cn` 通过代理连接断开，同时 510300/159915/600000 被判定近 30 个交易日行情缺失；本轮未进入分钟线 fallback 采集阶段。
-- 数据库审计已确认本轮 failed `pipeline_runs(stage=intraday_watch)`、failed `raw_source_snapshots(source=market_bars)` 和 failed `data_quality_reports(stage=intraday_watch)` 均记录了上述失败原因；同日已有成功盘中 run 中能看到 `intraday_source=akshare_em,akshare_sina` 和 `source_attempts` fallback 审计。
-- dashboard smoke 已确认页面可见“分钟线源健康”、`akshare_em`、`akshare_sina`、盘中模拟订单、成交失败和收盘复盘区块；同时发现策略版本对比区块存在重复 `backtest_id` 导致的 React duplicate key warning，后续可单独修复。
+- 真实三阶段日常运行已重新跑通：`pre-market -> intraday-watch -> post-market-review` 最新 normal run 均为 success，可作为后续策略评估基线。
+- 最新 `raw_source_snapshots(source=intraday_bars)` 为 success，metadata 显示 `intraday_source=akshare_em,akshare_sina`；`akshare_em` 对 510300 仍因 EastMoney/代理连接失败，随后 `akshare_sina` 成功返回 240 条 1 分钟 K 线。
+- dashboard smoke 已确认页面可见“分钟线源健康”、`akshare_em`、`akshare_sina`、盘中模拟订单、成交失败和收盘复盘区块。
+- 本轮已清理 dashboard 策略版本对比 duplicate key warning：backtest 列表和策略对比按 `backtest_id` 保序去重，只读展示层保留最新 summary，不删除历史回放数据。
 
 ## 近期关键决定和原因
 
@@ -97,4 +98,4 @@
 
 ## 下一步
 
-- 下一步先处理真实 AKShare 日线/公告源的代理稳定性，重点是 `stock.finance.sina.com.cn` 和 EastMoney 公告接口；稳定后再重跑 `pre-market -> intraday-watch -> post-market-review`。dashboard 另有一个低风险 UI 修复：策略版本对比列表对重复 `backtest_id` 去重，消除 React duplicate key warning。
+- 下一步进入策略评估：基于已跑通的真实三阶段和现有 backtest/strategy comparison，开始评估策略参数、信号质量、拒绝率、回撤和收益表现。

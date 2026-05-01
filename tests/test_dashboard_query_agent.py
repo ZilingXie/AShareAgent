@@ -477,6 +477,100 @@ def test_dashboard_query_hides_legacy_post_market_orders_without_intraday_succes
     assert day.paper_orders == []
 
 
+def test_dashboard_query_deduplicates_backtest_summaries_by_latest_row() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 30)
+    old_context = PipelineRunContext(
+        trade_date=trade_date,
+        run_id="old-backtest-summary",
+        run_mode="backtest",
+        backtest_id="bt-repeat",
+    )
+    latest_context = PipelineRunContext(
+        trade_date=trade_date,
+        run_id="latest-backtest-summary",
+        run_mode="backtest",
+        backtest_id="bt-repeat",
+    )
+
+    repository.save_pipeline_run(
+        old_context,
+        "backtest",
+        "success",
+        {
+            "strategy_params_version": "signal-old",
+            "provider": "mock",
+            "start_date": "2026-04-27",
+            "end_date": "2026-04-29",
+            "attempted_days": 3,
+            "succeeded_days": 3,
+            "failed_days": 0,
+        },
+    )
+    repository.save_pipeline_run(
+        latest_context,
+        "backtest",
+        "success",
+        {
+            "strategy_params_version": "signal-latest",
+            "provider": "mock",
+            "start_date": "2026-04-27",
+            "end_date": "2026-04-30",
+            "attempted_days": 4,
+            "succeeded_days": 4,
+            "failed_days": 0,
+        },
+    )
+
+    backtests = DashboardQueryAgent(repository).list_backtests()
+
+    assert [item.backtest_id for item in backtests] == ["bt-repeat"]
+    assert backtests[0].strategy_params_version == "signal-latest"
+    assert backtests[0].attempted_days == 4
+
+
+def test_dashboard_query_deduplicates_strategy_comparison_requested_ids() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 30)
+    for backtest_id, version in [
+        ("bt-repeat", "signal-v1"),
+        ("bt-other", "signal-v2"),
+    ]:
+        repository.save_pipeline_run(
+            PipelineRunContext(
+                trade_date=trade_date,
+                run_id=f"{backtest_id}-summary",
+                run_mode="backtest",
+                backtest_id=backtest_id,
+            ),
+            "backtest",
+            "success",
+            {
+                "strategy_params_version": version,
+                "provider": "mock",
+                "start_date": "2026-04-27",
+                "end_date": "2026-04-30",
+                "attempted_days": 4,
+                "succeeded_days": 4,
+                "failed_days": 0,
+                "strategy_params_snapshot": {
+                    "paper_trader": {"initial_cash": "100000"}
+                },
+            },
+        )
+
+    comparison = DashboardQueryAgent(repository).strategy_comparison(
+        ["bt-repeat", "bt-repeat", "bt-other"]
+    )
+
+    assert comparison.backtest_ids == ["bt-repeat", "bt-other"]
+    assert [item.backtest_id for item in comparison.items] == ["bt-repeat", "bt-other"]
+    assert [item.strategy_params_version for item in comparison.items] == [
+        "signal-v1",
+        "signal-v2",
+    ]
+
+
 def test_dashboard_query_builds_range_trends_from_latest_successful_pre_market_runs() -> None:
     repository = InMemoryRepository()
     first_date = date(2026, 4, 28)

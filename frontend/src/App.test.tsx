@@ -348,6 +348,42 @@ const strategyComparisonFixture = {
   ],
 };
 
+const duplicateStrategyComparisonFixture = {
+  backtest_ids: ["bt-signal-v1", "bt-signal-v1"],
+  items: [
+    {
+      backtest_id: "bt-signal-v1",
+      strategy_params_version: "signal-v1",
+      provider: "mock",
+      start_date: "2026-04-27",
+      end_date: "2026-04-29",
+      attempted_days: 3,
+      succeeded_days: 3,
+      failed_days: 0,
+      win_rate: 0.5,
+      max_drawdown: 0.06862745098,
+      total_return: 0.0125,
+      risk_reject_rate: 0.25,
+      data_quality_failure_rate: 0.3333333333,
+    },
+    {
+      backtest_id: "bt-signal-v1",
+      strategy_params_version: "signal-v1-duplicate",
+      provider: "mock",
+      start_date: "2026-04-27",
+      end_date: "2026-04-29",
+      attempted_days: 3,
+      succeeded_days: 3,
+      failed_days: 0,
+      win_rate: 0.5,
+      max_drawdown: 0.06862745098,
+      total_return: 0.0125,
+      risk_reject_rate: 0.25,
+      data_quality_failure_rate: 0.3333333333,
+    },
+  ],
+};
+
 const backtestsFixture = {
   backtests: [
     {
@@ -361,6 +397,16 @@ const backtestsFixture = {
       succeeded_days: 3,
       failed_days: 0,
       created_at: "2026-04-29T09:00:00+00:00",
+    },
+  ],
+};
+
+const duplicateBacktestsFixture = {
+  backtests: [
+    ...backtestsFixture.backtests,
+    {
+      ...backtestsFixture.backtests[0],
+      created_at: "2026-04-29T10:00:00+00:00",
     },
   ],
 };
@@ -453,6 +499,30 @@ describe("dashboard", () => {
     expect(screen.getByText("质量失败率 33.33%")).toBeInTheDocument();
   });
 
+  it("deduplicates strategy comparison rows and request ids", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mockFetch(
+      dayFixture,
+      trendsFixture,
+      duplicateStrategyComparisonFixture,
+      duplicateBacktestsFixture
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText("策略版本对比")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("bt-signal-v1")).toHaveLength(1));
+    expect(screen.queryByText("signal-v1-duplicate")).not.toBeInTheDocument();
+    expect(
+      consoleError.mock.calls.some((call) => String(call[0]).includes("same key"))
+    ).toBe(false);
+    const comparisonRequest = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find(([input]) => String(input).includes("/api/dashboard/strategy-comparison"));
+    expect(String(comparisonRequest?.[0])).toContain("backtest_ids=bt-signal-v1");
+    expect(String(comparisonRequest?.[0])).not.toContain("bt-signal-v1%2Cbt-signal-v1");
+  });
+
   it("renders empty states for a quiet trading day", async () => {
     mockFetch({
       ...dayFixture,
@@ -487,14 +557,15 @@ describe("dashboard", () => {
 function mockFetch(
   day: DashboardDay,
   trends: DashboardTrends = trendsFixture,
-  strategyComparison = strategyComparisonFixture
+  strategyComparison = strategyComparisonFixture,
+  backtests = backtestsFixture
 ): void {
   vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.includes("/api/dashboard/runs")
       ? { runs: runsFixture }
       : url.includes("/api/dashboard/backtests")
-        ? backtestsFixture
+        ? backtests
       : url.includes("/api/dashboard/strategy-comparison")
         ? strategyComparison
       : url.includes("/api/dashboard/trends")

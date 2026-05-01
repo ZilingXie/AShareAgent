@@ -380,6 +380,18 @@ def _empty_intraday_source_health() -> list[DashboardIntradaySourceHealth]:
     return []
 
 
+def _unique_nonempty_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
 def _empty_data_quality_reports() -> list[DashboardDataQualityReport]:
     return []
 
@@ -436,19 +448,30 @@ class DashboardQueryAgent:
         return [self._pipeline_run(row) for row in rows[:limit]]
 
     def list_backtests(self, limit: int = 50) -> list[DashboardBacktest]:
-        rows = [
-            row
-            for row in sorted(
-                self.repository.payload_rows("pipeline_runs"),
-                key=lambda item: _row_id(item, "pipeline_runs"),
-                reverse=True,
+        rows: list[PayloadRecord] = []
+        seen_backtest_ids: set[str] = set()
+        for row in sorted(
+            self.repository.payload_rows("pipeline_runs"),
+            key=lambda item: _row_id(item, "pipeline_runs"),
+            reverse=True,
+        ):
+            if not self._is_backtest_summary(row):
+                continue
+            backtest_id = _required_str(
+                _payload(row, "pipeline_runs"),
+                "pipeline_runs",
+                "backtest_id",
             )
-            if self._is_backtest_summary(row)
-        ]
-        return [self._backtest(row) for row in rows[:limit]]
+            if backtest_id in seen_backtest_ids:
+                continue
+            seen_backtest_ids.add(backtest_id)
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        return [self._backtest(row) for row in rows]
 
     def strategy_comparison(self, backtest_ids: list[str]) -> DashboardStrategyComparison:
-        requested_ids = [item.strip() for item in backtest_ids if item.strip()]
+        requested_ids = _unique_nonempty_strings(backtest_ids)
         items: list[DashboardStrategyComparisonItem] = []
         for backtest_id in requested_ids:
             summary_row = self._latest_backtest_summary_row(backtest_id)
@@ -801,6 +824,10 @@ class DashboardQueryAgent:
                 payload.get("stage") == "backtest"
                 and payload.get("run_mode") == "backtest"
                 and payload.get("backtest_id") == backtest_id
+                and (
+                    latest is None
+                    or _row_id(row, "pipeline_runs") > _row_id(latest, "pipeline_runs")
+                )
             ):
                 latest = row
         return latest

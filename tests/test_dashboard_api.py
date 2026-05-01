@@ -10,11 +10,14 @@ from ashare_agent.api import create_app
 from ashare_agent.dashboard import (
     DashboardBacktest,
     DashboardDay,
+    DashboardQueryService,
     DashboardRun,
     DashboardStrategyComparison,
     DashboardStrategyComparisonItem,
     DashboardTrends,
 )
+from ashare_agent.domain import PipelineRunContext
+from ashare_agent.repository import InMemoryRepository
 
 
 class FakeDashboardService:
@@ -118,6 +121,48 @@ def test_dashboard_api_returns_backtests_and_strategy_comparison() -> None:
     assert comparison_response.status_code == 200
     assert comparison_response.json()["backtest_ids"] == ["bt-1", "bt-2"]
     assert comparison_response.json()["items"][0]["strategy_params_version"] == "signal-v1"
+
+
+def test_dashboard_api_returns_deduplicated_backtests_and_strategy_comparison() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 30)
+    for run_id, version in [
+        ("old-summary", "signal-old"),
+        ("latest-summary", "signal-latest"),
+    ]:
+        repository.save_pipeline_run(
+            PipelineRunContext(
+                trade_date=trade_date,
+                run_id=run_id,
+                run_mode="backtest",
+                backtest_id="bt-repeat",
+            ),
+            "backtest",
+            "success",
+            {
+                "strategy_params_version": version,
+                "provider": "mock",
+                "start_date": "2026-04-27",
+                "end_date": "2026-04-30",
+                "attempted_days": 4,
+                "succeeded_days": 4,
+                "failed_days": 0,
+            },
+        )
+    client = TestClient(create_app(service_factory=lambda: DashboardQueryService(repository)))
+
+    backtests_response = client.get("/api/dashboard/backtests?limit=5")
+    comparison_response = client.get(
+        "/api/dashboard/strategy-comparison?backtest_ids=bt-repeat,bt-repeat"
+    )
+
+    assert backtests_response.status_code == 200
+    backtests = backtests_response.json()["backtests"]
+    assert [item["backtest_id"] for item in backtests] == ["bt-repeat"]
+    assert backtests[0]["strategy_params_version"] == "signal-latest"
+    assert comparison_response.status_code == 200
+    assert comparison_response.json()["backtest_ids"] == ["bt-repeat"]
+    assert [item["backtest_id"] for item in comparison_response.json()["items"]] == ["bt-repeat"]
 
 
 def test_dashboard_api_fails_clearly_without_database_url(

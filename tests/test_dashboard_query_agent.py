@@ -46,6 +46,7 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     failed_context = PipelineRunContext(trade_date=trade_date, run_id="failed-run")
     old_pre_market_context = PipelineRunContext(trade_date=trade_date, run_id="old-pre-market-run")
     pre_market_context = PipelineRunContext(trade_date=trade_date, run_id="pre-market-run")
+    intraday_context = PipelineRunContext(trade_date=trade_date, run_id="intraday-run")
     review_context = PipelineRunContext(trade_date=trade_date, run_id="review-run")
 
     repository.save_pipeline_run(
@@ -89,12 +90,6 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
             raw_response={"provider": "mock"},
         ),
     )
-    repository.save_pipeline_run(
-        review_context,
-        "post_market_review",
-        "success",
-        {"report_path": "reports/2026-04-29/post-market-review.md"},
-    )
     repository.save_watchlist_candidates(
         pre_market_context,
         [
@@ -133,8 +128,14 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
             )
         ],
     )
+    repository.save_pipeline_run(
+        intraday_context,
+        "intraday_watch",
+        "success",
+        {"report_path": "reports/2026-04-29/intraday-watch.md", "order_count": 2},
+    )
     repository.save_paper_orders(
-        review_context,
+        intraday_context,
         [
             PaperOrder(
                 order_id="paper-2026-04-29-510300-buy",
@@ -159,6 +160,28 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
                 reason="趋势走弱卖出",
             )
         ],
+    )
+    repository.save_paper_orders(
+        review_context,
+        [
+            PaperOrder(
+                order_id="legacy-post-market-buy",
+                symbol="512000",
+                trade_date=trade_date,
+                side="buy",
+                quantity=100,
+                price=Decimal("1.0000"),
+                amount=Decimal("100.00"),
+                slippage=Decimal("0.001"),
+                reason="旧盘后订单不应出现在盘中模拟订单",
+            )
+        ],
+    )
+    repository.save_pipeline_run(
+        review_context,
+        "post_market_review",
+        "success",
+        {"report_path": "reports/2026-04-29/post-market-review.md"},
     )
     repository.save_paper_positions(
         review_context,
@@ -314,6 +337,10 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert day.llm_analysis.risk_notes == ["仅用于模拟研究，不构成投资建议。"]
     assert day.signals[0].action == "paper_buy"
     assert day.risk_decisions[0].approved is False
+    assert [order.order_id for order in day.paper_orders] == [
+        "paper-2026-04-29-510300-buy",
+        "paper-2026-04-29-159915-sell",
+    ]
     assert day.paper_orders[0].is_real_trade is False
     assert day.paper_orders[0].price == "4.1041"
     assert day.positions[0].pnl_amount == "20.00"
@@ -335,6 +362,38 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert day.data_reliability_reports[0].missing_market_bar_count == 1
     assert day.data_quality_reports[0].status == "failed"
     assert day.data_quality_reports[0].issues[0].symbol == "510300"
+
+
+def test_dashboard_query_hides_legacy_post_market_orders_without_intraday_success() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 29)
+    legacy_context = PipelineRunContext(trade_date=trade_date, run_id="legacy-post-review")
+    repository.save_pipeline_run(
+        legacy_context,
+        "post_market_review",
+        "success",
+        {"reviewed_order_count": 1},
+    )
+    repository.save_paper_orders(
+        legacy_context,
+        [
+            PaperOrder(
+                order_id="legacy-post-market-buy",
+                symbol="510300",
+                trade_date=trade_date,
+                side="buy",
+                quantity=100,
+                price=Decimal("4.0000"),
+                amount=Decimal("400.00"),
+                slippage=Decimal("0.001"),
+                reason="旧流程盘后买单",
+            )
+        ],
+    )
+
+    day = DashboardQueryAgent(repository).day_summary(trade_date)
+
+    assert day.paper_orders == []
 
 
 def test_dashboard_query_builds_range_trends_from_latest_successful_pre_market_runs() -> None:
@@ -894,8 +953,8 @@ def test_dashboard_query_rejects_malformed_llm_analysis_payload() -> None:
 
 def test_dashboard_query_rejects_real_trade_order_payload() -> None:
     repository = RawPayloadRepository()
-    context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="review-run")
-    repository.save_pipeline_run(context, "post_market_review", "success", {"report_path": "x.md"})
+    context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="intraday-run")
+    repository.save_pipeline_run(context, "intraday_watch", "success", {"report_path": "x.md"})
     repository.save_raw_payload(
         "paper_orders",
         context,

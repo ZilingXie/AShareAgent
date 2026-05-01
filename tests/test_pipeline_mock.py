@@ -9,6 +9,7 @@ from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyPa
 from ashare_agent.domain import (
     Asset,
     MarketBar,
+    PaperOrder,
     PaperPosition,
     PipelineRunContext,
     PortfolioSnapshot,
@@ -369,14 +370,41 @@ def test_post_market_review_does_not_create_orders(tmp_path: Path) -> None:
     pipeline.run_pre_market(trade_date)
     pipeline.run_intraday_watch(trade_date)
     order_count_after_intraday = len(repository.records_for("paper_orders"))
+    legacy_context = PipelineRunContext(trade_date=trade_date, run_id="legacy-post-order-run")
+    repository.save_pipeline_run(
+        legacy_context,
+        "post_market_review",
+        "success",
+        {"reviewed_order_count": 1},
+    )
+    repository.save_paper_orders(
+        legacy_context,
+        [
+            PaperOrder(
+                order_id="legacy-post-market-buy",
+                symbol="159915",
+                trade_date=trade_date,
+                side="buy",
+                quantity=100,
+                price=Decimal("3.0000"),
+                amount=Decimal("300.00"),
+                slippage=Decimal("0.001"),
+                reason="旧流程盘后买单，不应进入新复盘统计",
+            )
+        ],
+    )
+    order_count_with_legacy = len(repository.records_for("paper_orders"))
     review = pipeline.run_post_market_review(trade_date)
 
     assert order_count_after_intraday > 0
-    assert len(repository.records_for("paper_orders")) == order_count_after_intraday
+    assert len(repository.records_for("paper_orders")) == order_count_with_legacy
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert latest_run["stage"] == "post_market_review"
     assert latest_run["new_order_count"] == 0
     assert latest_run["reviewed_order_count"] == order_count_after_intraday
+    assert "legacy-post-market-buy" not in {
+        order["order_id"] for order in review.payload["reviewed_orders"]
+    }
     assert repository.records_for("review_reports")[-1]["run_id"] == review.payload["run_id"]
 
 

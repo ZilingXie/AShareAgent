@@ -305,9 +305,9 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
-`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。买卖订单写入 `paper_orders`，持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`；重复运行同一交易日不会重复买入或卖出。
+`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。买卖订单写入 `paper_orders`，持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`；重复运行同一交易日不会重复买入或卖出。
 
-`post-market-review` 不新增 `paper_orders`，只恢复盘中已生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。
+`post-market-review` 不新增 `paper_orders`，只恢复同日成功 `intraday_watch` run 生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。`reviewed_order_count` 和复盘报告里的订单列表只统计盘中订单，历史 `post_market_review` 订单不会污染新阶段语义。
 
 只读观察台 API：
 
@@ -325,7 +325,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev --host 127.0.0.1 --port 5173
 ```
 
-前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。页面支持日期范围筛选、范围趋势和策略版本对比；所选单日仍展示盘中模拟订单和复盘明细。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何 `True` 都视为安全异常。
+前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。页面支持日期范围筛选、范围趋势和策略版本对比；所选单日的“盘中模拟订单”只展示同日成功 `intraday_watch` run 的订单，历史盘后订单不会展示到该区域。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何当前盘中订单出现 `True` 都视为安全异常。
 
 前端验证：
 

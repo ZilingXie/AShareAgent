@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/intraday-stage-cleanup`：在盘中成交职责已迁移的基础上，收敛 `ASharePipeline` 内联逻辑，并强化 dashboard/文档里的盘中订单和收盘复盘语义。
+正在做 `codex/order-stage-filter`：修复旧流程遗留 `post_market_review` 模拟订单污染“盘中模拟订单”和盘后 reviewed orders 统计的问题。
 
 ## 上次停在哪
 
@@ -42,10 +42,11 @@
 - 本轮新增 `signal` 策略参数，SignalEngine 权重、最低分阈值和每日最大信号数已由 `StrategyParamsAgent` 加载并进入完整策略快照。
 - 本轮新增 `BacktestRunner` 和 `ashare backtest`，按 provider 交易日历多日执行 `pre_market + intraday_watch + post_market_review` 回放，并用 `run_mode=backtest`、`backtest_id` 隔离回放状态。
 - 本轮新增 dashboard backtest 列表和策略版本对比 DTO/API/前端区块，按 `backtest_id` 展示胜率、最大回撤、总收益率、风控拒绝率和数据质量失败率。
-- 本轮正在迁移盘中成交职责：`pre_market` 只生成信号和风控决策，`intraday_watch` 执行模拟买入/卖出、持仓和组合快照，`post_market_review` 不新增订单，只生成收盘快照、复盘和策略实验报告。
+- 三阶段职责重排已完成：`pre_market` 只生成信号和风控决策，`intraday_watch` 执行模拟买入/卖出、持仓和组合快照，`post_market_review` 不新增订单，只生成收盘快照、复盘和策略实验报告。
 - 本轮已将 `ASharePipeline` 的盘中交易输入准备、模拟买卖执行、盘中报告、收盘复盘总结拆成内部方法，保持现有 CLI/API/schema 不变。
 - 前端单日详情已将“模拟订单”改为“盘中模拟订单”，将“复盘报告”改为“收盘复盘”，空状态同步改为“暂无盘中模拟订单”。
-- 遗留 `codex/stage-contracts` worktree 有未提交差异且与当前 `main` 不完全一致，按规则暂不删除。
+- 遗留 `codex/stage-contracts` worktree 已处理，当前 `main` 保留已合入的三阶段职责重排。
+- 本轮正在实现订单阶段过滤：旧 `post_market_review` 订单保留在数据库中，但 dashboard 盘中订单、盘后 `reviewed_orders`、`reviewed_order_count` 和复盘卖出原因统计只读取可关联到同日成功 `intraday_watch` run 的订单。
 
 ## 近期关键决定和原因
 
@@ -61,6 +62,7 @@
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
 - `intraday_watch` 必须依赖同日成功 `pre_market` 风控决策；缺失时显式失败并写 failed run，不空跑。
 - `post_market_review` 不再新增 `paper_orders`；盘后只读取盘中订单和持仓，生成收盘盯市、复盘和审计。
+- 历史 `post_market_review` 模拟订单不删除、不迁移；读取层用 `pipeline_runs.stage` 过滤，新阶段语义只承认成功 `intraday_watch` run 生成的盘中订单。
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
 - backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
@@ -81,4 +83,4 @@
 
 ## 下一步
 
-- 下一步完成本轮拆分和语义收尾的全量验证、提交、合并回 `main`，并按 worktree 规则清理任务分支。
+- 下一步完成 `codex/order-stage-filter` 的全量验证、提交、合并回 `main`，并按 worktree 规则清理任务分支。

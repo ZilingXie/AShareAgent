@@ -22,6 +22,7 @@ def test_dashboard_query_builds_run_list_and_day_summary() -> None:
     trade_date = date(2026, 4, 29)
     failed_context = PipelineRunContext(trade_date=trade_date, run_id="failed-run")
     pre_market_context = PipelineRunContext(trade_date=trade_date, run_id="pre-market-run")
+    intraday_context = PipelineRunContext(trade_date=trade_date, run_id="intraday-run")
     review_context = PipelineRunContext(trade_date=trade_date, run_id="review-run")
 
     repository.save_pipeline_run(
@@ -35,12 +36,6 @@ def test_dashboard_query_builds_run_list_and_day_summary() -> None:
         "pre_market",
         "success",
         {"report_path": "reports/2026-04-29/pre-market.md"},
-    )
-    repository.save_pipeline_run(
-        review_context,
-        "post_market_review",
-        "success",
-        {"report_path": "reports/2026-04-29/post-market-review.md"},
     )
     repository.save_watchlist_candidates(
         pre_market_context,
@@ -67,8 +62,14 @@ def test_dashboard_query_builds_run_list_and_day_summary() -> None:
             )
         ],
     )
+    repository.save_pipeline_run(
+        intraday_context,
+        "intraday_watch",
+        "success",
+        {"report_path": "reports/2026-04-29/intraday-watch.md", "order_count": 1},
+    )
     repository.save_paper_orders(
-        review_context,
+        intraday_context,
         [
             PaperOrder(
                 order_id="paper-2026-04-29-510300-buy",
@@ -82,6 +83,12 @@ def test_dashboard_query_builds_run_list_and_day_summary() -> None:
                 reason="通过",
             )
         ],
+    )
+    repository.save_pipeline_run(
+        review_context,
+        "post_market_review",
+        "success",
+        {"report_path": "reports/2026-04-29/post-market-review.md"},
     )
     repository.save_paper_positions(
         review_context,

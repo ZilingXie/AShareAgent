@@ -556,9 +556,16 @@ class DashboardQueryAgent:
         ]
 
     def paper_orders(self, trade_date: date) -> list[DashboardPaperOrder]:
+        intraday_run_id = self._latest_successful_run_id(trade_date, "intraday_watch")
+        if intraday_run_id is None:
+            return []
         return [
             self._paper_order(row)
-            for row in self.repository.payload_rows("paper_orders", trade_date=trade_date)
+            for row in self.repository.payload_rows(
+                "paper_orders",
+                trade_date=trade_date,
+                run_id=intraday_run_id,
+            )
             if _is_normal_row(row, "paper_orders")
         ]
 

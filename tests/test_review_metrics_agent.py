@@ -28,6 +28,8 @@ def test_review_metrics_calculates_closed_trade_metrics_as_of_date() -> None:
     second_context = PipelineRunContext(trade_date=date(2026, 4, 30), run_id="second-review")
     future_context = PipelineRunContext(trade_date=date(2026, 5, 6), run_id="future-review")
 
+    repository.save_pipeline_run(first_context, "intraday_watch", "success", {"order_count": 2})
+    repository.save_pipeline_run(second_context, "intraday_watch", "success", {"order_count": 1})
     repository.save_paper_positions(
         first_context,
         [
@@ -178,6 +180,61 @@ def test_review_metrics_returns_zero_values_without_closed_trades_or_drawdown() 
     assert metrics.max_drawdown == 0
 
 
+def test_review_metrics_counts_sell_reasons_only_from_successful_intraday_orders() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 30)
+    intraday_context = PipelineRunContext(trade_date=trade_date, run_id="intraday-run")
+    legacy_context = PipelineRunContext(trade_date=trade_date, run_id="legacy-post-review")
+    repository.save_pipeline_run(
+        intraday_context,
+        "intraday_watch",
+        "success",
+        {"order_count": 1},
+    )
+    repository.save_pipeline_run(
+        legacy_context,
+        "post_market_review",
+        "success",
+        {"reviewed_order_count": 1},
+    )
+    repository.save_paper_orders(
+        intraday_context,
+        [
+            PaperOrder(
+                order_id="intraday-sell",
+                symbol="510300",
+                trade_date=trade_date,
+                side="sell",
+                quantity=100,
+                price=Decimal("95"),
+                amount=Decimal("9500"),
+                slippage=Decimal("0.001"),
+                reason="触发止损",
+            )
+        ],
+    )
+    repository.save_paper_orders(
+        legacy_context,
+        [
+            PaperOrder(
+                order_id="legacy-post-sell",
+                symbol="159915",
+                trade_date=trade_date,
+                side="sell",
+                quantity=100,
+                price=Decimal("90"),
+                amount=Decimal("9000"),
+                slippage=Decimal("0.001"),
+                reason="旧盘后卖出原因不应计入",
+            )
+        ],
+    )
+
+    metrics = ReviewMetricsAgent(repository).metrics_as_of(trade_date)
+
+    assert metrics.sell_reason_distribution == {"触发止损": 1}
+
+
 def test_review_metrics_rejects_malformed_position_payload() -> None:
     repository = RawPayloadRepository()
     context = PipelineRunContext(trade_date=date(2026, 4, 30), run_id="broken-position")
@@ -204,6 +261,7 @@ def test_review_metrics_rejects_malformed_position_payload() -> None:
 def test_review_metrics_rejects_real_trade_order_payload() -> None:
     repository = RawPayloadRepository()
     context = PipelineRunContext(trade_date=date(2026, 4, 30), run_id="real-order")
+    repository.save_pipeline_run(context, "intraday_watch", "success", {"order_count": 1})
     repository.save_raw_payload(
         "paper_orders",
         context,

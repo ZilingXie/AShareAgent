@@ -81,8 +81,9 @@ Alembic 迁移创建以下表分组：
 当前 repository 已将核心运行结果写入专表，payload 额外保存策略参数版本、完整参数快照、`run_mode` 和 `backtest_id`，不新增数据库列：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`trading_calendar`、`market_bars`、`announcements`、`news_items`、`policy_items`，再写入 `data_quality_reports`；质量通过或仅警告后继续写 `technical_indicators`、`pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
-- `intraday-watch` 从 repository 读取同日成功 `pre-market` 风控决策、开放持仓、最新现金和当日已有模拟订单；若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`pipeline_runs` 和 `artifacts`。同日重复运行不会重复生成买卖订单。
-- `post-market-review` 不新增 `paper_orders`，只读取盘中订单和持仓，执行收盘盯市，再写入 `paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。盘后还会生成 `strategy-experiment.md`，并在 `post_market_review` artifact 与 pipeline run payload 中记录 `new_order_count=0`、`reviewed_order_count` 和 `experiment_report_path`。
+- `intraday-watch` 从 repository 读取同日成功 `pre-market` 风控决策、开放持仓、最新现金和当日已有模拟订单；当日已有模拟订单只认同日成功 `intraday_watch` run 生成的 `paper_orders`。若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`pipeline_runs` 和 `artifacts`。同日重复运行不会重复生成买卖订单。
+- `post-market-review` 不新增 `paper_orders`，只读取同日成功 `intraday_watch` run 生成的盘中订单和持仓，执行收盘盯市，再写入 `paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。盘后还会生成 `strategy-experiment.md`，并在 `post_market_review` artifact 与 pipeline run payload 中记录 `new_order_count=0`、`reviewed_order_count` 和 `experiment_report_path`；`reviewed_order_count` 不统计旧流程遗留的 `post_market_review` 订单。
+- 历史兼容规则：旧数据库中已经存在的 `post_market_review` 订单不删除、不迁移；dashboard “盘中模拟订单”、盘后 `reviewed_orders` 和复盘订单统计只读取可关联到同日成功 `intraday_watch` run 的订单。
 - `daily-run` 先采集并 upsert 结构化 `trading_calendar`；非交易日写 `pipeline_runs(stage=daily_run,status=skipped)` 和 `data_reliability_reports` 后退出；交易日依次运行盘前、盘中和复盘，并在成功或失败后写 `data_reliability_reports` 和 `daily_run` 审计。
 - `paper_positions` 中的 payload 可保存 `open` 和 `closed` 状态；repository 恢复开放持仓时只返回每个 symbol 的最新 `open` payload。
 - `backtest` 不新增表；每个交易日按 `pre_market -> intraday_watch -> post_market_review` 执行，每条回放 payload 使用 `run_mode=backtest` 和同一个 `backtest_id`。repository 恢复持仓、订单、现金和最新 snapshot 时按运行模式隔离，普通 `run_mode=normal` 不读取回放状态。
@@ -141,10 +142,10 @@ Alembic 迁移创建以下表分组：
   - `realized_pnl`：只统计已关闭模拟持仓，按 `(exit_price - entry_price) * quantity` 计算，DTO 用金额字符串。
   - `win_rate`：盈利 closed trade 数 / closed trade 总数；无 closed trade 时为 `0`。
   - `average_holding_days`：只统计 closed trade，沿用自然日口径；无 closed trade 时为 `0`。
-  - `sell_reason_distribution`：按截至所选日所有模拟卖单的 `reason` 原文计数，不做额外归类。
+  - `sell_reason_distribution`：按截至所选日可关联到成功 `intraday_watch` run 的模拟卖单 `reason` 原文计数，不做额外归类。
   - `max_drawdown`：按截至所选日 `portfolio_snapshots.total_value` 序列计算峰值到谷值最大跌幅，输出正数百分比小数。
 - `DashboardPaperOrder.reason` 使用 `PaperOrder.reason` 原文；卖出原因不做自动归类。`PaperOrder.is_real_trade` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，前端也会显式展示该字段。
-- 查询层遇到缺字段、字段类型错误、未知枚举或 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底；复盘指标计算也遵守同一规则。
+- 查询层遇到缺字段、字段类型错误、未知枚举或当前阶段语义内的 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底；复盘指标计算也遵守同一规则。
 
 ## 后续维护
 

@@ -115,8 +115,11 @@ class ReviewMetricsAgent:
     def _sell_reason_distribution_as_of(self, trade_date: date) -> dict[str, int]:
         counter: Counter[str] = Counter()
         seen_order_ids: set[str] = set()
+        intraday_run_ids = self._successful_intraday_run_ids_as_of(trade_date)
         for row in self.repository.payload_rows("paper_orders"):
             if _row_date(row, "paper_orders") > trade_date:
+                continue
+            if _row_run_id(row, "paper_orders") not in intraday_run_ids:
                 continue
             payload = _payload(row, "paper_orders")
             is_real_trade = _required_bool(payload, "paper_orders", "is_real_trade")
@@ -131,6 +134,18 @@ class ReviewMetricsAgent:
             seen_order_ids.add(order_id)
             counter[_required_str(payload, "paper_orders", "reason")] += 1
         return dict(counter)
+
+    def _successful_intraday_run_ids_as_of(self, trade_date: date) -> set[str]:
+        run_ids: set[str] = set()
+        for row in self.repository.payload_rows("pipeline_runs"):
+            if _row_date(row, "pipeline_runs") > trade_date:
+                continue
+            payload = _payload(row, "pipeline_runs")
+            if not _is_normal_payload(payload):
+                continue
+            if payload.get("stage") == "intraday_watch" and payload.get("status") == "success":
+                run_ids.add(_row_run_id(row, "pipeline_runs"))
+        return run_ids
 
     def _max_drawdown_as_of(self, trade_date: date) -> float:
         values: list[Decimal] = []
@@ -170,6 +185,10 @@ def _row_id(row: PayloadRecord, table_name: str) -> int:
     return _int_value(_required_row(row, table_name, "id"), table_name, "id")
 
 
+def _row_run_id(row: PayloadRecord, table_name: str) -> str:
+    return str(_required_row(row, table_name, "run_id"))
+
+
 def _row_date(row: PayloadRecord, table_name: str) -> date:
     return _date_value(_required_row(row, table_name, "trade_date"), table_name, "trade_date")
 
@@ -184,6 +203,13 @@ def _required(payload: Mapping[str, object], table_name: str, field_name: str) -
     if field_name not in payload or payload[field_name] is None:
         raise ValueError(f"{table_name} 缺少字段 {field_name}")
     return payload[field_name]
+
+
+def _is_normal_payload(payload: Mapping[str, object]) -> bool:
+    backtest_id = payload.get("backtest_id")
+    return payload.get("run_mode", "normal") == "normal" and (
+        backtest_id is None or str(backtest_id) == ""
+    )
 
 
 def _required_bool(payload: Mapping[str, object], table_name: str, field_name: str) -> bool:

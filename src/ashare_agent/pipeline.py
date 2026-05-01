@@ -333,6 +333,7 @@ class ASharePipeline:
                 trade_date,
                 run_mode=self.run_mode,
                 backtest_id=self.backtest_id,
+                stage="intraday_watch",
             )
             return decisions, existing_orders
 
@@ -420,6 +421,7 @@ class ASharePipeline:
             trade_date,
             run_mode=self.run_mode,
             backtest_id=self.backtest_id,
+            stage="intraday_watch",
         )
         self.trader.mark_to_market(dataset.bars)
         snapshot, report = self.review_agent.review(

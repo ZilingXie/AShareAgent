@@ -346,6 +346,7 @@ class PipelineRepository(Protocol):
         trade_date: date | None = None,
         run_mode: RunMode = "normal",
         backtest_id: str | None = None,
+        stage: str | None = None,
     ) -> list[PaperOrder]: ...
 
     def load_latest_cash(
@@ -687,10 +688,25 @@ class RepositoryBase:
         trade_date: date | None = None,
         run_mode: RunMode = "normal",
         backtest_id: str | None = None,
+        stage: str | None = None,
     ) -> list[PaperOrder]:
+        if stage is not None:
+            if trade_date is None:
+                raise ValueError("按 stage 读取 paper_orders 必须提供 trade_date")
+            run_id = self._latest_successful_run_id(
+                trade_date=trade_date,
+                stage=stage,
+                run_mode=run_mode,
+                backtest_id=backtest_id,
+            )
+            if run_id is None:
+                return []
+            rows = self._rows("paper_orders", trade_date=trade_date, run_id=run_id)
+        else:
+            rows = self._rows("paper_orders", trade_date=trade_date)
         return [
             _paper_order_from_payload(cast(Mapping[str, object], row["payload"]))
-            for row in self._rows("paper_orders", trade_date=trade_date)
+            for row in rows
             if _scope_matches(
                 cast(Mapping[str, object], row["payload"]),
                 run_mode=run_mode,

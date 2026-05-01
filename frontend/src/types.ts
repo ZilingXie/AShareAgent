@@ -269,6 +269,49 @@ export interface DashboardStrategyComparison {
   items: DashboardStrategyComparisonItem[];
 }
 
+export interface DashboardStrategyEvaluationRecommendation {
+  summary: string;
+  recommended_variant_ids: string[];
+}
+
+export interface DashboardStrategyEvaluationVariant {
+  id: string;
+  label: string;
+  version: string;
+  backtest_id: string;
+  success: boolean;
+  attempted_days: number;
+  succeeded_days: number;
+  failed_days: number;
+  source_failure_rate: number;
+  data_quality_failure_rate: number;
+  signal_count: number;
+  risk_approved_count: number;
+  risk_rejected_count: number;
+  order_count: number;
+  execution_failed_count: number;
+  closed_trade_count: number;
+  signal_hit_count: number;
+  signal_hit_rate: number;
+  open_position_count: number;
+  holding_pnl: string;
+  total_return: number;
+  max_drawdown: number;
+  is_recommended: boolean;
+  not_recommended_reasons: string[];
+}
+
+export interface DashboardStrategyEvaluation {
+  evaluation_id: string;
+  provider: string;
+  start_date: string;
+  end_date: string;
+  report_path: string;
+  variant_count: number;
+  recommendation: DashboardStrategyEvaluationRecommendation;
+  variants: DashboardStrategyEvaluationVariant[];
+}
+
 export interface DashboardDay {
   trade_date: string;
   runs: DashboardRun[];

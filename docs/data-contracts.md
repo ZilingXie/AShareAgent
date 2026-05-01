@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、strategy-evaluate 聚合审计、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、strategy-evaluate 聚合审计、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO、策略评估 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -137,6 +137,12 @@ Alembic 迁移创建以下表分组：
 - `DashboardLLMAnalysis` 字段包括 `run_id`、`trade_date`、`model`、`summary`、`key_points`、`risk_notes` 和 `created_at`。DTO 只展示已落库 LLM 审计内容，不在查询时重新调用 LLM。
 - `list_backtests(limit)` 返回最近的 backtest summary run；`strategy_comparison(backtest_ids)` 只比较明确传入的 backtest 批次。
 - 策略对比 DTO 按 `backtest_id` 输出 `strategy_params_version`、provider、日期范围、尝试/成功/失败天数、胜率、最大回撤、总收益率、风控拒绝率和数据质量失败率。
+- `list_strategy_evaluations(limit)` 返回最近的 `pipeline_runs(stage=strategy_evaluation, run_mode=backtest)` 批次，按 `evaluation_id` 保留最新记录；`strategy_evaluation(evaluation_id)` 返回单个批次详情，找不到时返回 `null`，由 API 转为 404。
+- `DashboardStrategyEvaluation` 字段包括 `evaluation_id`、provider、`start_date`、`end_date`、`report_path`、`variant_count`、`recommendation` 和 `variants`。查询层只返回 Markdown 报告路径，不读取报告正文。
+- `DashboardStrategyEvaluationRecommendation` 字段包括 `summary` 和 `recommended_variant_ids`；该内容来自已落库 payload，不在 dashboard 查询时重新生成。
+- `DashboardStrategyEvaluationVariant` 字段包括 id、label、version、backtest_id、success、尝试/成功/失败天数、source/data quality failure rate、信号数、风控通过/拒绝、订单数、成交失败数、closed/open position、signal hit rate、holding pnl、total return、max drawdown、`is_recommended` 和 `not_recommended_reasons`。
+- `not_recommended_reasons` 由查询层基于已落库 variant 指标和第一条 baseline 派生：baseline 固定为“基准参数，不参与推荐比较”；非 baseline 若收益未优于 baseline、命中率低于 baseline、最大回撤高于 baseline、失败天数多于 baseline 或 source 失败率高于 baseline，分别记录对应不可推荐原因。只有在落库推荐列表中且没有不可推荐原因的 variant 才标记 `is_recommended=true`。
+- 策略评估 payload 缺 `variants`、variant 不是 object、关键数字字段无法解析、recommendation 结构非法等情况必须显式失败，不能返回部分默认 DTO。
 - `trends(start_date, end_date)` 使用闭区间日期范围，输出 `DashboardTrendSummary`：
   - `points` 按日期升序排列，只包含范围内有 pipeline run、组合快照、数据质量报告或运行可靠性报告的日期。
   - 权益曲线使用范围内每个交易日最新一条 `portfolio_snapshots.total_value`；没有快照时为 `null`。

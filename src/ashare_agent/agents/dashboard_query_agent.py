@@ -344,6 +344,52 @@ class DashboardStrategyComparison:
     items: list[DashboardStrategyComparisonItem]
 
 
+@dataclass(frozen=True)
+class DashboardStrategyEvaluationRecommendation:
+    summary: str
+    recommended_variant_ids: list[str]
+
+
+@dataclass(frozen=True)
+class DashboardStrategyEvaluationVariant:
+    id: str
+    label: str
+    version: str
+    backtest_id: str
+    success: bool
+    attempted_days: int
+    succeeded_days: int
+    failed_days: int
+    source_failure_rate: float
+    data_quality_failure_rate: float
+    signal_count: int
+    risk_approved_count: int
+    risk_rejected_count: int
+    order_count: int
+    execution_failed_count: int
+    closed_trade_count: int
+    signal_hit_count: int
+    signal_hit_rate: float
+    open_position_count: int
+    holding_pnl: str
+    total_return: float
+    max_drawdown: float
+    is_recommended: bool
+    not_recommended_reasons: list[str]
+
+
+@dataclass(frozen=True)
+class DashboardStrategyEvaluation:
+    evaluation_id: str
+    provider: str
+    start_date: str
+    end_date: str
+    report_path: str
+    variant_count: int
+    recommendation: DashboardStrategyEvaluationRecommendation
+    variants: list[DashboardStrategyEvaluationVariant]
+
+
 def _empty_runs() -> list[DashboardPipelineRun]:
     return []
 
@@ -482,6 +528,32 @@ class DashboardQueryAgent:
                 continue
             items.append(self._strategy_comparison_item(backtest_id, payload))
         return DashboardStrategyComparison(backtest_ids=requested_ids, items=items)
+
+    def list_strategy_evaluations(self, limit: int = 50) -> list[DashboardStrategyEvaluation]:
+        rows: list[PayloadRecord] = []
+        seen_evaluation_ids: set[str] = set()
+        for row in sorted(
+            self.repository.payload_rows("pipeline_runs"),
+            key=lambda item: _row_id(item, "pipeline_runs"),
+            reverse=True,
+        ):
+            if not self._is_strategy_evaluation_row(row):
+                continue
+            payload = _payload(row, "pipeline_runs")
+            evaluation_id = _required_str(payload, "pipeline_runs", "evaluation_id")
+            if evaluation_id in seen_evaluation_ids:
+                continue
+            seen_evaluation_ids.add(evaluation_id)
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        return [self._strategy_evaluation(row) for row in rows]
+
+    def strategy_evaluation(self, evaluation_id: str) -> DashboardStrategyEvaluation | None:
+        row = self._latest_strategy_evaluation_row(evaluation_id)
+        if row is None:
+            return None
+        return self._strategy_evaluation(row)
 
     def day_summary(self, trade_date: date) -> DashboardDaySummary:
         runs = self._pipeline_runs_for_day(trade_date)
@@ -816,6 +888,14 @@ class DashboardQueryAgent:
             and bool(payload.get("strategy_params_version"))
         )
 
+    def _is_strategy_evaluation_row(self, row: PayloadRecord) -> bool:
+        payload = _payload(row, "pipeline_runs")
+        return (
+            payload.get("stage") == "strategy_evaluation"
+            and payload.get("run_mode") == "backtest"
+            and bool(payload.get("evaluation_id"))
+        )
+
     def _latest_backtest_summary_row(self, backtest_id: str) -> PayloadRecord | None:
         latest: PayloadRecord | None = None
         for row in self.repository.payload_rows("pipeline_runs"):
@@ -829,6 +909,18 @@ class DashboardQueryAgent:
                     or _row_id(row, "pipeline_runs") > _row_id(latest, "pipeline_runs")
                 )
             ):
+                latest = row
+        return latest
+
+    def _latest_strategy_evaluation_row(self, evaluation_id: str) -> PayloadRecord | None:
+        latest: PayloadRecord | None = None
+        for row in self.repository.payload_rows("pipeline_runs"):
+            if not self._is_strategy_evaluation_row(row):
+                continue
+            payload = _payload(row, "pipeline_runs")
+            if payload.get("evaluation_id") != evaluation_id:
+                continue
+            if latest is None or _row_id(row, "pipeline_runs") > _row_id(latest, "pipeline_runs"):
                 latest = row
         return latest
 
@@ -1037,6 +1129,33 @@ class DashboardQueryAgent:
                 backtest_id,
                 attempted_days,
             ),
+        )
+
+    def _strategy_evaluation(self, row: PayloadRecord) -> DashboardStrategyEvaluation:
+        payload = _payload(row, "pipeline_runs")
+        raw_variants = _required_list(payload, "pipeline_runs", "variants")
+        variants = _strategy_evaluation_variants(raw_variants, payload)
+        recommendation_payload = _required_mapping(payload, "pipeline_runs", "recommendation")
+        return DashboardStrategyEvaluation(
+            evaluation_id=_required_str(payload, "pipeline_runs", "evaluation_id"),
+            provider=_required_str(payload, "pipeline_runs", "provider"),
+            start_date=_required_str(payload, "pipeline_runs", "start_date"),
+            end_date=_required_str(payload, "pipeline_runs", "end_date"),
+            report_path=_required_str(payload, "pipeline_runs", "report_path"),
+            variant_count=_required_int(payload, "pipeline_runs", "variant_count"),
+            recommendation=DashboardStrategyEvaluationRecommendation(
+                summary=_required_str(
+                    recommendation_payload,
+                    "pipeline_runs.recommendation",
+                    "summary",
+                ),
+                recommended_variant_ids=_required_str_list(
+                    recommendation_payload,
+                    "pipeline_runs.recommendation",
+                    "recommended_variant_ids",
+                ),
+            ),
+            variants=variants,
         )
 
     def _backtest_win_rate(self, backtest_id: str) -> float:
@@ -1675,6 +1794,140 @@ def _float_mapping(
 
 def _decimal_text(value: Decimal) -> str:
     return str(value)
+
+
+def _strategy_evaluation_variants(
+    values: list[object],
+    evaluation_payload: Mapping[str, object],
+) -> list[DashboardStrategyEvaluationVariant]:
+    if not values:
+        raise ValueError("pipeline_runs 字段 variants 不能为空")
+    recommendation_payload = _required_mapping(
+        evaluation_payload,
+        "pipeline_runs",
+        "recommendation",
+    )
+    recommended_ids = set(
+        _required_str_list(
+            recommendation_payload,
+            "pipeline_runs.recommendation",
+            "recommended_variant_ids",
+        )
+    )
+    variants: list[DashboardStrategyEvaluationVariant] = []
+    baseline: DashboardStrategyEvaluationVariant | None = None
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("pipeline_runs variants item 必须是 object")
+        variant = _strategy_evaluation_variant(
+            cast(Mapping[str, object], value),
+            recommended_ids,
+            baseline,
+        )
+        if baseline is None:
+            baseline = variant
+        variants.append(variant)
+    return variants
+
+
+def _strategy_evaluation_variant(
+    payload: Mapping[str, object],
+    recommended_ids: set[str],
+    baseline: DashboardStrategyEvaluationVariant | None,
+) -> DashboardStrategyEvaluationVariant:
+    variant_id = _required_str(payload, "pipeline_runs.variants", "id")
+    failed_days = _required_int(payload, "pipeline_runs.variants", "failed_days")
+    source_failure_rate = _required_float(
+        payload,
+        "pipeline_runs.variants",
+        "source_failure_rate",
+    )
+    signal_hit_rate = _required_float(payload, "pipeline_runs.variants", "signal_hit_rate")
+    total_return = _required_float(payload, "pipeline_runs.variants", "total_return")
+    max_drawdown = _required_float(payload, "pipeline_runs.variants", "max_drawdown")
+    not_recommended_reasons = _strategy_evaluation_reasons(
+        baseline=baseline,
+        failed_days=failed_days,
+        source_failure_rate=source_failure_rate,
+        signal_hit_rate=signal_hit_rate,
+        total_return=total_return,
+        max_drawdown=max_drawdown,
+    )
+    return DashboardStrategyEvaluationVariant(
+        id=variant_id,
+        label=_required_str(payload, "pipeline_runs.variants", "label"),
+        version=_required_str(payload, "pipeline_runs.variants", "version"),
+        backtest_id=_required_str(payload, "pipeline_runs.variants", "backtest_id"),
+        success=_required_bool(payload, "pipeline_runs.variants", "success"),
+        attempted_days=_required_int(payload, "pipeline_runs.variants", "attempted_days"),
+        succeeded_days=_required_int(payload, "pipeline_runs.variants", "succeeded_days"),
+        failed_days=failed_days,
+        source_failure_rate=source_failure_rate,
+        data_quality_failure_rate=_required_float(
+            payload,
+            "pipeline_runs.variants",
+            "data_quality_failure_rate",
+        ),
+        signal_count=_required_int(payload, "pipeline_runs.variants", "signal_count"),
+        risk_approved_count=_required_int(
+            payload,
+            "pipeline_runs.variants",
+            "risk_approved_count",
+        ),
+        risk_rejected_count=_required_int(
+            payload,
+            "pipeline_runs.variants",
+            "risk_rejected_count",
+        ),
+        order_count=_required_int(payload, "pipeline_runs.variants", "order_count"),
+        execution_failed_count=_required_int(
+            payload,
+            "pipeline_runs.variants",
+            "execution_failed_count",
+        ),
+        closed_trade_count=_required_int(
+            payload,
+            "pipeline_runs.variants",
+            "closed_trade_count",
+        ),
+        signal_hit_count=_required_int(payload, "pipeline_runs.variants", "signal_hit_count"),
+        signal_hit_rate=signal_hit_rate,
+        open_position_count=_required_int(
+            payload,
+            "pipeline_runs.variants",
+            "open_position_count",
+        ),
+        holding_pnl=_required_str(payload, "pipeline_runs.variants", "holding_pnl"),
+        total_return=total_return,
+        max_drawdown=max_drawdown,
+        is_recommended=variant_id in recommended_ids and not not_recommended_reasons,
+        not_recommended_reasons=not_recommended_reasons,
+    )
+
+
+def _strategy_evaluation_reasons(
+    *,
+    baseline: DashboardStrategyEvaluationVariant | None,
+    failed_days: int,
+    source_failure_rate: float,
+    signal_hit_rate: float,
+    total_return: float,
+    max_drawdown: float,
+) -> list[str]:
+    if baseline is None:
+        return ["基准参数，不参与推荐比较"]
+    reasons: list[str] = []
+    if total_return <= baseline.total_return:
+        reasons.append("收益未优于基准")
+    if signal_hit_rate < baseline.signal_hit_rate:
+        reasons.append("命中率低于基准")
+    if max_drawdown > baseline.max_drawdown:
+        reasons.append("最大回撤高于基准")
+    if failed_days > baseline.failed_days:
+        reasons.append("失败天数多于基准")
+    if source_failure_rate > baseline.source_failure_rate:
+        reasons.append("source 失败率高于基准")
+    return reasons
 
 
 def _data_quality_issues(values: list[object]) -> list[DashboardDataQualityIssue]:

@@ -30,7 +30,7 @@
 - 模拟成交使用分钟线估价，不使用日线 close 兜底；无法成交时记录可审计失败原因。
 - 用 mock 或真实公开源做多日历史回放，并按策略版本比较胜率、回撤、收益、拒绝率和数据质量失败率。
 - 用显式策略参数 variants 做连续多日评估，统计信号、风控、成交失败、收益和回撤，只输出报告和建议，不自动改生产参数。
-- 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、盘中模拟订单、持仓、复盘、数据源状态和运行可靠性报告。
+- 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、盘中模拟订单、持仓、复盘、数据源状态、运行可靠性报告和策略评估决策视图。
 
 ## 模块设计
 
@@ -209,6 +209,7 @@ StrategyEvaluationRunner
 - [x] 展示日期范围内的资金曲线、信号趋势、风控拒绝原因和数据质量趋势。
 - [x] 展示收盘复盘结果。
 - [x] 展示 raw source snapshots 和真实源失败原因。
+- [x] 展示策略评估批次、variant 排名、推荐结论和不可推荐原因。
 
 ### Phase 3: Hardening
 
@@ -352,7 +353,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径。
 
 前端观察台：
 
@@ -361,7 +362,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev --host 127.0.0.1 --port 5173
 ```
 
-前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。页面支持日期范围筛选、范围趋势和策略版本对比；所选单日的“盘中模拟订单”只展示同日成功 `intraday_watch` run 的订单，历史盘后订单不会展示到该区域。订单表会显示成交依据、价格时间点、估价方法、是否使用日线兜底和真实交易标记；“成交失败”区域展示分钟线缺失、停牌或涨跌停导致的 rejected execution events；“分钟线源健康”区域展示每个 source/symbol 的尝试结果、retry、timeout 和最后错误。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何当前盘中订单出现 `True` 都视为安全异常。
+前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易、模拟交易执行或自动调参按钮。页面支持“日常观察 / 策略评估”视图切换、日期范围筛选、范围趋势和策略版本对比；所选单日的“盘中模拟订单”只展示同日成功 `intraday_watch` run 的订单，历史盘后订单不会展示到该区域。订单表会显示成交依据、价格时间点、估价方法、是否使用日线兜底和真实交易标记；“成交失败”区域展示分钟线缺失、停牌或涨跌停导致的 rejected execution events；“分钟线源健康”区域展示每个 source/symbol 的尝试结果、retry、timeout 和最后错误。策略评估视图只展示已落库历史模拟指标、推荐结论和不可推荐原因，明确标记不构成投资建议、不自动修改策略参数。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何当前盘中订单出现 `True` 都视为安全异常。
 
 前端验证：
 

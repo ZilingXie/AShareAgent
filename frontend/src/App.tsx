@@ -1,6 +1,7 @@
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   BriefcaseBusiness,
   ClipboardList,
   Database,
@@ -14,8 +15,15 @@ import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
-import { fetchDashboardDay, fetchDashboardTrends, fetchRuns } from "./api";
-import { fetchBacktests, fetchStrategyComparison } from "./api";
+import {
+  fetchBacktests,
+  fetchDashboardDay,
+  fetchDashboardTrends,
+  fetchRuns,
+  fetchStrategyComparison,
+  fetchStrategyEvaluation,
+  fetchStrategyEvaluations,
+} from "./api";
 import {
   boolText,
   breakdown,
@@ -38,9 +46,13 @@ import type {
   DashboardPaperOrder,
   DashboardPosition,
   DashboardRun,
+  DashboardStrategyEvaluation,
+  DashboardStrategyEvaluationVariant,
   DashboardTrendPoint,
   DashboardTrends,
 } from "./types";
+
+type ActiveView = "daily" | "strategy";
 
 const stageLabels: Record<string, string> = {
   pre_market: "盘前",
@@ -60,6 +72,7 @@ const statusLabels: Record<string, string> = {
 };
 
 export default function App(): JSX.Element {
+  const [activeView, setActiveView] = useState<ActiveView>("daily");
   const [runs, setRuns] = useState<DashboardRun[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [rangeStart, setRangeStart] = useState<string | null>(null);
@@ -68,10 +81,18 @@ export default function App(): JSX.Element {
   const [trends, setTrends] = useState<DashboardTrends | null>(null);
   const [strategyComparison, setStrategyComparison] =
     useState<DashboardStrategyComparison | null>(null);
+  const [strategyEvaluations, setStrategyEvaluations] = useState<
+    DashboardStrategyEvaluation[]
+  >([]);
+  const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
+  const [strategyEvaluation, setStrategyEvaluation] =
+    useState<DashboardStrategyEvaluation | null>(null);
   const [loading, setLoading] = useState(true);
   const [trendLoading, setTrendLoading] = useState(false);
+  const [strategyEvaluationLoading, setStrategyEvaluationLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const [strategyEvaluationError, setStrategyEvaluationError] = useState<string | null>(null);
 
   async function loadRuns(): Promise<void> {
     setLoading(true);
@@ -79,11 +100,18 @@ export default function App(): JSX.Element {
     try {
       const loadedRuns = await fetchRuns(200);
       const loadedBacktests = await fetchBacktests(20);
+      const loadedEvaluations = await fetchStrategyEvaluations(50);
       const tradeDates = [...new Set(loadedRuns.map((run) => run.trade_date))].sort();
       setRuns(loadedRuns);
       setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
+      setStrategyEvaluations(loadedEvaluations);
+      setSelectedEvaluationId((current) =>
+        current && loadedEvaluations.some((item) => item.evaluation_id === current)
+          ? current
+          : loadedEvaluations[0]?.evaluation_id ?? null
+      );
       const backtestIds = uniqueStrings(loadedBacktests.map((item) => item.backtest_id));
       if (backtestIds.length === 0) {
         setStrategyComparison(null);
@@ -100,6 +128,38 @@ export default function App(): JSX.Element {
   useEffect(() => {
     void loadRuns();
   }, []);
+
+  useEffect(() => {
+    if (!selectedEvaluationId) {
+      setStrategyEvaluation(null);
+      return;
+    }
+    let active = true;
+    setStrategyEvaluationLoading(true);
+    setStrategyEvaluationError(null);
+    fetchStrategyEvaluation(selectedEvaluationId)
+      .then((loadedEvaluation) => {
+        if (active) {
+          setStrategyEvaluation(loadedEvaluation);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setStrategyEvaluationError(
+            caught instanceof Error ? caught.message : "Dashboard API 请求失败"
+          );
+          setStrategyEvaluation(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setStrategyEvaluationLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedEvaluationId]);
 
   useEffect(() => {
     if (!selectedDate) {
@@ -195,7 +255,7 @@ export default function App(): JSX.Element {
 
   return (
     <main className="shell">
-      <aside className="sidebar" aria-label="Pipeline runs">
+      <aside className="sidebar" aria-label="Dashboard navigation">
         <div className="sidebar-header">
           <div>
             <p className="eyebrow">AShareAgent</p>
@@ -206,70 +266,116 @@ export default function App(): JSX.Element {
             <span className="sr-only">刷新</span>
           </button>
         </div>
-        <div className="run-list">
-          {visibleRuns.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
-          {visibleRuns.map((run) => (
-            <button
-              className={`run-item ${run.trade_date === selectedDate ? "selected" : ""}`}
-              key={`${run.run_id}-${run.stage}`}
-              onClick={() => setSelectedDate(run.trade_date)}
-              type="button"
-            >
-              <span className="run-date">{run.trade_date}</span>
-              <span className="run-meta">
-                {stageLabels[run.stage] ?? run.stage}
-                <StatusBadge status={run.status} />
-              </span>
-              {run.failure_reason ? <span className="failure">{run.failure_reason}</span> : null}
-            </button>
-          ))}
+        <div className="view-toggle" aria-label="视图切换">
+          <button
+            className={activeView === "daily" ? "selected" : ""}
+            onClick={() => setActiveView("daily")}
+            type="button"
+          >
+            日常观察
+          </button>
+          <button
+            className={activeView === "strategy" ? "selected" : ""}
+            onClick={() => setActiveView("strategy")}
+            type="button"
+          >
+            策略评估
+          </button>
         </div>
+        {activeView === "daily" ? (
+          <div className="run-list">
+            {visibleRuns.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
+            {visibleRuns.map((run) => (
+              <button
+                className={`run-item ${run.trade_date === selectedDate ? "selected" : ""}`}
+                key={`${run.run_id}-${run.stage}`}
+                onClick={() => setSelectedDate(run.trade_date)}
+                type="button"
+              >
+                <span className="run-date">{run.trade_date}</span>
+                <span className="run-meta">
+                  {stageLabels[run.stage] ?? run.stage}
+                  <StatusBadge status={run.status} />
+                </span>
+                {run.failure_reason ? <span className="failure">{run.failure_reason}</span> : null}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <StrategyEvaluationSidebarList
+            evaluations={strategyEvaluations}
+            loading={loading}
+            onSelect={setSelectedEvaluationId}
+            selectedEvaluationId={selectedEvaluationId}
+          />
+        )}
       </aside>
 
       <section className="content">
         <header className="topbar">
-          <div>
-            <p className="eyebrow">交易日</p>
-            <h2>{selectedDate ?? "-"}</h2>
-          </div>
-          <div className="date-controls" aria-label="日期范围">
-            <label>
-              开始日期
-              <input
-                max={rangeEnd ?? undefined}
-                onChange={(event) => setRangeStart(event.target.value || null)}
-                type="date"
-                value={rangeStart ?? ""}
-              />
-            </label>
-            <label>
-              结束日期
-              <input
-                min={rangeStart ?? undefined}
-                onChange={(event) => setRangeEnd(event.target.value || null)}
-                type="date"
-                value={rangeEnd ?? ""}
-              />
-            </label>
-          </div>
-          <div className="status-strip">
-            <span>{selectedRuns.length} 次运行</span>
-            <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
-            <span>{day?.positions.length ?? 0} 个持仓状态</span>
-            <span>{day ? qualityStatusSummary(day) : "无质量报告"}</span>
-            <span>{day ? reliabilityStatusSummary(day) : "无可靠性报告"}</span>
-          </div>
+          {activeView === "daily" ? (
+            <>
+              <div>
+                <p className="eyebrow">交易日</p>
+                <h2>{selectedDate ?? "-"}</h2>
+              </div>
+              <div className="date-controls" aria-label="日期范围">
+                <label>
+                  开始日期
+                  <input
+                    max={rangeEnd ?? undefined}
+                    onChange={(event) => setRangeStart(event.target.value || null)}
+                    type="date"
+                    value={rangeStart ?? ""}
+                  />
+                </label>
+                <label>
+                  结束日期
+                  <input
+                    min={rangeStart ?? undefined}
+                    onChange={(event) => setRangeEnd(event.target.value || null)}
+                    type="date"
+                    value={rangeEnd ?? ""}
+                  />
+                </label>
+              </div>
+              <div className="status-strip">
+                <span>{selectedRuns.length} 次运行</span>
+                <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
+                <span>{day?.positions.length ?? 0} 个持仓状态</span>
+                <span>{day ? qualityStatusSummary(day) : "无质量报告"}</span>
+                <span>{day ? reliabilityStatusSummary(day) : "无可靠性报告"}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <p className="eyebrow">策略评估批次</p>
+                <h2>{selectedEvaluationId ? `批次 ${selectedEvaluationId}` : "-"}</h2>
+              </div>
+              <div className="status-strip">
+                <span>{strategyEvaluations.length} 个评估批次</span>
+                <span>{strategyEvaluation?.variant_count ?? 0} 个 variant</span>
+                <span>{strategyEvaluation?.provider ?? "-"}</span>
+                <span>
+                  {strategyEvaluation?.recommendation.recommended_variant_ids.length ?? 0} 个推荐候选
+                </span>
+              </div>
+            </>
+          )}
         </header>
 
         {error ? <div className="alert">{error}</div> : null}
-        {trendError ? <div className="alert">{trendError}</div> : null}
-        {loading ? <div className="loading">加载中</div> : null}
-        {trendLoading ? <div className="loading">趋势加载中</div> : null}
+        {activeView === "daily" ? (
+          <>
+            {trendError ? <div className="alert">{trendError}</div> : null}
+            {loading ? <div className="loading">加载中</div> : null}
+            {trendLoading ? <div className="loading">趋势加载中</div> : null}
 
-        {trends ? <TrendPanels trends={trends} /> : null}
-        <StrategyComparisonPanel comparison={strategyComparison} />
+            {trends ? <TrendPanels trends={trends} /> : null}
+            <StrategyComparisonPanel comparison={strategyComparison} />
 
-        {day ? (
+            {day ? (
           <div className="dashboard-grid">
             <Section icon={ListChecks} title="观察名单">
               {day.watchlist.length === 0 ? (
@@ -482,9 +588,193 @@ export default function App(): JSX.Element {
               )}
             </Section>
           </div>
-        ) : null}
+            ) : null}
+          </>
+        ) : (
+          <>
+            {strategyEvaluationError ? (
+              <div className="alert">{strategyEvaluationError}</div>
+            ) : null}
+            {loading || strategyEvaluationLoading ? (
+              <div className="loading">策略评估加载中</div>
+            ) : null}
+            <StrategyEvaluationDecisionView
+              evaluation={strategyEvaluation}
+              evaluations={strategyEvaluations}
+            />
+          </>
+        )}
       </section>
     </main>
+  );
+}
+
+function StrategyEvaluationSidebarList({
+  evaluations,
+  loading,
+  onSelect,
+  selectedEvaluationId,
+}: {
+  evaluations: DashboardStrategyEvaluation[];
+  loading: boolean;
+  onSelect: (evaluationId: string) => void;
+  selectedEvaluationId: string | null;
+}): JSX.Element {
+  return (
+    <div className="run-list">
+      {evaluations.length === 0 && !loading ? <EmptyState text="无评估批次" /> : null}
+      {evaluations.map((evaluation) => (
+        <button
+          className={`run-item ${evaluation.evaluation_id === selectedEvaluationId ? "selected" : ""}`}
+          key={evaluation.evaluation_id}
+          onClick={() => onSelect(evaluation.evaluation_id)}
+          type="button"
+        >
+          <span className="run-date">{evaluation.evaluation_id}</span>
+          <span className="run-meta">
+            {evaluation.provider} · {evaluation.start_date} 至 {evaluation.end_date}
+          </span>
+          <span className="run-meta">
+            {evaluation.variant_count} 个 variant · 推荐{" "}
+            {evaluation.recommendation.recommended_variant_ids.length}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StrategyEvaluationDecisionView({
+  evaluation,
+  evaluations,
+}: {
+  evaluation: DashboardStrategyEvaluation | null;
+  evaluations: DashboardStrategyEvaluation[];
+}): JSX.Element {
+  if (evaluations.length === 0) {
+    return <EmptyState text="暂无策略评估" />;
+  }
+  if (!evaluation) {
+    return <EmptyState text="暂无策略评估详情" />;
+  }
+  return (
+    <div className="strategy-evaluation-grid">
+      <Section icon={BarChart3} title="推荐结论">
+        <div className="strategy-summary">
+          <p className="summary-text">{evaluation.recommendation.summary}</p>
+          <dl className="metrics strategy-metrics">
+            <div>
+              <dt>provider</dt>
+              <dd>{evaluation.provider}</dd>
+            </div>
+            <div>
+              <dt>日期范围</dt>
+              <dd>
+                {evaluation.start_date} 至 {evaluation.end_date}
+              </dd>
+            </div>
+            <div>
+              <dt>variant</dt>
+              <dd>{evaluation.variant_count}</dd>
+            </div>
+            <div>
+              <dt>推荐候选</dt>
+              <dd>{evaluation.recommendation.recommended_variant_ids.length}</dd>
+            </div>
+          </dl>
+          <p className="report-path">{evaluation.report_path}</p>
+          <p className="safety-note">
+            历史模拟评估，不构成投资建议，不自动修改策略参数。
+          </p>
+        </div>
+      </Section>
+
+      <Section icon={Gauge} title="Variant 排名">
+        <StrategyEvaluationRanking variants={evaluation.variants} />
+      </Section>
+
+      <Section icon={AlertTriangle} title="不可推荐原因">
+        <StrategyEvaluationReasons variants={evaluation.variants} />
+      </Section>
+    </div>
+  );
+}
+
+function StrategyEvaluationRanking({
+  variants,
+}: {
+  variants: DashboardStrategyEvaluationVariant[];
+}): JSX.Element {
+  const ranked = [...variants].sort(
+    (left, right) =>
+      right.total_return - left.total_return ||
+      right.signal_hit_rate - left.signal_hit_rate ||
+      left.failed_days - right.failed_days
+  );
+  return (
+    <div className="strategy-ranking">
+      {ranked.map((variant) => (
+        <div className="strategy-variant-row" key={variant.id}>
+          <div className="strategy-variant-head">
+            <div>
+              <strong>{variant.label}</strong>
+              <span>
+                {variant.id} · {variant.version}
+              </span>
+              <span>{variant.backtest_id}</span>
+            </div>
+            {variant.is_recommended ? (
+              <span className="badge safe">推荐候选</span>
+            ) : (
+              <span className="badge neutral">{variant.success ? "已评估" : "失败"}</span>
+            )}
+          </div>
+          <div className="trend-meta strategy-variant-metrics">
+            <span>收益 {percent(variant.total_return)}</span>
+            <span>命中率 {percent(variant.signal_hit_rate)}</span>
+            <span>回撤 {percent(variant.max_drawdown)}</span>
+            <span>source 失败率 {percent(variant.source_failure_rate)}</span>
+            <span>质量失败率 {percent(variant.data_quality_failure_rate)}</span>
+            <span>订单 {variant.order_count}</span>
+            <span>成交失败 {variant.execution_failed_count}</span>
+            <span>
+              持仓 open/closed {variant.open_position_count}/{variant.closed_trade_count}
+            </span>
+            <span>风控通过/拒绝 {variant.risk_approved_count}/{variant.risk_rejected_count}</span>
+            <span>失败天数 {variant.failed_days}</span>
+            <span>持仓盈亏 {money(variant.holding_pnl)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StrategyEvaluationReasons({
+  variants,
+}: {
+  variants: DashboardStrategyEvaluationVariant[];
+}): JSX.Element {
+  const rows = variants.filter((variant) => variant.not_recommended_reasons.length > 0);
+  if (rows.length === 0) {
+    return <EmptyState text="暂无不可推荐原因" />;
+  }
+  return (
+    <div className="issue-list">
+      {rows.map((variant) => (
+        <div className="strategy-reason-row" key={variant.id}>
+          <div>
+            <strong>{variant.label}</strong>
+            <span>{variant.id}</span>
+          </div>
+          <ul>
+            {variant.not_recommended_reasons.map((reason) => (
+              <li key={`${variant.id}-${reason}`}>{reason}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   );
 }
 

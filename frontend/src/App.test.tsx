@@ -1,8 +1,13 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
-import type { DashboardDay, DashboardRun, DashboardTrends } from "./types";
+import type {
+  DashboardDay,
+  DashboardRun,
+  DashboardStrategyEvaluation,
+  DashboardTrends,
+} from "./types";
 
 const runsFixture: DashboardRun[] = [
   {
@@ -401,6 +406,109 @@ const backtestsFixture = {
   ],
 };
 
+const strategyEvaluationFixture: DashboardStrategyEvaluation = {
+  evaluation_id: "eval-real",
+  provider: "akshare",
+  start_date: "2026-04-27",
+  end_date: "2026-04-29",
+  report_path: "reports/eval-real/strategy-evaluation.md",
+  variant_count: 3,
+  recommendation: {
+    summary: "可考虑人工复核后替换参数: stronger",
+    recommended_variant_ids: ["stronger"],
+  },
+  variants: [
+    {
+      id: "baseline",
+      label: "当前参数",
+      version: "params-baseline",
+      backtest_id: "eval-real-baseline",
+      success: true,
+      attempted_days: 3,
+      succeeded_days: 3,
+      failed_days: 0,
+      source_failure_rate: 0,
+      data_quality_failure_rate: 0,
+      signal_count: 2,
+      risk_approved_count: 2,
+      risk_rejected_count: 0,
+      order_count: 1,
+      execution_failed_count: 0,
+      closed_trade_count: 1,
+      signal_hit_count: 1,
+      signal_hit_rate: 1,
+      open_position_count: 0,
+      holding_pnl: "120.00",
+      total_return: 0.01,
+      max_drawdown: 0.03,
+      is_recommended: false,
+      not_recommended_reasons: ["基准参数，不参与推荐比较"],
+    },
+    {
+      id: "stronger",
+      label: "更强收益",
+      version: "params-stronger",
+      backtest_id: "eval-real-stronger",
+      success: true,
+      attempted_days: 3,
+      succeeded_days: 3,
+      failed_days: 0,
+      source_failure_rate: 0,
+      data_quality_failure_rate: 0,
+      signal_count: 3,
+      risk_approved_count: 3,
+      risk_rejected_count: 0,
+      order_count: 2,
+      execution_failed_count: 0,
+      closed_trade_count: 1,
+      signal_hit_count: 1,
+      signal_hit_rate: 1,
+      open_position_count: 1,
+      holding_pnl: "180.00",
+      total_return: 0.02,
+      max_drawdown: 0.02,
+      is_recommended: true,
+      not_recommended_reasons: [],
+    },
+    {
+      id: "weaker",
+      label: "更弱参数",
+      version: "params-weaker",
+      backtest_id: "eval-real-weaker",
+      success: true,
+      attempted_days: 3,
+      succeeded_days: 2,
+      failed_days: 1,
+      source_failure_rate: 0.2,
+      data_quality_failure_rate: 0.3333333333,
+      signal_count: 1,
+      risk_approved_count: 1,
+      risk_rejected_count: 1,
+      order_count: 1,
+      execution_failed_count: 1,
+      closed_trade_count: 1,
+      signal_hit_count: 0,
+      signal_hit_rate: 0,
+      open_position_count: 0,
+      holding_pnl: "-50.00",
+      total_return: 0.01,
+      max_drawdown: 0.05,
+      is_recommended: false,
+      not_recommended_reasons: [
+        "收益未优于基准",
+        "命中率低于基准",
+        "最大回撤高于基准",
+        "失败天数多于基准",
+        "source 失败率高于基准",
+      ],
+    },
+  ],
+};
+
+const strategyEvaluationsFixture = {
+  strategy_evaluations: [strategyEvaluationFixture],
+};
+
 const duplicateBacktestsFixture = {
   backtests: [
     ...backtestsFixture.backtests,
@@ -499,6 +607,48 @@ describe("dashboard", () => {
     expect(screen.getByText("质量失败率 33.33%")).toBeInTheDocument();
   });
 
+  it("renders the strategy evaluation decision view", async () => {
+    mockFetch(dayFixture, trendsFixture, strategyComparisonFixture, backtestsFixture);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "策略评估" }));
+
+    expect(await screen.findByText("策略评估")).toBeInTheDocument();
+    expect(screen.getByText("eval-real")).toBeInTheDocument();
+    expect(screen.getByText("可考虑人工复核后替换参数: stronger")).toBeInTheDocument();
+    expect(screen.getByText("reports/eval-real/strategy-evaluation.md")).toBeInTheDocument();
+    expect(screen.getByText("更强收益")).toBeInTheDocument();
+    expect(screen.getByText("收益 2.00%")).toBeInTheDocument();
+    expect(screen.getByText("回撤 2.00%")).toBeInTheDocument();
+    expect(screen.getByText("source 失败率 20.00%")).toBeInTheDocument();
+    expect(screen.getByText("不可推荐原因")).toBeInTheDocument();
+    expect(screen.getByText("收益未优于基准")).toBeInTheDocument();
+    expect(screen.getByText("source 失败率高于基准")).toBeInTheDocument();
+    expect(
+      screen.getByText("历史模拟评估，不构成投资建议，不自动修改策略参数。")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("自动调参")).not.toBeInTheDocument();
+    expect(screen.queryByText("真实下单")).not.toBeInTheDocument();
+  });
+
+  it("renders an empty state when there are no strategy evaluations", async () => {
+    mockFetch(
+      dayFixture,
+      trendsFixture,
+      strategyComparisonFixture,
+      backtestsFixture,
+      { strategy_evaluations: [] },
+      null
+    );
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "策略评估" }));
+
+    expect(await screen.findByText("暂无策略评估")).toBeInTheDocument();
+  });
+
   it("deduplicates strategy comparison rows and request ids", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mockFetch(
@@ -558,11 +708,17 @@ function mockFetch(
   day: DashboardDay,
   trends: DashboardTrends = trendsFixture,
   strategyComparison = strategyComparisonFixture,
-  backtests = backtestsFixture
+  backtests = backtestsFixture,
+  strategyEvaluations = strategyEvaluationsFixture,
+  strategyEvaluation: DashboardStrategyEvaluation | null = strategyEvaluationFixture
 ): void {
   vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
     const url = String(input);
-    const body = url.includes("/api/dashboard/runs")
+    const body = url.includes("/api/dashboard/strategy-evaluations/")
+      ? strategyEvaluation
+      : url.includes("/api/dashboard/strategy-evaluations")
+        ? strategyEvaluations
+        : url.includes("/api/dashboard/runs")
       ? { runs: runsFixture }
       : url.includes("/api/dashboard/backtests")
         ? backtests
@@ -571,6 +727,14 @@ function mockFetch(
       : url.includes("/api/dashboard/trends")
         ? trends
         : day;
+    if (body === null) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ detail: "strategy evaluation 不存在" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+    }
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,

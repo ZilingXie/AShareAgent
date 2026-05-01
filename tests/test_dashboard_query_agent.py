@@ -571,6 +571,228 @@ def test_dashboard_query_deduplicates_strategy_comparison_requested_ids() -> Non
     ]
 
 
+def test_dashboard_query_lists_strategy_evaluations_with_recommendation_reasons() -> None:
+    repository = InMemoryRepository()
+    context = PipelineRunContext(
+        trade_date=date(2026, 4, 29),
+        run_id="eval-run",
+        run_mode="backtest",
+        backtest_id="eval-real",
+    )
+    repository.save_pipeline_run(
+        context,
+        "strategy_evaluation",
+        "success",
+        {
+            "evaluation_id": "eval-real",
+            "provider": "akshare",
+            "start_date": "2026-04-27",
+            "end_date": "2026-04-29",
+            "variant_count": 3,
+            "report_path": "reports/eval-real/strategy-evaluation.md",
+            "recommendation": {
+                "summary": "可考虑人工复核后替换参数: stronger",
+                "recommended_variant_ids": ["stronger"],
+            },
+            "variants": [
+                {
+                    "id": "baseline",
+                    "label": "当前参数",
+                    "version": "params-baseline",
+                    "backtest_id": "eval-real-baseline",
+                    "success": True,
+                    "attempted_days": 3,
+                    "succeeded_days": 3,
+                    "failed_days": 0,
+                    "source_failure_rate": 0.0,
+                    "data_quality_failure_rate": 0.0,
+                    "signal_count": 2,
+                    "risk_approved_count": 2,
+                    "risk_rejected_count": 0,
+                    "order_count": 1,
+                    "execution_failed_count": 0,
+                    "closed_trade_count": 1,
+                    "signal_hit_count": 1,
+                    "signal_hit_rate": 1.0,
+                    "open_position_count": 0,
+                    "holding_pnl": "120.00",
+                    "total_return": 0.01,
+                    "max_drawdown": 0.03,
+                },
+                {
+                    "id": "stronger",
+                    "label": "更强收益",
+                    "version": "params-stronger",
+                    "backtest_id": "eval-real-stronger",
+                    "success": True,
+                    "attempted_days": 3,
+                    "succeeded_days": 3,
+                    "failed_days": 0,
+                    "source_failure_rate": 0.0,
+                    "data_quality_failure_rate": 0.0,
+                    "signal_count": 3,
+                    "risk_approved_count": 3,
+                    "risk_rejected_count": 0,
+                    "order_count": 2,
+                    "execution_failed_count": 0,
+                    "closed_trade_count": 1,
+                    "signal_hit_count": 1,
+                    "signal_hit_rate": 1.0,
+                    "open_position_count": 1,
+                    "holding_pnl": "180.00",
+                    "total_return": 0.02,
+                    "max_drawdown": 0.02,
+                },
+                {
+                    "id": "weaker",
+                    "label": "更弱参数",
+                    "version": "params-weaker",
+                    "backtest_id": "eval-real-weaker",
+                    "success": True,
+                    "attempted_days": 3,
+                    "succeeded_days": 2,
+                    "failed_days": 1,
+                    "source_failure_rate": 0.2,
+                    "data_quality_failure_rate": 0.3333333333,
+                    "signal_count": 1,
+                    "risk_approved_count": 1,
+                    "risk_rejected_count": 1,
+                    "order_count": 1,
+                    "execution_failed_count": 1,
+                    "closed_trade_count": 1,
+                    "signal_hit_count": 0,
+                    "signal_hit_rate": 0.0,
+                    "open_position_count": 0,
+                    "holding_pnl": "-50.00",
+                    "total_return": 0.01,
+                    "max_drawdown": 0.05,
+                },
+            ],
+        },
+    )
+
+    agent = DashboardQueryAgent(repository)
+    evaluations = agent.list_strategy_evaluations()
+    detail = agent.strategy_evaluation("eval-real")
+
+    assert [item.evaluation_id for item in evaluations] == ["eval-real"]
+    assert detail is not None
+    assert detail.provider == "akshare"
+    assert detail.report_path == "reports/eval-real/strategy-evaluation.md"
+    assert detail.recommendation.summary == "可考虑人工复核后替换参数: stronger"
+    assert detail.recommendation.recommended_variant_ids == ["stronger"]
+    assert [variant.id for variant in detail.variants] == ["baseline", "stronger", "weaker"]
+    baseline, stronger, weaker = detail.variants
+    assert baseline.not_recommended_reasons == ["基准参数，不参与推荐比较"]
+    assert stronger.is_recommended is True
+    assert stronger.not_recommended_reasons == []
+    assert weaker.is_recommended is False
+    assert weaker.not_recommended_reasons == [
+        "收益未优于基准",
+        "命中率低于基准",
+        "最大回撤高于基准",
+        "失败天数多于基准",
+        "source 失败率高于基准",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            {
+                "evaluation_id": "bad-missing-variants",
+                "provider": "mock",
+                "start_date": "2026-04-27",
+                "end_date": "2026-04-29",
+                "variant_count": 0,
+                "report_path": "reports/bad/strategy-evaluation.md",
+                "recommendation": {"summary": "bad", "recommended_variant_ids": []},
+            },
+            "variants",
+        ),
+        (
+            {
+                "evaluation_id": "bad-variant",
+                "provider": "mock",
+                "start_date": "2026-04-27",
+                "end_date": "2026-04-29",
+                "variant_count": 1,
+                "report_path": "reports/bad/strategy-evaluation.md",
+                "recommendation": {"summary": "bad", "recommended_variant_ids": []},
+                "variants": ["not-object"],
+            },
+            "variants item",
+        ),
+        (
+            {
+                "evaluation_id": "bad-number",
+                "provider": "mock",
+                "start_date": "2026-04-27",
+                "end_date": "2026-04-29",
+                "variant_count": 1,
+                "report_path": "reports/bad/strategy-evaluation.md",
+                "recommendation": {"summary": "bad", "recommended_variant_ids": []},
+                "variants": [
+                    {
+                        "id": "baseline",
+                        "label": "当前参数",
+                        "version": "params-baseline",
+                        "backtest_id": "bad-number-baseline",
+                        "success": True,
+                        "attempted_days": "not-int",
+                        "succeeded_days": 0,
+                        "failed_days": 0,
+                        "source_failure_rate": 0,
+                        "data_quality_failure_rate": 0,
+                        "signal_count": 0,
+                        "risk_approved_count": 0,
+                        "risk_rejected_count": 0,
+                        "order_count": 0,
+                        "execution_failed_count": 0,
+                        "closed_trade_count": 0,
+                        "signal_hit_count": 0,
+                        "signal_hit_rate": 0,
+                        "open_position_count": 0,
+                        "holding_pnl": "0",
+                        "total_return": 0,
+                        "max_drawdown": 0,
+                    }
+                ],
+            },
+            "attempted_days",
+        ),
+    ],
+)
+def test_dashboard_strategy_evaluation_bad_payload_fails_clearly(
+    payload: dict[str, Any],
+    message: str,
+) -> None:
+    repository = RawPayloadRepository()
+    context = PipelineRunContext(
+        trade_date=date(2026, 4, 29),
+        run_id="bad-eval-run",
+        run_mode="backtest",
+        backtest_id=str(payload["evaluation_id"]),
+    )
+    repository.save_raw_payload(
+        "pipeline_runs",
+        context,
+        None,
+        {
+            "stage": "strategy_evaluation",
+            "status": "success",
+            "run_id": context.run_id,
+            "run_mode": "backtest",
+            "backtest_id": context.backtest_id,
+            **payload,
+        },
+    )
+
+    with pytest.raises(ValueError, match=message):
+        DashboardQueryAgent(repository).strategy_evaluation(str(payload["evaluation_id"]))
+
+
 def test_dashboard_query_builds_range_trends_from_latest_successful_pre_market_runs() -> None:
     repository = InMemoryRepository()
     first_date = date(2026, 4, 28)

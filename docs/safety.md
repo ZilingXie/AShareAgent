@@ -16,6 +16,7 @@
 - 当前默认退出规则由 `configs/strategy_params.yml` 驱动：T+1、止损 5%、趋势走弱、最多持有 10 个交易日；止损可在 T+1 后突破最少持有 2 个交易日限制。
 - `BacktestRunner` 只运行 `PaperTrader` 模拟交易闭环，使用 `backtest_id` 隔离状态，不提供真实交易或模拟交易手动操作入口。
 - `StrategyEvaluationRunner` 只批量运行 backtest 和聚合审计指标；评估报告只能给出“人工复核后可考虑”的参数建议，不允许自动修改 `configs/strategy_params.yml`，也不允许触发真实交易。
+- dashboard 的“策略评估”视图只读展示历史模拟评估结果、推荐结论和不可推荐原因；不提供参数写入、自动调参、模拟交易执行或真实交易入口，页面文案必须明确不构成投资建议。
 - `intraday-watch` 是唯一允许新增模拟订单的日内阶段，且必须依赖同日成功 `pre-market` 风控决策；缺失决策时必须显式失败并写 failed run。
 - 盘中模拟成交必须使用分钟线估价；不允许用日线 close 兜底成交。缺少分钟线、停牌、买入涨停或卖出跌停时不写失败订单，只写 rejected execution event。
 - `post-market-review` 不允许新增模拟订单，只能读取盘中订单，生成收盘持仓/组合快照、复盘和审计报告。

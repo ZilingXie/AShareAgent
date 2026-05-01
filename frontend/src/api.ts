@@ -3,6 +3,7 @@ import type {
   DashboardDay,
   DashboardRun,
   DashboardStrategyComparison,
+  DashboardStrategyEvaluation,
   DashboardTrends,
 } from "./types";
 
@@ -52,4 +53,21 @@ export async function fetchStrategyComparison(
   const params = new URLSearchParams({ backtest_ids: backtestIds.join(",") });
   const response = await fetch(`/api/dashboard/strategy-comparison?${params.toString()}`);
   return readJson<DashboardStrategyComparison>(response);
+}
+
+export async function fetchStrategyEvaluations(
+  limit = 50
+): Promise<DashboardStrategyEvaluation[]> {
+  const response = await fetch(`/api/dashboard/strategy-evaluations?limit=${limit}`);
+  const body = await readJson<{ strategy_evaluations: DashboardStrategyEvaluation[] }>(response);
+  return body.strategy_evaluations;
+}
+
+export async function fetchStrategyEvaluation(
+  evaluationId: string
+): Promise<DashboardStrategyEvaluation> {
+  const response = await fetch(
+    `/api/dashboard/strategy-evaluations/${encodeURIComponent(evaluationId)}`
+  );
+  return readJson<DashboardStrategyEvaluation>(response);
 }

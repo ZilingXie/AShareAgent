@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、分钟线成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run CLI、LLM adapter、PostgreSQL/Alembic schema、核心持久化接线、模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、复盘指标查询、策略实验 Markdown 报告和支持日期范围趋势/策略对比的只读观察台。
+当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、分钟线成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run CLI、LLM adapter、PostgreSQL/Alembic schema、核心持久化接线、模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、复盘指标查询、策略实验 Markdown 报告，以及支持日期范围趋势、策略对比和策略评估决策视图的只读观察台。
 
 ## 目标架构
 
@@ -50,7 +50,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`，成功订单必须记录成交来源、价格时间点、估价方法、参考价和 `used_daily_fallback=False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `daily-run` 先刷新交易日历；非交易日只写 skipped 审计和可靠性报告，不进入策略分析或模拟交易更新；交易日按盘前、盘中、复盘顺序运行，失败时先落库可靠性报告和 failed `daily_run`。
-- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、分钟线源健康、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势和策略版本对比查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
+- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、分钟线源健康、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势、策略版本对比和策略评估查询，输出稳定 DTO。strategy evaluation 查询只读取已落库 `pipeline_runs(stage=strategy_evaluation)` payload，派生不可推荐原因，不重新计算 backtest，也不读取 Markdown 文件内容。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 模块边界发生变化时，同步更新本文件。
@@ -80,4 +80,4 @@ configs/
 
 `src/ashare_agent/agents/dashboard_query_agent.py` 属于只读查询适配层，不参与 pipeline 写入、不执行交易、不修改策略状态。`src/ashare_agent/dashboard.py` 是 API 使用的薄兼容层，避免前端/API 依赖内部 agent 文件路径。
 
-前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，左侧展示日期范围内的 pipeline runs，右侧展示范围趋势、策略版本对比、所选交易日的观察名单、风控结果、LLM 盘前分析、盘中模拟订单、成交失败事件、持仓、收盘复盘、数据质量、运行可靠性、数据源状态和运行详情。
+前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，提供“日常观察 / 策略评估”视图切换。日常观察展示日期范围内的 pipeline runs、范围趋势、策略版本对比、所选交易日的观察名单、风控结果、LLM 盘前分析、盘中模拟订单、成交失败事件、持仓、收盘复盘、数据质量、运行可靠性、数据源状态和运行详情；策略评估视图展示已落库 evaluation 批次、variant 排名、收益/回撤/失败率、推荐结论、不可推荐原因和报告路径。

@@ -7,6 +7,9 @@ from ashare_agent.agents.dashboard_query_agent import (
     DashboardQueryAgent,
     DashboardStrategyComparison,
     DashboardStrategyComparisonItem,
+    DashboardStrategyEvaluation,
+    DashboardStrategyEvaluationRecommendation,
+    DashboardStrategyEvaluationVariant,
     DashboardTrendSummary,
 )
 
@@ -16,6 +19,9 @@ DashboardTrends = DashboardTrendSummary
 DashboardBacktestRun = DashboardBacktest
 DashboardStrategyComparisonResult = DashboardStrategyComparison
 DashboardStrategyComparisonRow = DashboardStrategyComparisonItem
+DashboardStrategyEvaluationResult = DashboardStrategyEvaluation
+DashboardStrategyEvaluationRecommendationResult = DashboardStrategyEvaluationRecommendation
+DashboardStrategyEvaluationVariantResult = DashboardStrategyEvaluationVariant
 
 
 class DashboardQueryService(DashboardQueryAgent):

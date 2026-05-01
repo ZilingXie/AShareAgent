@@ -15,6 +15,7 @@ from ashare_agent.dashboard import (
     DashboardQueryService,
     DashboardRun,
     DashboardStrategyComparison,
+    DashboardStrategyEvaluation,
     DashboardTrends,
 )
 from ashare_agent.repository import PostgresRepository
@@ -30,6 +31,16 @@ class DashboardService(Protocol):
     def list_backtests(self, limit: int = 50) -> list[DashboardBacktest]: ...
 
     def strategy_comparison(self, backtest_ids: list[str]) -> DashboardStrategyComparison: ...
+
+    def list_strategy_evaluations(
+        self,
+        limit: int = 50,
+    ) -> list[DashboardStrategyEvaluation]: ...
+
+    def strategy_evaluation(
+        self,
+        evaluation_id: str,
+    ) -> DashboardStrategyEvaluation | None: ...
 
 
 DashboardServiceFactory = Callable[[], DashboardService]
@@ -84,6 +95,25 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
         ids = [item.strip() for item in backtest_ids.split(",") if item.strip()]
         return _dto(service().strategy_comparison(ids))
 
+    @api.get("/api/dashboard/strategy-evaluations")
+    def dashboard_strategy_evaluations(limit: int = 50) -> dict[str, list[JsonObject]]:
+        safe_limit = min(max(limit, 1), 200)
+        return {
+            "strategy_evaluations": [
+                _dto(item) for item in service().list_strategy_evaluations(limit=safe_limit)
+            ]
+        }
+
+    @api.get("/api/dashboard/strategy-evaluations/{evaluation_id}")
+    def dashboard_strategy_evaluation(evaluation_id: str) -> JsonObject:
+        evaluation = service().strategy_evaluation(evaluation_id)
+        if evaluation is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"strategy evaluation 不存在: {evaluation_id}",
+            )
+        return _dto(evaluation)
+
     _registered_routes = (
         health,
         dashboard_runs,
@@ -91,6 +121,8 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
         dashboard_trends,
         dashboard_backtests,
         dashboard_strategy_comparison,
+        dashboard_strategy_evaluations,
+        dashboard_strategy_evaluation,
     )
     return api
 

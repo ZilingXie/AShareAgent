@@ -14,6 +14,9 @@ from ashare_agent.dashboard import (
     DashboardRun,
     DashboardStrategyComparison,
     DashboardStrategyComparisonItem,
+    DashboardStrategyEvaluation,
+    DashboardStrategyEvaluationRecommendation,
+    DashboardStrategyEvaluationVariant,
     DashboardTrends,
 )
 from ashare_agent.domain import PipelineRunContext
@@ -83,6 +86,56 @@ class FakeDashboardService:
             ],
         )
 
+    def list_strategy_evaluations(self, limit: int = 50) -> list[DashboardStrategyEvaluation]:
+        return [self._strategy_evaluation()][:limit]
+
+    def strategy_evaluation(self, evaluation_id: str) -> DashboardStrategyEvaluation | None:
+        if evaluation_id != "eval-1":
+            return None
+        return self._strategy_evaluation()
+
+    def _strategy_evaluation(self) -> DashboardStrategyEvaluation:
+        return DashboardStrategyEvaluation(
+            evaluation_id="eval-1",
+            provider="mock",
+            start_date="2026-04-27",
+            end_date="2026-04-29",
+            report_path="reports/eval-1/strategy-evaluation.md",
+            variant_count=2,
+            recommendation=DashboardStrategyEvaluationRecommendation(
+                summary="未发现同时改善收益/命中率且不恶化回撤和失败率的参数组合",
+                recommended_variant_ids=[],
+            ),
+            variants=[
+                DashboardStrategyEvaluationVariant(
+                    id="baseline",
+                    label="当前参数",
+                    version="params-baseline",
+                    backtest_id="eval-1-baseline",
+                    success=True,
+                    attempted_days=3,
+                    succeeded_days=3,
+                    failed_days=0,
+                    source_failure_rate=0.0,
+                    data_quality_failure_rate=0.0,
+                    signal_count=1,
+                    risk_approved_count=1,
+                    risk_rejected_count=0,
+                    order_count=1,
+                    execution_failed_count=0,
+                    closed_trade_count=0,
+                    signal_hit_count=0,
+                    signal_hit_rate=0.0,
+                    open_position_count=1,
+                    holding_pnl="106.80",
+                    total_return=0.0011,
+                    max_drawdown=0.0,
+                    is_recommended=False,
+                    not_recommended_reasons=["基准参数，不参与推荐比较"],
+                )
+            ],
+        )
+
 
 def test_dashboard_api_returns_runs_and_day_summary() -> None:
     client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
@@ -121,6 +174,30 @@ def test_dashboard_api_returns_backtests_and_strategy_comparison() -> None:
     assert comparison_response.status_code == 200
     assert comparison_response.json()["backtest_ids"] == ["bt-1", "bt-2"]
     assert comparison_response.json()["items"][0]["strategy_params_version"] == "signal-v1"
+
+
+def test_dashboard_api_returns_strategy_evaluations() -> None:
+    client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
+
+    list_response = client.get("/api/dashboard/strategy-evaluations?limit=5")
+    detail_response = client.get("/api/dashboard/strategy-evaluations/eval-1")
+
+    assert list_response.status_code == 200
+    assert list_response.json()["strategy_evaluations"][0]["evaluation_id"] == "eval-1"
+    assert detail_response.status_code == 200
+    assert detail_response.json()["evaluation_id"] == "eval-1"
+    assert detail_response.json()["variants"][0]["not_recommended_reasons"] == [
+        "基准参数，不参与推荐比较"
+    ]
+
+
+def test_dashboard_api_returns_404_for_missing_strategy_evaluation() -> None:
+    client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
+
+    response = client.get("/api/dashboard/strategy-evaluations/missing")
+
+    assert response.status_code == 404
+    assert "strategy evaluation 不存在" in response.json()["detail"]
 
 
 def test_dashboard_api_returns_deduplicated_backtests_and_strategy_comparison() -> None:

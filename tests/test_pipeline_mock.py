@@ -87,13 +87,25 @@ class NoIntradayBarsProvider(MockProvider):
 
 
 class BrokenIntradayProvider(MockProvider):
+    intraday_source = "akshare_em"
+    intraday_timeout_seconds = 2.0
+    intraday_retry_attempts = 3
+
     def get_intraday_bars(
         self,
         trade_date: date,
         symbols: list[str],
         period: str = "1",
     ) -> list[IntradayBar]:
-        raise DataProviderError("分钟线接口失败")
+        raise DataProviderError(
+            "akshare_em 分钟线源不可用: symbol=510300 attempts=3 timeout=2.0",
+            metadata={
+                "intraday_source": "akshare_em",
+                "failed_symbol": "510300",
+                "timeout_seconds": 2.0,
+                "retry_attempts": 3,
+            },
+        )
 
 
 def _write_strategy_params(
@@ -313,6 +325,10 @@ def test_intraday_watch_records_rejected_execution_event_without_minute_bars(
     assert intraday.payload["execution_events"][0]["status"] == "rejected"
     assert intraday.payload["execution_events"][0]["failure_reason"] == "无分钟线，无法成交"
     assert intraday.payload["execution_events"][0]["used_daily_fallback"] is False
+    intraday_snapshot = repository.records_for("raw_source_snapshots")[-1]["payload"]
+    assert intraday_snapshot["source"] == "intraday_bars"
+    assert intraday_snapshot["status"] == "success"
+    assert intraday_snapshot["metadata"]["missing_symbols"] == ["510300"]
     intraday_run_payload = repository.records_for("pipeline_runs")[-1]["payload"]
     assert intraday_run_payload["execution_events"][0]["status"] == "rejected"
     assert (
@@ -337,18 +353,22 @@ def test_intraday_watch_fails_when_intraday_provider_fails(tmp_path: Path) -> No
     try:
         pipeline.run_intraday_watch(trade_date)
     except DataProviderError as exc:
-        assert "分钟线接口失败" in str(exc)
+        assert "akshare_em" in str(exc)
+        assert "510300" in str(exc)
     else:
         raise AssertionError("分钟线 provider 整体失败时 intraday_watch 必须失败")
 
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert latest_run["stage"] == "intraday_watch"
     assert latest_run["status"] == "failed"
-    assert any(
-        row["payload"]["source"] == "intraday_bars"
-        and row["payload"]["status"] == "failed"
+    intraday_snapshot = next(
+        row["payload"]
         for row in repository.records_for("raw_source_snapshots")
+        if row["payload"]["source"] == "intraday_bars"
     )
+    assert intraday_snapshot["status"] == "failed"
+    assert intraday_snapshot["metadata"]["intraday_source"] == "akshare_em"
+    assert intraday_snapshot["metadata"]["failed_symbol"] == "510300"
 
 
 def test_intraday_watch_fails_without_successful_pre_market_decisions(tmp_path: Path) -> None:

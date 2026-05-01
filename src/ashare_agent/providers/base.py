@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date
 from typing import Protocol
 
@@ -16,6 +17,15 @@ from ashare_agent.domain import (
 
 class DataProviderError(RuntimeError):
     """Raised when a provider cannot return trustworthy data."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.metadata = dict(metadata or {})
 
 
 class DataProvider(Protocol):

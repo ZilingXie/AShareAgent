@@ -141,19 +141,54 @@ class DataCollector:
         symbols: list[str],
         period: str = "1",
     ) -> IntradayBarsCollection:
-        snapshots: list[SourceSnapshot] = []
-        bars = self._collect(
-            "intraday_bars",
-            trade_date,
-            lambda: self._provider.get_intraday_bars(trade_date, symbols, period),
-            snapshots,
-            lambda rows: {
-                "requested_symbols": symbols,
-                "returned_symbols": sorted({bar.symbol for bar in rows}),
-                "period": period,
-            },
+        try:
+            bars = self._provider.get_intraday_bars(trade_date, symbols, period)
+        except DataProviderError as exc:
+            metadata = self._intraday_metadata(symbols, [], period)
+            metadata.update(exc.metadata)
+            return IntradayBarsCollection(
+                bars=[],
+                source_snapshot=SourceSnapshot(
+                    source="intraday_bars",
+                    trade_date=trade_date,
+                    status="failed",
+                    failure_reason=str(exc),
+                    metadata=metadata,
+                ),
+            )
+        return IntradayBarsCollection(
+            bars=bars,
+            source_snapshot=SourceSnapshot(
+                source="intraday_bars",
+                trade_date=trade_date,
+                status="success",
+                row_count=len(bars),
+                metadata=self._intraday_metadata(symbols, bars, period),
+            ),
         )
-        return IntradayBarsCollection(bars=bars, source_snapshot=snapshots[0])
+
+    def _intraday_metadata(
+        self,
+        requested_symbols: list[str],
+        bars: list[IntradayBar],
+        period: str,
+    ) -> dict[str, Any]:
+        returned_symbols = sorted({bar.symbol for bar in bars})
+        returned = set(returned_symbols)
+        metadata: dict[str, Any] = {
+            "intraday_source": str(getattr(self._provider, "intraday_source", "unknown")),
+            "requested_symbols": requested_symbols,
+            "returned_symbols": returned_symbols,
+            "missing_symbols": [symbol for symbol in requested_symbols if symbol not in returned],
+            "period": period,
+        }
+        timeout = getattr(self._provider, "intraday_timeout_seconds", None)
+        retry_attempts = getattr(self._provider, "intraday_retry_attempts", None)
+        if timeout is not None:
+            metadata["timeout_seconds"] = timeout
+        if retry_attempts is not None:
+            metadata["retry_attempts"] = retry_attempts
+        return metadata
 
     def collect(self, trade_date: date, lookback_days: int = 30) -> MarketDataset:
         snapshots: list[SourceSnapshot] = []

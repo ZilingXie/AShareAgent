@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-盘中成交真实度增强已完成实现：`intraday_watch` 使用首个有效 1 分钟 K 线估价模拟成交，缺少分钟线、停牌或涨跌停时不成交并记录失败事件。
+正在收尾 `codex/intraday-minute-source-reliability`：真实分钟线源可靠性修复已实现，正在完成验证、合并、清理和 push。
 
 ## 上次停在哪
 
@@ -49,6 +49,9 @@
 - 订单阶段过滤已完成：旧 `post_market_review` 订单保留在数据库中，但 dashboard 盘中订单、盘后 `reviewed_orders`、`reviewed_order_count` 和复盘卖出原因统计只读取可关联到同日成功 `intraday_watch` run 的订单。
 - 盘中成交真实度增强已实现：DataProvider 增加分钟线接口，Mock/AKShare provider 可返回标准 `IntradayBar`；PaperTrader 不再用日线 close 成交，订单记录成交来源、价格时间点、估价方法、参考价和 `used_daily_fallback=False`。
 - 不可成交不写 `paper_orders`，只在 `intraday_watch` artifact / pipeline payload 的 `execution_events` 中记录失败原因；dashboard 已增加成交依据和成交失败只读展示。
+- `intraday-price-realism` 已合并到 `main` 并推送；真实 AKShare `intraday-watch --trade-date 2026-04-29` 暴露 EastMoney 分钟线端点 `push2his.eastmoney.com` 连接断开，数据库已正确记录 failed run 和 failed `raw_source_snapshots(source=intraday_bars)`。
+- 本轮分钟线可靠性修复已改为 `AKShareProvider` 直连 EastMoney `trends2/get`，支持 `ASHARE_INTRADAY_SOURCE=akshare_em`、timeout、retry 和 backoff 配置，并在 source snapshot metadata 中记录分钟线源、请求/返回/缺失 symbol、重试和超时参数。
+- 外部测试已拆分：`uv run pytest -m external_daily -q` 通过，`uv run pytest -m external_intraday -q` 仍因 EastMoney 分钟线端点返回 ProxyError/RemoteDisconnected 失败，但失败信息已明确包含 `akshare_em`、`symbol=510300`、`attempts=3` 和 `timeout=15.0`。
 
 ## 近期关键决定和原因
 
@@ -66,6 +69,7 @@
 - `post_market_review` 不再新增 `paper_orders`；盘后只读取盘中订单和持仓，生成收盘盯市、复盘和审计。
 - 历史 `post_market_review` 模拟订单不删除、不迁移；读取层用 `pipeline_runs.stage` 过滤，新阶段语义只承认成功 `intraday_watch` run 生成的盘中订单。
 - 盘中模拟成交只能使用分钟线估价，不允许日线 close 兜底成交；缺少分钟线、停牌、买入涨停或卖出跌停都必须记录 rejected execution event，不能写失败订单。
+- 分钟线源整体不可用时必须 failed run；单个 symbol 正常响应但无分钟线时不视为 provider 失败，由 `IntradayPriceEstimator` 记录 rejected execution event。
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
 - backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
@@ -86,4 +90,4 @@
 
 ## 下一步
 
-- 下一步做完整验证、合并 `codex/intraday-price-realism` 回 `main`，然后继续真实 AKShare 分钟线外部验收。
+- 下一步合并 `codex/intraday-minute-source-reliability` 回 `main`，复验后清理 task worktree 和本地分支，并把 `main` 推送到 GitHub。

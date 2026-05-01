@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from ashare_agent.agents.data_collector import DataCollector
-from ashare_agent.domain import Asset
+from ashare_agent.domain import Asset, IntradayBar
 from ashare_agent.providers.base import DataProviderError
 from ashare_agent.providers.mock import MockProvider
 
@@ -56,3 +56,70 @@ def test_data_collector_keeps_required_source_failure_snapshot() -> None:
 
     assert market_snapshot.status == "failed"
     assert market_snapshot.failure_reason == "行情接口失败"
+
+
+def test_data_collector_records_intraday_source_metadata_for_missing_symbols() -> None:
+    class PartialIntradayProvider(MockProvider):
+        intraday_source = "akshare_em"
+        intraday_timeout_seconds = 2.0
+        intraday_retry_attempts = 3
+
+        def get_intraday_bars(
+            self,
+            trade_date: date,
+            symbols: list[str],
+            period: str = "1",
+        ) -> list[IntradayBar]:
+            return [
+                bar
+                for bar in super().get_intraday_bars(trade_date, symbols, period)
+                if bar.symbol == "510300"
+            ]
+
+    collection = DataCollector(PartialIntradayProvider()).collect_intraday_bars(
+        date(2026, 4, 29),
+        ["510300", "600000"],
+    )
+
+    assert collection.source_snapshot.status == "success"
+    assert collection.source_snapshot.metadata["intraday_source"] == "akshare_em"
+    assert collection.source_snapshot.metadata["requested_symbols"] == ["510300", "600000"]
+    assert collection.source_snapshot.metadata["returned_symbols"] == ["510300"]
+    assert collection.source_snapshot.metadata["missing_symbols"] == ["600000"]
+    assert collection.source_snapshot.metadata["timeout_seconds"] == 2.0
+    assert collection.source_snapshot.metadata["retry_attempts"] == 3
+
+
+def test_data_collector_records_intraday_source_failure_metadata() -> None:
+    class BrokenIntradayProvider(MockProvider):
+        intraday_source = "akshare_em"
+        intraday_timeout_seconds = 2.0
+        intraday_retry_attempts = 3
+
+        def get_intraday_bars(
+            self,
+            trade_date: date,
+            symbols: list[str],
+            period: str = "1",
+        ) -> list[IntradayBar]:
+            raise DataProviderError(
+                "akshare_em 分钟线源不可用: symbol=510300 attempts=3 timeout=2.0",
+                metadata={
+                    "intraday_source": "akshare_em",
+                    "failed_symbol": "510300",
+                    "retry_attempts": 3,
+                    "timeout_seconds": 2.0,
+                },
+            )
+
+    collection = DataCollector(BrokenIntradayProvider()).collect_intraday_bars(
+        date(2026, 4, 29),
+        ["510300", "600000"],
+    )
+
+    assert collection.source_snapshot.status == "failed"
+    assert collection.source_snapshot.metadata["intraday_source"] == "akshare_em"
+    assert collection.source_snapshot.metadata["requested_symbols"] == ["510300", "600000"]
+    assert collection.source_snapshot.metadata["failed_symbol"] == "510300"
+    assert collection.source_snapshot.metadata["timeout_seconds"] == 2.0
+    assert collection.source_snapshot.metadata["retry_attempts"] == 3

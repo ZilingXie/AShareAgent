@@ -110,20 +110,41 @@ assets:
         encoding="utf-8",
     )
     created_symbols: list[str] = []
+    created_intraday_configs: list[dict[str, object]] = []
 
     class FakePostgresRepository(InMemoryRepository):
         def __init__(self, database_url: str) -> None:
             super().__init__()
 
     class FakeAKShareProvider(MockProvider):
-        def __init__(self, assets: list[Asset]) -> None:
+        def __init__(
+            self,
+            assets: list[Asset],
+            *,
+            intraday_source: str,
+            intraday_timeout_seconds: float,
+            intraday_retry_attempts: int,
+            intraday_retry_backoff_seconds: float,
+        ) -> None:
             super().__init__(assets)
             created_symbols.extend(asset.symbol for asset in assets)
+            created_intraday_configs.append(
+                {
+                    "intraday_source": intraday_source,
+                    "intraday_timeout_seconds": intraday_timeout_seconds,
+                    "intraday_retry_attempts": intraday_retry_attempts,
+                    "intraday_retry_backoff_seconds": intraday_retry_backoff_seconds,
+                }
+            )
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("ASHARE_PROVIDER", "akshare")
     monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
     monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("ASHARE_INTRADAY_SOURCE", "akshare_em")
+    monkeypatch.setenv("ASHARE_INTRADAY_TIMEOUT_SECONDS", "4")
+    monkeypatch.setenv("ASHARE_INTRADAY_RETRY_ATTEMPTS", "5")
+    monkeypatch.setenv("ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS", "0.2")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
     monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
     monkeypatch.setattr("ashare_agent.cli.AKShareProvider", FakeAKShareProvider, raising=False)
@@ -133,6 +154,43 @@ assets:
 
     assert result.exit_code == 0
     assert created_symbols == ["510300"]
+    assert created_intraday_configs == [
+        {
+            "intraday_source": "akshare_em",
+            "intraday_timeout_seconds": 4.0,
+            "intraday_retry_attempts": 5,
+            "intraday_retry_backoff_seconds": 0.2,
+        }
+    ]
+
+
+def test_cli_rejects_unknown_intraday_source_for_akshare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    _write_strategy_params(config_dir / "strategy_params.yml")
+    (config_dir / "universe.yml").write_text(
+        """
+assets:
+  - symbol: "510300"
+    name: "沪深300ETF"
+    asset_type: "ETF"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASHARE_PROVIDER", "akshare")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_INTRADAY_SOURCE", "unknown")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["pre-market", "--trade-date", "2026-04-29"])
+
+    assert result.exit_code != 0
+    assert "未知 ASHARE_INTRADAY_SOURCE" in result.output
 
 
 def test_cli_strategy_params_config_env_controls_pipeline_params(

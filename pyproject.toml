@@ -13,6 +13,7 @@ dependencies = [
   "pydantic>=2.8.2",
   "pydantic-settings>=2.4.0",
   "pyyaml>=6.0.2",
+  "requests>=2.32.0",
   "sqlalchemy>=2.0.32",
   "typer>=0.12.3",
   "uvicorn[standard]>=0.46.0",
@@ -40,6 +41,8 @@ testpaths = ["tests"]
 addopts = ["-m", "not external"]
 markers = [
   "external: tests that require network or live third-party services",
+  "external_daily: live calendar and daily market-bar data source smoke tests",
+  "external_intraday: live intraday minute-bar data source smoke tests",
 ]
 
 [tool.ruff]

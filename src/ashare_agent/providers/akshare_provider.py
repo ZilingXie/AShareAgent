@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from time import sleep
+from typing import Any, cast
+
+import requests  # type: ignore[import-untyped]
 
 from ashare_agent.domain import (
     AnnouncementItem,
@@ -14,6 +18,9 @@ from ashare_agent.domain import (
     PolicyItem,
 )
 from ashare_agent.providers.base import DataProviderError
+
+EASTMONEY_INTRADAY_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+SUPPORTED_INTRADAY_SOURCES = {"akshare_em"}
 
 
 def _to_decimal(value: object) -> Decimal:
@@ -55,6 +62,12 @@ def _exchange_symbol(symbol: str) -> str:
     return f"sz{symbol}"
 
 
+def _eastmoney_market_id(symbol: str) -> str:
+    if symbol.startswith(("5", "6", "9")):
+        return "1"
+    return "0"
+
+
 def _row_value(row: dict[str, object], *keys: str) -> object:
     for key in keys:
         if key in row and row[key] is not None:
@@ -65,8 +78,28 @@ def _row_value(row: dict[str, object], *keys: str) -> object:
 class AKShareProvider:
     """AKShare adapter. All failures are explicit provider errors."""
 
-    def __init__(self, universe: list[Asset]) -> None:
+    def __init__(
+        self,
+        universe: list[Asset],
+        *,
+        intraday_source: str = "akshare_em",
+        intraday_timeout_seconds: float = 15.0,
+        intraday_retry_attempts: int = 3,
+        intraday_retry_backoff_seconds: float = 0.5,
+    ) -> None:
+        if intraday_source not in SUPPORTED_INTRADAY_SOURCES:
+            raise ValueError(f"未知 ASHARE_INTRADAY_SOURCE: {intraday_source}")
+        if intraday_timeout_seconds <= 0:
+            raise ValueError("ASHARE_INTRADAY_TIMEOUT_SECONDS 必须大于 0")
+        if intraday_retry_attempts < 1:
+            raise ValueError("ASHARE_INTRADAY_RETRY_ATTEMPTS 必须大于等于 1")
+        if intraday_retry_backoff_seconds < 0:
+            raise ValueError("ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS 不能小于 0")
         self._universe = universe
+        self.intraday_source = intraday_source
+        self.intraday_timeout_seconds = intraday_timeout_seconds
+        self.intraday_retry_attempts = intraday_retry_attempts
+        self.intraday_retry_backoff_seconds = intraday_retry_backoff_seconds
 
     def _ak(self) -> Any:
         try:
@@ -131,57 +164,110 @@ class AKShareProvider:
         symbols: list[str],
         period: str = "1",
     ) -> list[IntradayBar]:
-        ak = self._ak()
+        if period != "1":
+            raise DataProviderError(
+                f"{self.intraday_source} 分钟线源仅支持 period=1",
+                metadata={
+                    "intraday_source": self.intraday_source,
+                    "period": period,
+                },
+            )
         assets_by_symbol = {asset.symbol: asset for asset in self._universe}
-        start_date = f"{trade_date.isoformat()} 09:30:00"
-        end_date = f"{trade_date.isoformat()} 15:00:00"
         bars: list[IntradayBar] = []
         for symbol in symbols:
             asset = assets_by_symbol.get(symbol)
             if asset is None:
                 raise DataProviderError(f"{symbol} 不在 universe 中，无法获取分钟线")
+            bars.extend(self._get_intraday_bars_akshare_em(trade_date, asset))
+        return bars
+
+    def _get_intraday_bars_akshare_em(self, trade_date: date, asset: Asset) -> list[IntradayBar]:
+        params = {
+            "fields1": "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13",
+            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58",
+            "ut": "7eea3edcaed734bea9cbfc24409ed989",
+            "ndays": "5",
+            "iscr": "0",
+            "secid": f"{_eastmoney_market_id(asset.symbol)}.{asset.symbol}",
+        }
+        last_error = "unknown failure"
+        for attempt in range(1, self.intraday_retry_attempts + 1):
             try:
-                if asset.asset_type == "ETF":
-                    df = ak.fund_etf_hist_min_em(
-                        symbol=symbol,
-                        start_date=start_date,
-                        end_date=end_date,
-                        period=period,
-                        adjust="",
-                    )
-                else:
-                    df = ak.stock_zh_a_hist_min_em(
-                        symbol=symbol,
-                        start_date=start_date,
-                        end_date=end_date,
-                        period=period,
-                        adjust="",
-                    )
+                response = requests.get(
+                    EASTMONEY_INTRADAY_URL,
+                    timeout=self.intraday_timeout_seconds,
+                    params=params,
+                )
+                response.raise_for_status()
+                return self._parse_eastmoney_intraday_payload(
+                    asset.symbol,
+                    trade_date,
+                    response.json(),
+                )
             except Exception as exc:  # noqa: BLE001
-                raise DataProviderError(f"{symbol} 分钟线获取失败: {exc}") from exc
-            try:
-                for row in df.to_dict("records"):
-                    timestamp = _parse_datetime(_row_value(row, "时间", "time"), trade_date)
-                    if timestamp.date() != trade_date:
-                        continue
-                    bars.append(
-                        IntradayBar(
-                            symbol=symbol,
-                            trade_date=trade_date,
-                            timestamp=timestamp,
-                            open=_to_decimal(_row_value(row, "开盘", "open")),
-                            high=_to_decimal(_row_value(row, "最高", "high")),
-                            low=_to_decimal(_row_value(row, "最低", "low")),
-                            close=_to_decimal(_row_value(row, "收盘", "close")),
-                            volume=int(_to_decimal(_row_value(row, "成交量", "volume"))),
-                            amount=_to_decimal(_row_value(row, "成交额", "amount")),
-                            source="akshare_intraday",
-                        )
-                    )
-            except DataProviderError:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                raise DataProviderError(f"{symbol} 分钟线解析失败: {exc}") from exc
+                last_error = str(exc) or exc.__class__.__name__
+                if attempt < self.intraday_retry_attempts and (
+                    self.intraday_retry_backoff_seconds > 0
+                ):
+                    sleep(self.intraday_retry_backoff_seconds)
+        metadata = {
+            "intraday_source": self.intraday_source,
+            "failed_symbol": asset.symbol,
+            "retry_attempts": self.intraday_retry_attempts,
+            "timeout_seconds": self.intraday_timeout_seconds,
+            "last_error": last_error,
+        }
+        raise DataProviderError(
+            f"{self.intraday_source} 分钟线源不可用: "
+            f"symbol={asset.symbol} "
+            f"attempts={self.intraday_retry_attempts} "
+            f"timeout={self.intraday_timeout_seconds} "
+            f"last_error={last_error}",
+            metadata=metadata,
+        )
+
+    def _parse_eastmoney_intraday_payload(
+        self,
+        symbol: str,
+        trade_date: date,
+        payload: object,
+    ) -> list[IntradayBar]:
+        if not isinstance(payload, Mapping):
+            raise DataProviderError("EastMoney 分钟线响应必须是 JSON object")
+        payload_map = cast(Mapping[str, object], payload)
+        data = payload_map.get("data")
+        if not isinstance(data, Mapping):
+            raise DataProviderError("EastMoney 分钟线响应缺少 data object")
+        data_map = cast(Mapping[str, object], data)
+        trends = data_map.get("trends")
+        if trends is None:
+            raise DataProviderError("EastMoney 分钟线响应缺少 data.trends")
+        if not isinstance(trends, list):
+            raise DataProviderError("EastMoney 分钟线 data.trends 必须是 list")
+        bars: list[IntradayBar] = []
+        for raw_item in cast(list[object], trends):
+            if not isinstance(raw_item, str):
+                raise DataProviderError("EastMoney 分钟线 item 必须是 string")
+            fields = raw_item.split(",")
+            if len(fields) < 7:
+                raise DataProviderError(f"EastMoney 分钟线字段不足: {raw_item}")
+            timestamp = _parse_datetime(fields[0], trade_date)
+            if timestamp.date() != trade_date:
+                continue
+            bars.append(
+                IntradayBar(
+                    symbol=symbol,
+                    trade_date=trade_date,
+                    timestamp=timestamp,
+                    open=_to_decimal(fields[1]),
+                    close=_to_decimal(fields[2]),
+                    high=_to_decimal(fields[3]),
+                    low=_to_decimal(fields[4]),
+                    volume=int(_to_decimal(fields[5])),
+                    amount=_to_decimal(fields[6]),
+                    source=self.intraday_source,
+                )
+            )
         return bars
 
     def get_announcements(self, trade_date: date) -> list[AnnouncementItem]:

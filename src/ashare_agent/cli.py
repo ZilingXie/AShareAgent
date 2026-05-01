@@ -7,7 +7,7 @@ import typer
 
 from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyParamsAgent
 from ashare_agent.backtest import BacktestRunner
-from ashare_agent.config import load_settings, load_universe
+from ashare_agent.config import Settings, load_settings, load_universe
 from ashare_agent.domain import now_utc
 from ashare_agent.llm.factory import create_llm_client
 from ashare_agent.llm.mock import MockLLMClient
@@ -27,7 +27,8 @@ def _parse_trade_date(value: str) -> date:
         raise typer.BadParameter("日期格式必须是 YYYY-MM-DD") from exc
 
 
-def _build_provider(provider_name: str) -> tuple[DataProvider, set[str]]:
+def _build_provider(settings: Settings) -> tuple[DataProvider, set[str]]:
+    provider_name = settings.provider
     normalized = provider_name.lower()
     if normalized == "mock":
         return MockProvider(), set()
@@ -36,7 +37,17 @@ def _build_provider(provider_name: str) -> tuple[DataProvider, set[str]]:
             assets = load_universe(Path("configs/universe.yml"), enabled_only=True)
         except (FileNotFoundError, ValueError) as exc:
             raise typer.BadParameter(f"无法加载 akshare universe: {exc}") from exc
-        return AKShareProvider(assets), {"universe", "market_bars", "trade_calendar"}
+        try:
+            provider = AKShareProvider(
+                assets,
+                intraday_source=settings.intraday_source,
+                intraday_timeout_seconds=settings.intraday_timeout_seconds,
+                intraday_retry_attempts=settings.intraday_retry_attempts,
+                intraday_retry_backoff_seconds=settings.intraday_retry_backoff_seconds,
+            )
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        return provider, {"universe", "market_bars", "trade_calendar"}
     raise typer.BadParameter(f"未知 ASHARE_PROVIDER: {provider_name}")
 
 
@@ -44,7 +55,7 @@ def _build_pipeline() -> ASharePipeline:
     settings = load_settings()
     if not settings.database_url:
         raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
-    provider, required_data_sources = _build_provider(settings.provider)
+    provider, required_data_sources = _build_provider(settings)
     strategy_params = _load_strategy_params(settings.strategy_params_config)
     return ASharePipeline(
         provider=provider,
@@ -125,7 +136,7 @@ def backtest(
     settings = load_settings()
     if not settings.database_url:
         raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
-    provider, required_data_sources = _build_provider(settings.provider)
+    provider, required_data_sources = _build_provider(settings)
     strategy_params = _load_strategy_params(settings.strategy_params_config)
     resolved_backtest_id = backtest_id or _default_backtest_id(
         settings.provider,

@@ -20,6 +20,16 @@ class Settings(BaseSettings):
         alias="ASHARE_STRATEGY_PARAMS_CONFIG",
     )
     database_url: str | None = Field(default=None, alias="DATABASE_URL")
+    intraday_source: str = Field(default="akshare_em", alias="ASHARE_INTRADAY_SOURCE")
+    intraday_timeout_seconds: float = Field(
+        default=15.0,
+        alias="ASHARE_INTRADAY_TIMEOUT_SECONDS",
+    )
+    intraday_retry_attempts: int = Field(default=3, alias="ASHARE_INTRADAY_RETRY_ATTEMPTS")
+    intraday_retry_backoff_seconds: float = Field(
+        default=0.5,
+        alias="ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS",
+    )
     enable_deepseek: bool = Field(default=False, alias="ASHARE_ENABLE_DEEPSEEK")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4.1-mini", alias="OPENAI_MODEL")

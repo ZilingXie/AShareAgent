@@ -249,13 +249,17 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 ASHARE_PROVIDER=akshare
 ASHARE_LLM_PROVIDER=mock
 DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/supportportal
+ASHARE_INTRADAY_SOURCE=akshare_em
+ASHARE_INTRADAY_TIMEOUT_SECONDS=15
+ASHARE_INTRADAY_RETRY_ATTEMPTS=3
+ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS=0.5
 ```
 
 `akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败、必需源空数据、交易日缺失当日行情或行情价格异常时，CLI 会明确失败，并把失败原因写入 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`。公告、新闻和政策为空会作为质量警告记录，接口异常仍会记录失败快照。
 
 策略参数默认从 `configs/strategy_params.yml` 读取，也可用 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向另一份配置。配置包含 `risk`、`paper_trader` 和 `signal` 三组参数；`signal` 控制 SignalEngine 权重、最低分阈值和每日最大信号数。策略参数配置缺字段、百分比非法、持有期范围非法或每日最大信号数小于 1 时，CLI 会明确失败，不会使用代码里的静默默认值。
 
-当前真实日线行情使用 AKShare 的 Sina 路径：ETF 走 `fund_etf_hist_sina`，A 股走 `stock_zh_a_daily`。盘中成交估价使用 1 分钟 K 线：ETF 走 `fund_etf_hist_min_em`，A 股走 `stock_zh_a_hist_min_em`。EastMoney 历史 K 线端点在本机代理和直连下都可能断开，provider 不会静默切回 Mock 或伪造行情。
+当前真实日线行情使用 AKShare 的 Sina 路径：ETF 走 `fund_etf_hist_sina`，A 股走 `stock_zh_a_daily`。盘中成交估价使用 `ASHARE_INTRADAY_SOURCE=akshare_em`，由 `AKShareProvider` 直连 EastMoney `push2his.eastmoney.com/api/qt/stock/trends2/get` 获取 1 分钟 K 线；timeout、重试次数和退避由 `ASHARE_INTRADAY_TIMEOUT_SECONDS`、`ASHARE_INTRADAY_RETRY_ATTEMPTS`、`ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS` 控制。EastMoney 分钟线端点在本机代理和直连下都可能断开，provider 不会静默切回 Mock 或伪造行情。
 
 运行 CLI 前必须先配置 `DATABASE_URL` 并完成迁移。CLI 不配置数据库会明确失败，避免误以为结果已持久化。
 
@@ -291,11 +295,15 @@ uv run ruff check
 uv run pyright
 ```
 
-真实 AKShare smoke test 默认不进入普通测试，手动运行：
+真实 AKShare smoke test 默认不进入普通测试。日线/交易日历和分钟线已拆开，手动运行：
 
 ```bash
+uv run pytest -m external_daily
+uv run pytest -m external_intraday
 uv run pytest -m external
 ```
+
+`external_daily` 只验证交易日历和日线行情，不受 EastMoney 分钟线端点影响；`external_intraday` 单独验证分钟线源，如果仍出现 `RemoteDisconnected`，应记录为外部分钟线源不可用，不能切回 Mock 或使用日线兜底。
 
 PostgreSQL 迁移：
 
@@ -308,7 +316,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
-`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计；成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。缺少分钟线、停牌、买入涨停或卖出跌停时不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
+`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录 `intraday_source`、请求/返回/缺失 symbol、period、timeout 和 retry 配置。成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。分钟线源整体不可用时写 failed snapshot 和 failed run；单个 symbol 正常响应但无分钟线时 run 可成功，不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
 
 `post-market-review` 不新增 `paper_orders`，只恢复同日成功 `intraday_watch` run 生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。`reviewed_order_count` 和复盘报告里的订单列表只统计盘中订单，历史 `post_market_review` 订单不会污染新阶段语义。
 

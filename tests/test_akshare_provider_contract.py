@@ -114,40 +114,6 @@ def test_akshare_provider_returns_standard_audit_models(
     def tool_trade_date_hist_sina() -> FakeDataFrame:
         return FakeDataFrame([{"trade_date": "2026-04-28"}, {"trade_date": "2026-04-29"}])
 
-    def fund_etf_hist_min_em(**kwargs: object) -> FakeDataFrame:
-        assert kwargs["symbol"] == "510300"
-        assert kwargs["period"] == "1"
-        return FakeDataFrame(
-            [
-                {
-                    "时间": "2026-04-29 09:31:00",
-                    "开盘": "4.18",
-                    "收盘": "4.19",
-                    "最高": "4.20",
-                    "最低": "4.18",
-                    "成交量": 100,
-                    "成交额": "419",
-                }
-            ]
-        )
-
-    def stock_zh_a_hist_min_em(**kwargs: object) -> FakeDataFrame:
-        assert kwargs["symbol"] == "600000"
-        assert kwargs["period"] == "1"
-        return FakeDataFrame(
-            [
-                {
-                    "时间": "2026-04-29 09:31:00",
-                    "开盘": "9.10",
-                    "收盘": "9.11",
-                    "最高": "9.12",
-                    "最低": "9.09",
-                    "成交量": 200,
-                    "成交额": "1822",
-                }
-            ]
-        )
-
     fake_akshare = ModuleType("akshare")
     fake_akshare.__dict__.update(
         {
@@ -157,11 +123,20 @@ def test_akshare_provider_returns_standard_audit_models(
             "stock_news_em": stock_news_em,
             "news_cctv": news_cctv,
             "tool_trade_date_hist_sina": tool_trade_date_hist_sina,
-            "fund_etf_hist_min_em": fund_etf_hist_min_em,
-            "stock_zh_a_hist_min_em": stock_zh_a_hist_min_em,
         }
     )
     monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
+    _patch_eastmoney_intraday(
+        monkeypatch,
+        {
+            "1.510300": [
+                "2026-04-29 09:31,4.18,4.19,4.20,4.18,100,419,4.19",
+            ],
+            "1.600000": [
+                "2026-04-29 09:31,9.10,9.11,9.12,9.09,200,1822,9.11",
+            ],
+        },
+    )
     provider = AKShareProvider(
         [
             Asset(symbol="510300", name="沪深300ETF", asset_type="ETF"),
@@ -182,7 +157,7 @@ def test_akshare_provider_returns_standard_audit_models(
     assert {bar.symbol for bar in bars} == {"510300", "600000"}
     assert all(bar.source == "akshare" for bar in bars)
     assert {bar.symbol for bar in intraday_bars} == {"510300", "600000"}
-    assert all(bar.source == "akshare_intraday" for bar in intraday_bars)
+    assert all(bar.source == "akshare_em" for bar in intraday_bars)
     assert intraday_bars[0].timestamp.isoformat() == "2026-04-29T09:31:00"
     assert {item.symbol for item in announcements} == {"510300"}
     assert {item.symbol for item in news} == {"510300", "600000"}
@@ -212,3 +187,122 @@ def test_akshare_provider_wraps_market_bar_parse_errors(
         assert "行情解析失败" in str(exc)
     else:
         raise AssertionError("行情字段缺失必须包装成 DataProviderError")
+
+
+def test_akshare_provider_uses_direct_eastmoney_intraday_with_configured_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, float, dict[str, str]]] = []
+
+    def fake_get(url: str, *, timeout: float, params: dict[str, str]) -> object:
+        calls.append((url, timeout, params))
+        return FakeResponse(
+            {
+                "data": {
+                    "trends": [
+                        "2026-04-28 09:31,4.00,4.01,4.02,3.99,90,360,4.00",
+                        "2026-04-29 09:31,4.18,4.19,4.20,4.18,100,419,4.19",
+                    ]
+                }
+            }
+        )
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", fake_get)
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_em",
+        intraday_timeout_seconds=3.0,
+        intraday_retry_attempts=2,
+        intraday_retry_backoff_seconds=0,
+    )
+
+    bars = provider.get_intraday_bars(date(2026, 4, 29), ["510300"])
+
+    assert len(bars) == 1
+    assert bars[0].source == "akshare_em"
+    assert bars[0].timestamp.isoformat() == "2026-04-29T09:31:00"
+    assert calls[0][1] == 3.0
+    assert calls[0][2]["secid"] == "1.510300"
+
+
+def test_akshare_provider_retries_intraday_source_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    def broken_get(url: str, *, timeout: float, params: dict[str, str]) -> object:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("RemoteDisconnected")
+
+    def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", broken_get)
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.sleep", no_sleep)
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_em",
+        intraday_timeout_seconds=2.0,
+        intraday_retry_attempts=3,
+        intraday_retry_backoff_seconds=0.1,
+    )
+
+    with pytest.raises(DataProviderError) as caught:
+        provider.get_intraday_bars(date(2026, 4, 29), ["510300"])
+
+    message = str(caught.value)
+    assert attempts == 3
+    assert "akshare_em" in message
+    assert "510300" in message
+    assert "attempts=3" in message
+    assert "timeout=2.0" in message
+    assert "RemoteDisconnected" in message
+    assert caught.value.metadata["failed_symbol"] == "510300"
+
+
+def test_akshare_provider_returns_empty_intraday_when_symbol_has_no_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_eastmoney_intraday(monkeypatch, {"1.510300": []})
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_em",
+        intraday_retry_attempts=1,
+    )
+
+    assert provider.get_intraday_bars(date(2026, 4, 29), ["510300"]) == []
+
+
+def test_akshare_provider_rejects_unknown_intraday_source() -> None:
+    with pytest.raises(ValueError) as caught:
+        AKShareProvider(
+            [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+            intraday_source="unknown",
+        )
+
+    assert "未知 ASHARE_INTRADAY_SOURCE" in str(caught.value)
+
+
+class FakeResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+
+def _patch_eastmoney_intraday(
+    monkeypatch: pytest.MonkeyPatch,
+    trends_by_secid: dict[str, list[str]],
+) -> None:
+    def fake_get(url: str, *, timeout: float, params: dict[str, str]) -> FakeResponse:
+        assert url == "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
+        assert timeout > 0
+        secid = params["secid"]
+        return FakeResponse({"data": {"trends": trends_by_secid[secid]}})
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", fake_get)

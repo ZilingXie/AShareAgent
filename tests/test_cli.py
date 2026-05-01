@@ -141,7 +141,7 @@ assets:
     monkeypatch.setenv("ASHARE_PROVIDER", "akshare")
     monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
     monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
-    monkeypatch.setenv("ASHARE_INTRADAY_SOURCE", "akshare_em")
+    monkeypatch.setenv("ASHARE_INTRADAY_SOURCE", "akshare_em,akshare_sina")
     monkeypatch.setenv("ASHARE_INTRADAY_TIMEOUT_SECONDS", "4")
     monkeypatch.setenv("ASHARE_INTRADAY_RETRY_ATTEMPTS", "5")
     monkeypatch.setenv("ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS", "0.2")
@@ -156,7 +156,7 @@ assets:
     assert created_symbols == ["510300"]
     assert created_intraday_configs == [
         {
-            "intraday_source": "akshare_em",
+            "intraday_source": "akshare_em,akshare_sina",
             "intraday_timeout_seconds": 4.0,
             "intraday_retry_attempts": 5,
             "intraday_retry_backoff_seconds": 0.2,

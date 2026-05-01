@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -20,7 +21,10 @@ from ashare_agent.domain import (
 from ashare_agent.providers.base import DataProviderError
 
 EASTMONEY_INTRADAY_URL = "https://push2his.eastmoney.com/api/qt/stock/trends2/get"
-SUPPORTED_INTRADAY_SOURCES = {"akshare_em"}
+SINA_INTRADAY_URL = (
+    "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData"
+)
+SUPPORTED_INTRADAY_SOURCES = {"akshare_em", "akshare_sina"}
 
 
 def _to_decimal(value: object) -> Decimal:
@@ -68,6 +72,16 @@ def _eastmoney_market_id(symbol: str) -> str:
     return "0"
 
 
+def _intraday_source_chain(value: str) -> list[str]:
+    sources = [source.strip() for source in value.split(",") if source.strip()]
+    if not sources:
+        raise ValueError("ASHARE_INTRADAY_SOURCE 不能为空")
+    for source in sources:
+        if source not in SUPPORTED_INTRADAY_SOURCES:
+            raise ValueError(f"未知 ASHARE_INTRADAY_SOURCE: {source}")
+    return sources
+
+
 def _row_value(row: dict[str, object], *keys: str) -> object:
     for key in keys:
         if key in row and row[key] is not None:
@@ -87,8 +101,7 @@ class AKShareProvider:
         intraday_retry_attempts: int = 3,
         intraday_retry_backoff_seconds: float = 0.5,
     ) -> None:
-        if intraday_source not in SUPPORTED_INTRADAY_SOURCES:
-            raise ValueError(f"未知 ASHARE_INTRADAY_SOURCE: {intraday_source}")
+        source_chain = _intraday_source_chain(intraday_source)
         if intraday_timeout_seconds <= 0:
             raise ValueError("ASHARE_INTRADAY_TIMEOUT_SECONDS 必须大于 0")
         if intraday_retry_attempts < 1:
@@ -96,10 +109,16 @@ class AKShareProvider:
         if intraday_retry_backoff_seconds < 0:
             raise ValueError("ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS 不能小于 0")
         self._universe = universe
-        self.intraday_source = intraday_source
+        self.intraday_source = ",".join(source_chain)
+        self.intraday_source_chain = source_chain
         self.intraday_timeout_seconds = intraday_timeout_seconds
         self.intraday_retry_attempts = intraday_retry_attempts
         self.intraday_retry_backoff_seconds = intraday_retry_backoff_seconds
+        self._last_intraday_source_attempts: list[dict[str, object]] = []
+
+    @property
+    def last_intraday_source_attempts(self) -> list[dict[str, object]]:
+        return list(self._last_intraday_source_attempts)
 
     def _ak(self) -> Any:
         try:
@@ -171,15 +190,97 @@ class AKShareProvider:
                     "intraday_source": self.intraday_source,
                     "period": period,
                 },
-            )
+        )
         assets_by_symbol = {asset.symbol: asset for asset in self._universe}
         bars: list[IntradayBar] = []
+        self._last_intraday_source_attempts = []
         for symbol in symbols:
             asset = assets_by_symbol.get(symbol)
             if asset is None:
                 raise DataProviderError(f"{symbol} 不在 universe 中，无法获取分钟线")
-            bars.extend(self._get_intraday_bars_akshare_em(trade_date, asset))
+            bars.extend(self._get_intraday_bars_from_chain(trade_date, asset))
         return bars
+
+    def _get_intraday_bars_from_chain(
+        self,
+        trade_date: date,
+        asset: Asset,
+    ) -> list[IntradayBar]:
+        source_attempts: list[dict[str, object]] = []
+        for source in self.intraday_source_chain:
+            try:
+                if source == "akshare_em":
+                    bars = self._get_intraday_bars_akshare_em(trade_date, asset)
+                elif source == "akshare_sina":
+                    bars = self._get_intraday_bars_akshare_sina(trade_date, asset)
+                else:
+                    raise DataProviderError(f"未知分钟线源: {source}")
+            except DataProviderError as exc:
+                attempt = self._source_attempt(
+                    source=source,
+                    symbol=asset.symbol,
+                    status="failed",
+                    returned_rows=0,
+                    last_error=str(exc.metadata.get("last_error") or exc),
+                )
+                source_attempts.append(attempt)
+                self._last_intraday_source_attempts.append(attempt)
+                continue
+            status = "success" if bars else "empty"
+            attempt = self._source_attempt(
+                source=source,
+                symbol=asset.symbol,
+                status=status,
+                returned_rows=len(bars),
+                last_error=None,
+            )
+            source_attempts.append(attempt)
+            self._last_intraday_source_attempts.append(attempt)
+            if bars:
+                return bars
+        if any(attempt["status"] == "empty" for attempt in source_attempts):
+            return []
+        last_error = (
+            str(source_attempts[-1]["last_error"])
+            if source_attempts and source_attempts[-1]["last_error"] is not None
+            else "unknown failure"
+        )
+        metadata = {
+            "intraday_source": self.intraday_source,
+            "source_chain": self.intraday_source_chain,
+            "failed_symbol": asset.symbol,
+            "retry_attempts": self.intraday_retry_attempts,
+            "timeout_seconds": self.intraday_timeout_seconds,
+            "last_error": last_error,
+            "source_attempts": source_attempts,
+        }
+        raise DataProviderError(
+            f"{self.intraday_source} 分钟线源链路不可用: "
+            f"symbol={asset.symbol} "
+            f"attempts={self.intraday_retry_attempts} "
+            f"timeout={self.intraday_timeout_seconds} "
+            f"last_error={last_error}",
+            metadata=metadata,
+        )
+
+    def _source_attempt(
+        self,
+        *,
+        source: str,
+        symbol: str,
+        status: str,
+        returned_rows: int,
+        last_error: str | None,
+    ) -> dict[str, object]:
+        return {
+            "source": source,
+            "symbol": symbol,
+            "status": status,
+            "returned_rows": returned_rows,
+            "retry_attempts": self.intraday_retry_attempts,
+            "timeout_seconds": self.intraday_timeout_seconds,
+            "last_error": last_error,
+        }
 
     def _get_intraday_bars_akshare_em(self, trade_date: date, asset: Asset) -> list[IntradayBar]:
         params = {
@@ -211,14 +312,61 @@ class AKShareProvider:
                 ):
                     sleep(self.intraday_retry_backoff_seconds)
         metadata = {
-            "intraday_source": self.intraday_source,
+            "intraday_source": "akshare_em",
             "failed_symbol": asset.symbol,
             "retry_attempts": self.intraday_retry_attempts,
             "timeout_seconds": self.intraday_timeout_seconds,
             "last_error": last_error,
         }
         raise DataProviderError(
-            f"{self.intraday_source} 分钟线源不可用: "
+            "akshare_em 分钟线源不可用: "
+            f"symbol={asset.symbol} "
+            f"attempts={self.intraday_retry_attempts} "
+            f"timeout={self.intraday_timeout_seconds} "
+            f"last_error={last_error}",
+            metadata=metadata,
+        )
+
+    def _get_intraday_bars_akshare_sina(
+        self,
+        trade_date: date,
+        asset: Asset,
+    ) -> list[IntradayBar]:
+        params = {
+            "symbol": _exchange_symbol(asset.symbol),
+            "scale": "1",
+            "ma": "no",
+            "datalen": "1970",
+        }
+        last_error = "unknown failure"
+        for attempt in range(1, self.intraday_retry_attempts + 1):
+            try:
+                response = requests.get(
+                    SINA_INTRADAY_URL,
+                    timeout=self.intraday_timeout_seconds,
+                    params=params,
+                )
+                response.raise_for_status()
+                return self._parse_sina_intraday_payload(
+                    asset.symbol,
+                    trade_date,
+                    response.text,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_error = str(exc) or exc.__class__.__name__
+                if attempt < self.intraday_retry_attempts and (
+                    self.intraday_retry_backoff_seconds > 0
+                ):
+                    sleep(self.intraday_retry_backoff_seconds)
+        metadata = {
+            "intraday_source": "akshare_sina",
+            "failed_symbol": asset.symbol,
+            "retry_attempts": self.intraday_retry_attempts,
+            "timeout_seconds": self.intraday_timeout_seconds,
+            "last_error": last_error,
+        }
+        raise DataProviderError(
+            "akshare_sina 分钟线源不可用: "
             f"symbol={asset.symbol} "
             f"attempts={self.intraday_retry_attempts} "
             f"timeout={self.intraday_timeout_seconds} "
@@ -265,7 +413,43 @@ class AKShareProvider:
                     low=_to_decimal(fields[4]),
                     volume=int(_to_decimal(fields[5])),
                     amount=_to_decimal(fields[6]),
-                    source=self.intraday_source,
+                    source="akshare_em",
+                )
+            )
+        return bars
+
+    def _parse_sina_intraday_payload(
+        self,
+        symbol: str,
+        trade_date: date,
+        text: str,
+    ) -> list[IntradayBar]:
+        if "=(" not in text:
+            raise DataProviderError("Sina 分钟线响应缺少 JSONP body")
+        body = text.split("=(", 1)[1].rsplit(");", 1)[0]
+        rows = json.loads(body)
+        if not isinstance(rows, list):
+            raise DataProviderError("Sina 分钟线响应 body 必须是 list")
+        bars: list[IntradayBar] = []
+        for raw_row in cast(list[object], rows):
+            if not isinstance(raw_row, Mapping):
+                raise DataProviderError("Sina 分钟线 item 必须是 object")
+            row = cast(Mapping[str, object], raw_row)
+            timestamp = _parse_datetime(row.get("day"), trade_date)
+            if timestamp.date() != trade_date:
+                continue
+            bars.append(
+                IntradayBar(
+                    symbol=symbol,
+                    trade_date=trade_date,
+                    timestamp=timestamp,
+                    open=_to_decimal(row.get("open")),
+                    close=_to_decimal(row.get("close")),
+                    high=_to_decimal(row.get("high")),
+                    low=_to_decimal(row.get("low")),
+                    volume=int(_to_decimal(row.get("volume"))),
+                    amount=_to_decimal(row.get("amount")),
+                    source="akshare_sina",
                 )
             )
         return bars

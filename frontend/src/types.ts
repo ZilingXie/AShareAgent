@@ -125,6 +125,18 @@ export interface DashboardSourceSnapshot {
   collected_at: string | null;
 }
 
+export interface DashboardIntradaySourceHealth {
+  run_id: string;
+  stage: string | null;
+  source: string;
+  symbol: string;
+  status: string;
+  returned_rows: number;
+  retry_attempts: number | null;
+  timeout_seconds: number | null;
+  last_error: string | null;
+}
+
 export interface DashboardDataQualityIssue {
   severity: string;
   check_name: string;
@@ -269,6 +281,7 @@ export interface DashboardDay {
   portfolio_snapshot: DashboardPortfolioSnapshot | null;
   review_report: DashboardReviewReport | null;
   source_snapshots: DashboardSourceSnapshot[];
+  intraday_source_health: DashboardIntradaySourceHealth[];
   trading_calendar: DashboardTradingCalendarDay | null;
   data_quality_reports: DashboardDataQualityReport[];
   data_reliability_reports: DashboardDataReliabilityReport[];

@@ -24,10 +24,23 @@ def test_akshare_external_smoke_returns_calendar_and_market_bars() -> None:
 
 
 @pytest.mark.external_intraday
-def test_akshare_external_smoke_returns_intraday_bars() -> None:
+@pytest.mark.external_intraday_akshare_em
+def test_akshare_external_smoke_returns_eastmoney_intraday_bars() -> None:
     assets = load_universe(Path("configs/universe.yml"), enabled_only=True)
-    provider = AKShareProvider(assets[:1])
+    provider = AKShareProvider(assets[:1], intraday_source="akshare_em")
 
     intraday_bars = provider.get_intraday_bars(date(2026, 4, 29), [assets[0].symbol])
 
     assert intraday_bars
+
+
+@pytest.mark.external_intraday
+@pytest.mark.external_intraday_akshare_sina
+def test_akshare_external_smoke_returns_sina_intraday_bars() -> None:
+    assets = load_universe(Path("configs/universe.yml"), enabled_only=True)
+    provider = AKShareProvider(assets[:1], intraday_source="akshare_sina")
+
+    intraday_bars = provider.get_intraday_bars(date(2026, 4, 29), [assets[0].symbol])
+
+    assert intraday_bars
+    assert {bar.source for bar in intraday_bars} == {"akshare_sina"}

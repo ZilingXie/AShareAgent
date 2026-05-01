@@ -271,6 +271,46 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
             )
         ],
     )
+    repository.save_raw_source_snapshots(
+        intraday_context,
+        [
+            SourceSnapshot(
+                source="intraday_bars",
+                trade_date=trade_date,
+                status="success",
+                row_count=3,
+                metadata={
+                    "intraday_source": "akshare_em,akshare_sina",
+                    "requested_symbols": ["510300"],
+                    "returned_symbols": ["510300"],
+                    "missing_symbols": [],
+                    "period": "1",
+                    "timeout_seconds": 2.0,
+                    "retry_attempts": 2,
+                    "source_attempts": [
+                        {
+                            "source": "akshare_em",
+                            "symbol": "510300",
+                            "status": "failed",
+                            "returned_rows": 0,
+                            "retry_attempts": 2,
+                            "timeout_seconds": 2.0,
+                            "last_error": "RemoteDisconnected",
+                        },
+                        {
+                            "source": "akshare_sina",
+                            "symbol": "510300",
+                            "status": "success",
+                            "returned_rows": 3,
+                            "retry_attempts": 2,
+                            "timeout_seconds": 2.0,
+                            "last_error": None,
+                        },
+                    ],
+                },
+            )
+        ],
+    )
     repository.save_data_quality_report(
         failed_context,
         DataQualityReport(
@@ -388,6 +428,15 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert round(day.review_report.metrics.max_drawdown, 10) == 0.0098060396
     assert day.source_snapshots[0].stage == "pre_market"
     assert day.source_snapshots[0].failure_reason == "EastMoney endpoint disconnected"
+    assert day.intraday_source_health[0].source == "akshare_em"
+    assert day.intraday_source_health[0].symbol == "510300"
+    assert day.intraday_source_health[0].status == "failed"
+    assert day.intraday_source_health[0].retry_attempts == 2
+    assert day.intraday_source_health[0].timeout_seconds == 2.0
+    assert day.intraday_source_health[0].last_error == "RemoteDisconnected"
+    assert day.intraday_source_health[1].source == "akshare_sina"
+    assert day.intraday_source_health[1].status == "success"
+    assert day.intraday_source_health[1].returned_rows == 3
     assert day.trading_calendar is not None
     assert day.trading_calendar.is_trade_date is True
     assert day.data_reliability_reports[0].status == "failed"

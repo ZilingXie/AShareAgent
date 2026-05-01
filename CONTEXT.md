@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-`codex/intraday-minute-source-reliability` 已完成：真实分钟线源可靠性修复已实现并准备清理 task worktree / 本地分支。
+正在收尾 `codex/intraday-minute-source-fallback`：备用分钟线源 `akshare_sina` 和显式 source chain 已接入，进入验证、合并、清理和 push 阶段。
 
 ## 上次停在哪
 
@@ -52,6 +52,8 @@
 - `intraday-price-realism` 已合并到 `main` 并推送；真实 AKShare `intraday-watch --trade-date 2026-04-29` 暴露 EastMoney 分钟线端点 `push2his.eastmoney.com` 连接断开，数据库已正确记录 failed run 和 failed `raw_source_snapshots(source=intraday_bars)`。
 - 本轮分钟线可靠性修复已改为 `AKShareProvider` 直连 EastMoney `trends2/get`，支持 `ASHARE_INTRADAY_SOURCE=akshare_em`、timeout、retry 和 backoff 配置，并在 source snapshot metadata 中记录分钟线源、请求/返回/缺失 symbol、重试和超时参数。
 - 外部测试已拆分：`uv run pytest -m external_daily -q` 通过，`uv run pytest -m external_intraday -q` 仍因 EastMoney 分钟线端点返回 ProxyError/RemoteDisconnected 失败，但失败信息已明确包含 `akshare_em`、`symbol=510300`、`attempts=3` 和 `timeout=15.0`。
+- 本轮已新增 `akshare_sina` 备用分钟线源：默认仍只用 `akshare_em`，只有显式配置 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 时才按链路尝试备用源；`raw_source_snapshots.metadata.source_attempts` 会记录每个 source/symbol 的状态、retry、timeout 和最后错误。
+- dashboard 已新增“分钟线源健康”只读展示，读取 `raw_source_snapshots.metadata.source_attempts`，展示 source、symbol、状态、retry、timeout、返回行数和最后错误。
 
 ## 近期关键决定和原因
 
@@ -70,6 +72,7 @@
 - 历史 `post_market_review` 模拟订单不删除、不迁移；读取层用 `pipeline_runs.stage` 过滤，新阶段语义只承认成功 `intraday_watch` run 生成的盘中订单。
 - 盘中模拟成交只能使用分钟线估价，不允许日线 close 兜底成交；缺少分钟线、停牌、买入涨停或卖出跌停都必须记录 rejected execution event，不能写失败订单。
 - 分钟线源整体不可用时必须 failed run；单个 symbol 正常响应但无分钟线时不视为 provider 失败，由 `IntradayPriceEstimator` 记录 rejected execution event。
+- 分钟线备用源不能静默启用；只有显式配置 source chain 时才允许从 `akshare_em` 尝试到 `akshare_sina`。
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
 - backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
@@ -90,4 +93,4 @@
 
 ## 下一步
 
-- 下一步继续真实分钟线外部源排查或接入备用分钟线 adapter；当前代码已经能把 EastMoney 分钟线源不可用与单个 symbol 无分钟线分开审计。
+- 下一步完成 `codex/intraday-minute-source-fallback` 合并、清理和 push；随后用 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 跑真实 `intraday-watch` 验收，若 Sina 也不可用，再评估第三个分钟线源。

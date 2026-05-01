@@ -32,7 +32,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 ## 当前边界
 
 - 当前入口是 CLI：`pre-market`、`intraday-watch`、`post-market-review`、`daily-run`、`backtest`。
-- 默认 provider 是 `MockProvider`；设置 `ASHARE_PROVIDER=akshare` 后，CLI 从 `configs/universe.yml` 读取 `enabled=true` 的固定 ETF/大盘股池，并使用 `AKShareProvider` 拉真实公开源。日线行情当前通过 AKShare 的 Sina 路径采集，ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`；盘中分钟线用于模拟成交估价，当前分钟线源为 `ASHARE_INTRADAY_SOURCE=akshare_em`，由 `AKShareProvider` 直连 EastMoney `trends2/get`，timeout、重试次数和退避由 `ASHARE_INTRADAY_TIMEOUT_SECONDS`、`ASHARE_INTRADAY_RETRY_ATTEMPTS`、`ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS` 控制。
+- 默认 provider 是 `MockProvider`；设置 `ASHARE_PROVIDER=akshare` 后，CLI 从 `configs/universe.yml` 读取 `enabled=true` 的固定 ETF/大盘股池，并使用 `AKShareProvider` 拉真实公开源。日线行情当前通过 AKShare 的 Sina 路径采集，ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`；盘中分钟线用于模拟成交估价，默认分钟线源为 `ASHARE_INTRADAY_SOURCE=akshare_em`，可显式配置 `akshare_em,akshare_sina` source chain。`akshare_em` 直连 EastMoney `trends2/get`，`akshare_sina` 直连 Sina `CN_MarketDataService.getKLineData`；timeout、重试次数和退避由 `ASHARE_INTRADAY_TIMEOUT_SECONDS`、`ASHARE_INTRADAY_RETRY_ATTEMPTS`、`ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS` 控制。
 - 默认 LLM 是 mock；`.env` 中设置 `ASHARE_LLM_PROVIDER=openai` 或 `deepseek` 后才调用真实 API。
 - 默认策略参数配置是 `configs/strategy_params.yml`；可通过 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向其他配置。`StrategyParamsAgent` 会在 pipeline 构建时显式校验 `risk`、`paper_trader` 和 `signal` 配置，并把版本和快照写入 `pipeline_runs`、watchlist 和 signals payload。
 - CLI 必须配置 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
@@ -41,13 +41,13 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `DataQualityAgent` 在原始数据落库后、策略分析前运行；质量失败时保存 `data_quality_reports`、失败 artifact 和 failed pipeline run，然后阻断后续策略或模拟交易更新。交易日内检查近 30 个交易日行情缺口；非交易日运行只提示，不因缺失行情阻断。
 - `DataReliabilityAgent` 在 `daily-run` 和 dashboard 查询链路中读取已落库数据，生成 source 健康和近 30 个交易日行情缺口报告；交易日缺口为 failed，非交易日记录 skipped。
 - 交易日历由 DataCollector 从 provider 返回的交易日列表展开为连续日期行，写入结构化 `trading_calendar` 表；同一 `calendar_date/source` 使用 upsert。
-- `intraday-watch` 必须从 repository 恢复同日成功 `pre_market` 风控决策、开放持仓、最新现金和当日已有订单，采集相关标的 1 分钟 K 线，执行买入、盯市、退出评估、卖出、closed position 落库和盘中组合快照；重复运行同一交易日不重复成交。分钟线采集只写 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录具体分钟线源、请求/返回/缺失 symbol、period、timeout 和 retry 配置；分钟线源整体不可用时 failed run，单个 symbol 无分钟线时交给执行估价层生成 rejected `execution_events`。模拟成交由 `IntradayPriceEstimator` 选择首个有效分钟 K 线并叠加动态滑点；缺少分钟线、停牌、买入涨停或卖出跌停时只写 rejected `execution_events`，不写失败订单，也不允许日线 close 兜底。
+- `intraday-watch` 必须从 repository 恢复同日成功 `pre_market` 风控决策、开放持仓、最新现金和当日已有订单，采集相关标的 1 分钟 K 线，执行买入、盯市、退出评估、卖出、closed position 落库和盘中组合快照；重复运行同一交易日不重复成交。分钟线采集只写 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录具体分钟线源、请求/返回/缺失 symbol、period、timeout、retry 配置和逐 source/symbol 的 `source_attempts`；显式链路中的所有分钟线源都不可用时 failed run，至少一个源正常响应但单个 symbol 无分钟线时交给执行估价层生成 rejected `execution_events`。模拟成交由 `IntradayPriceEstimator` 选择首个有效分钟 K 线并叠加动态滑点；缺少分钟线、停牌、买入涨停或卖出跌停时只写 rejected `execution_events`，不写失败订单，也不允许日线 close 兜底。
 - `post-market-review` 不新增模拟订单，只恢复盘中订单和持仓，执行收盘盯市、持仓/组合快照、复盘，并生成独立 `strategy-experiment.md`，集中展示盘前 LLM 分析、风控拒绝原因、模拟订单、卖出原因和累计复盘指标。
 - `backtest` 使用 provider 交易日历确定回放日期，每个交易日跑 `pre_market + intraday_watch + post_market_review`；结果写入现有 payload 专表，并用 `run_mode=backtest`、`backtest_id` 与普通模拟账户状态隔离，订单只归属 `intraday_watch`。
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`，成功订单必须记录成交来源、价格时间点、估价方法、参考价和 `used_daily_fallback=False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `daily-run` 先刷新交易日历；非交易日只写 skipped 审计和可靠性报告，不进入策略分析或模拟交易更新；交易日按盘前、盘中、复盘顺序运行，失败时先落库可靠性报告和 failed `daily_run`。
-- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势和策略版本对比查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
+- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、分钟线源健康、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势和策略版本对比查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 模块边界发生变化时，同步更新本文件。

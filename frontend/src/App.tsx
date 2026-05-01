@@ -33,6 +33,7 @@ import type {
   DashboardDataQualityReport,
   DashboardDataReliabilityReport,
   DashboardExecutionEvent,
+  DashboardIntradaySourceHealth,
   DashboardLLMAnalysis,
   DashboardPaperOrder,
   DashboardPosition,
@@ -55,6 +56,7 @@ const statusLabels: Record<string, string> = {
   skipped: "跳过",
   rejected: "拒绝",
   filled: "成交",
+  empty: "空数据",
 };
 
 export default function App(): JSX.Element {
@@ -338,6 +340,10 @@ export default function App(): JSX.Element {
 
             <Section icon={AlertTriangle} title="成交失败">
               <ExecutionEventsTable events={day.execution_events} />
+            </Section>
+
+            <Section icon={Activity} title="分钟线源健康">
+              <IntradaySourceHealthTable items={day.intraday_source_health} />
             </Section>
 
             <Section icon={BriefcaseBusiness} title="当前持仓">
@@ -1013,6 +1019,46 @@ function ExecutionEventsTable({ events }: { events: DashboardExecutionEvent[] })
               </span>
             </td>
             <td className="failure-cell">{event.failure_reason ?? "-"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function IntradaySourceHealthTable({
+  items,
+}: {
+  items: DashboardIntradaySourceHealth[];
+}): JSX.Element {
+  if (items.length === 0) {
+    return <EmptyState text="暂无分钟线源健康记录" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>source</th>
+          <th>symbol</th>
+          <th>status</th>
+          <th>rows</th>
+          <th>retry</th>
+          <th>timeout</th>
+          <th>最后错误</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item) => (
+          <tr key={`${item.run_id}-${item.source}-${item.symbol}-${item.status}`}>
+            <td>{item.source}</td>
+            <td>{item.symbol}</td>
+            <td>
+              <StatusBadge status={item.status} />
+            </td>
+            <td>{item.returned_rows}</td>
+            <td>{item.retry_attempts ?? "-"}</td>
+            <td>{item.timeout_seconds ?? "-"}</td>
+            <td className={item.last_error ? "failure-cell" : ""}>{item.last_error ?? "-"}</td>
           </tr>
         ))}
       </tbody>

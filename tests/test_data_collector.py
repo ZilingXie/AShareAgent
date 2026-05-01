@@ -60,9 +60,38 @@ def test_data_collector_keeps_required_source_failure_snapshot() -> None:
 
 def test_data_collector_records_intraday_source_metadata_for_missing_symbols() -> None:
     class PartialIntradayProvider(MockProvider):
-        intraday_source = "akshare_em"
+        intraday_source = "akshare_em,akshare_sina"
         intraday_timeout_seconds = 2.0
         intraday_retry_attempts = 3
+        last_intraday_source_attempts = [
+            {
+                "source": "akshare_em",
+                "symbol": "510300",
+                "status": "failed",
+                "returned_rows": 0,
+                "retry_attempts": 3,
+                "timeout_seconds": 2.0,
+                "last_error": "RemoteDisconnected",
+            },
+            {
+                "source": "akshare_sina",
+                "symbol": "510300",
+                "status": "success",
+                "returned_rows": 3,
+                "retry_attempts": 3,
+                "timeout_seconds": 2.0,
+                "last_error": None,
+            },
+            {
+                "source": "akshare_sina",
+                "symbol": "600000",
+                "status": "empty",
+                "returned_rows": 0,
+                "retry_attempts": 3,
+                "timeout_seconds": 2.0,
+                "last_error": None,
+            },
+        ]
 
         def get_intraday_bars(
             self,
@@ -82,17 +111,46 @@ def test_data_collector_records_intraday_source_metadata_for_missing_symbols() -
     )
 
     assert collection.source_snapshot.status == "success"
-    assert collection.source_snapshot.metadata["intraday_source"] == "akshare_em"
+    assert collection.source_snapshot.metadata["intraday_source"] == "akshare_em,akshare_sina"
     assert collection.source_snapshot.metadata["requested_symbols"] == ["510300", "600000"]
     assert collection.source_snapshot.metadata["returned_symbols"] == ["510300"]
     assert collection.source_snapshot.metadata["missing_symbols"] == ["600000"]
     assert collection.source_snapshot.metadata["timeout_seconds"] == 2.0
     assert collection.source_snapshot.metadata["retry_attempts"] == 3
+    assert collection.source_snapshot.metadata["source_attempts"] == [
+        {
+            "source": "akshare_em",
+            "symbol": "510300",
+            "status": "failed",
+            "returned_rows": 0,
+            "retry_attempts": 3,
+            "timeout_seconds": 2.0,
+            "last_error": "RemoteDisconnected",
+        },
+        {
+            "source": "akshare_sina",
+            "symbol": "510300",
+            "status": "success",
+            "returned_rows": 3,
+            "retry_attempts": 3,
+            "timeout_seconds": 2.0,
+            "last_error": None,
+        },
+        {
+            "source": "akshare_sina",
+            "symbol": "600000",
+            "status": "empty",
+            "returned_rows": 0,
+            "retry_attempts": 3,
+            "timeout_seconds": 2.0,
+            "last_error": None,
+        },
+    ]
 
 
 def test_data_collector_records_intraday_source_failure_metadata() -> None:
     class BrokenIntradayProvider(MockProvider):
-        intraday_source = "akshare_em"
+        intraday_source = "akshare_em,akshare_sina"
         intraday_timeout_seconds = 2.0
         intraday_retry_attempts = 3
 
@@ -105,10 +163,30 @@ def test_data_collector_records_intraday_source_failure_metadata() -> None:
             raise DataProviderError(
                 "akshare_em 分钟线源不可用: symbol=510300 attempts=3 timeout=2.0",
                 metadata={
-                    "intraday_source": "akshare_em",
+                    "intraday_source": "akshare_em,akshare_sina",
                     "failed_symbol": "510300",
                     "retry_attempts": 3,
                     "timeout_seconds": 2.0,
+                    "source_attempts": [
+                        {
+                            "source": "akshare_em",
+                            "symbol": "510300",
+                            "status": "failed",
+                            "returned_rows": 0,
+                            "retry_attempts": 3,
+                            "timeout_seconds": 2.0,
+                            "last_error": "RemoteDisconnected",
+                        },
+                        {
+                            "source": "akshare_sina",
+                            "symbol": "510300",
+                            "status": "failed",
+                            "returned_rows": 0,
+                            "retry_attempts": 3,
+                            "timeout_seconds": 2.0,
+                            "last_error": "Sina disconnected",
+                        },
+                    ],
                 },
             )
 
@@ -118,8 +196,28 @@ def test_data_collector_records_intraday_source_failure_metadata() -> None:
     )
 
     assert collection.source_snapshot.status == "failed"
-    assert collection.source_snapshot.metadata["intraday_source"] == "akshare_em"
+    assert collection.source_snapshot.metadata["intraday_source"] == "akshare_em,akshare_sina"
     assert collection.source_snapshot.metadata["requested_symbols"] == ["510300", "600000"]
     assert collection.source_snapshot.metadata["failed_symbol"] == "510300"
     assert collection.source_snapshot.metadata["timeout_seconds"] == 2.0
     assert collection.source_snapshot.metadata["retry_attempts"] == 3
+    assert collection.source_snapshot.metadata["source_attempts"] == [
+        {
+            "source": "akshare_em",
+            "symbol": "510300",
+            "status": "failed",
+            "returned_rows": 0,
+            "retry_attempts": 3,
+            "timeout_seconds": 2.0,
+            "last_error": "RemoteDisconnected",
+        },
+        {
+            "source": "akshare_sina",
+            "symbol": "510300",
+            "status": "failed",
+            "returned_rows": 0,
+            "retry_attempts": 3,
+            "timeout_seconds": 2.0,
+            "last_error": "Sina disconnected",
+        },
+    ]

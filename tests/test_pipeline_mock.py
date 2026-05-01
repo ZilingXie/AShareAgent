@@ -108,6 +108,62 @@ class BrokenIntradayProvider(MockProvider):
         )
 
 
+class FallbackIntradayProvider(MockProvider):
+    intraday_source = "akshare_em,akshare_sina"
+    intraday_timeout_seconds = 2.0
+    intraday_retry_attempts = 2
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_intraday_source_attempts: list[dict[str, object]] = []
+
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]:
+        self.last_intraday_source_attempts = [
+            {
+                "source": "akshare_em",
+                "symbol": symbol,
+                "status": "failed",
+                "returned_rows": 0,
+                "retry_attempts": 2,
+                "timeout_seconds": 2.0,
+                "last_error": "RemoteDisconnected",
+            }
+            for symbol in symbols
+        ]
+        self.last_intraday_source_attempts.extend(
+            {
+                "source": "akshare_sina",
+                "symbol": symbol,
+                "status": "success",
+                "returned_rows": 3,
+                "retry_attempts": 2,
+                "timeout_seconds": 2.0,
+                "last_error": None,
+            }
+            for symbol in symbols
+        )
+        return [
+            IntradayBar(
+                symbol=symbol,
+                trade_date=trade_date,
+                timestamp=datetime(trade_date.year, trade_date.month, trade_date.day, 9, 31),
+                open=Decimal("3.54"),
+                high=Decimal("3.56"),
+                low=Decimal("3.53"),
+                close=Decimal("3.55"),
+                volume=100_000,
+                amount=Decimal("355000"),
+                source="akshare_sina",
+            )
+            for symbol in symbols
+        ]
+
+
 def _write_strategy_params(
     path: Path,
     *,
@@ -336,6 +392,35 @@ def test_intraday_watch_records_rejected_execution_event_without_minute_bars(
         == "无分钟线，无法成交"
     )
     assert repository.records_for("paper_orders") == []
+
+
+def test_intraday_watch_uses_explicit_intraday_source_chain_fallback(
+    tmp_path: Path,
+) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=FallbackIntradayProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+    intraday = pipeline.run_intraday_watch(trade_date)
+
+    assert intraday.success is True
+    orders = repository.records_for("paper_orders")
+    assert orders
+    assert orders[-1]["payload"]["execution_source"] == "akshare_sina"
+    intraday_snapshot = repository.records_for("raw_source_snapshots")[-1]["payload"]
+    assert intraday_snapshot["source"] == "intraday_bars"
+    assert intraday_snapshot["status"] == "success"
+    assert intraday_snapshot["metadata"]["intraday_source"] == "akshare_em,akshare_sina"
+    assert intraday_snapshot["metadata"]["source_attempts"][0]["source"] == "akshare_em"
+    assert intraday_snapshot["metadata"]["source_attempts"][0]["status"] == "failed"
+    assert intraday_snapshot["metadata"]["source_attempts"][-1]["source"] == "akshare_sina"
+    assert intraday_snapshot["metadata"]["source_attempts"][-1]["status"] == "success"
 
 
 def test_intraday_watch_fails_when_intraday_provider_fails(tmp_path: Path) -> None:

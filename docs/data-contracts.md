@@ -10,8 +10,8 @@
 - 默认测试不访问外网；真实数据源测试必须单独标记。
 - `ASHARE_PROVIDER=akshare` 只读取 `configs/universe.yml` 中 `enabled=true` 的固定池资产。
 - `AKShareProvider` 的日线行情标准化为统一 `MarketBar`：ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`，返回的英文字段会映射为 `date/open/high/low/close/volume/amount` 对应的 domain 字段。
-- `DataProvider.get_intraday_bars(trade_date, symbols, period="1")` 返回统一 `IntradayBar`，用于盘中模拟成交估价。当前真实分钟线源为 `ASHARE_INTRADAY_SOURCE=akshare_em`，由 `AKShareProvider` 直连 EastMoney `trends2/get`，只支持 1 分钟 K 线；timeout、重试次数和退避由 `ASHARE_INTRADAY_TIMEOUT_SECONDS`、`ASHARE_INTRADAY_RETRY_ATTEMPTS`、`ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS` 控制。
-- 分钟线源整体不可用必须抛 `DataProviderError`，错误 metadata 至少包含 `intraday_source`、`failed_symbol`、`retry_attempts`、`timeout_seconds` 和最后失败原因；不能静默返回空数据或切回 Mock。正常响应但单个 symbol 当日无分钟线时返回该 symbol 的空结果，由执行估价层生成 rejected execution event。
+- `DataProvider.get_intraday_bars(trade_date, symbols, period="1")` 返回统一 `IntradayBar`，用于盘中模拟成交估价。默认真实分钟线源为 `ASHARE_INTRADAY_SOURCE=akshare_em`；可显式配置 `akshare_sina` 或 `akshare_em,akshare_sina` source chain。`akshare_em` 直连 EastMoney `trends2/get`，`akshare_sina` 直连 Sina `CN_MarketDataService.getKLineData`，都只支持 1 分钟 K 线；timeout、重试次数和退避由 `ASHARE_INTRADAY_TIMEOUT_SECONDS`、`ASHARE_INTRADAY_RETRY_ATTEMPTS`、`ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS` 控制。
+- 分钟线源链路整体不可用必须抛 `DataProviderError`，错误 metadata 至少包含 `intraday_source`、`failed_symbol`、`retry_attempts`、`timeout_seconds`、最后失败原因和 `source_attempts`；不能静默返回空数据或切回 Mock。至少一个源正常响应但单个 symbol 当日无分钟线时返回该 symbol 的空结果，由执行估价层生成 rejected execution event。
 
 ## 审计字段原则
 
@@ -84,7 +84,7 @@ Alembic 迁移创建以下表分组：
 当前 repository 已将核心运行结果写入专表，payload 额外保存策略参数版本、完整参数快照、`run_mode` 和 `backtest_id`，不新增数据库列：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`trading_calendar`、`market_bars`、`announcements`、`news_items`、`policy_items`，再写入 `data_quality_reports`；质量通过或仅警告后继续写 `technical_indicators`、`pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
-- `intraday-watch` 从 repository 读取同日成功 `pre-market` 风控决策、开放持仓、最新现金和当日已有模拟订单；当日已有模拟订单只认同日成功 `intraday_watch` run 生成的 `paper_orders`。若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`。执行模拟买卖前会按获批买入 symbol 和当前 open position symbol 采集 1 分钟 K 线，只写 `raw_source_snapshots(source=intraday_bars)` 审计，不新增分钟线专表。snapshot metadata 必须记录 `intraday_source`、`requested_symbols`、`returned_symbols`、`missing_symbols`、`period`、`timeout_seconds` 和 `retry_attempts`；源失败时还要记录 `failed_symbol` 和最后失败原因。成功成交写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`pipeline_runs` 和 `artifacts`；同日重复运行不会重复生成买卖订单。
+- `intraday-watch` 从 repository 读取同日成功 `pre-market` 风控决策、开放持仓、最新现金和当日已有模拟订单；当日已有模拟订单只认同日成功 `intraday_watch` run 生成的 `paper_orders`。若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`。执行模拟买卖前会按获批买入 symbol 和当前 open position symbol 采集 1 分钟 K 线，只写 `raw_source_snapshots(source=intraday_bars)` 审计，不新增分钟线专表。snapshot metadata 必须记录 `intraday_source`、`requested_symbols`、`returned_symbols`、`missing_symbols`、`period`、`timeout_seconds`、`retry_attempts` 和 `source_attempts`；链路失败时还要记录 `failed_symbol` 和最后失败原因。成功成交写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`pipeline_runs` 和 `artifacts`；同日重复运行不会重复生成买卖订单。
 - 模拟成交契约：`IntradayPriceEstimator` 固定选择当日首个有效 1 分钟 K 线；有效 K 线必须有 timestamp、正数 OHLC、`volume > 0` 且 `amount > 0`。买入遇涨停、卖出遇跌停、缺少分钟线或无有效成交量时，不写 `paper_orders`，只在 `intraday_watch` artifact / pipeline payload 的 `execution_events` 中记录 `status=rejected`、失败原因、估价方法和 `used_daily_fallback=false`。成功 `PaperOrder` payload 必须包含 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price`、`used_daily_fallback=false` 和空的 `execution_failure_reason`；历史订单缺少这些字段时读取层按可选字段兼容。
 - `post-market-review` 不新增 `paper_orders`，只读取同日成功 `intraday_watch` run 生成的盘中订单和持仓，执行收盘盯市，再写入 `paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。盘后还会生成 `strategy-experiment.md`，并在 `post_market_review` artifact 与 pipeline run payload 中记录 `new_order_count=0`、`reviewed_order_count` 和 `experiment_report_path`；`reviewed_order_count` 不统计旧流程遗留的 `post_market_review` 订单。
 - 历史兼容规则：旧数据库中已经存在的 `post_market_review` 订单不删除、不迁移；dashboard “盘中模拟订单”、盘后 `reviewed_orders` 和复盘订单统计只读取可关联到同日成功 `intraday_watch` run 的订单。
@@ -150,6 +150,7 @@ Alembic 迁移创建以下表分组：
   - `max_drawdown`：按截至所选日 `portfolio_snapshots.total_value` 序列计算峰值到谷值最大跌幅，输出正数百分比小数。
 - `DashboardPaperOrder.reason` 使用 `PaperOrder.reason` 原文；卖出原因不做自动归类。`PaperOrder.is_real_trade`、`execution_source`、`execution_timestamp`、`execution_method`、`reference_price`、`used_daily_fallback` 和 `execution_failure_reason` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，`used_daily_fallback` 必须为 `False`，前端也会显式展示这些字段。
 - `DashboardExecutionEvent` 从最新成功 `intraday_watch` run payload 的 `execution_events` 读取，展示无法成交的 symbol、side、估价方法、失败原因、参考价和 `used_daily_fallback`。该 DTO 只读展示失败审计，不代表订单。
+- `DashboardIntradaySourceHealth` 从 `raw_source_snapshots(source=intraday_bars).metadata.source_attempts` 读取，展示每个 source/symbol 的状态、返回行数、retry、timeout 和最后错误；旧 snapshot 没有 `source_attempts` 时返回空列表。
 - 查询层遇到缺字段、字段类型错误、未知枚举或当前阶段语义内的 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底；复盘指标计算也遵守同一规则。
 
 ## 后续维护

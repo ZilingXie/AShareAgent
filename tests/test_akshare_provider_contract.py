@@ -225,6 +225,124 @@ def test_akshare_provider_uses_direct_eastmoney_intraday_with_configured_timeout
     assert calls[0][2]["secid"] == "1.510300"
 
 
+def test_akshare_provider_parses_sina_intraday_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, float, dict[str, str]]] = []
+
+    def fake_get(url: str, *, timeout: float, params: dict[str, str]) -> object:
+        calls.append((url, timeout, params))
+        return FakeTextResponse(
+            '/*<script>location.href="//sina.com";</script>*/'
+            '=([{"day":"2026-04-29 09:31:00","open":"4.18","high":"4.20",'
+            '"low":"4.18","close":"4.19","volume":"100","amount":"419"}]);'
+        )
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", fake_get)
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_sina",
+        intraday_timeout_seconds=4.0,
+        intraday_retry_attempts=1,
+    )
+
+    bars = provider.get_intraday_bars(date(2026, 4, 29), ["510300"])
+
+    assert len(bars) == 1
+    assert bars[0].source == "akshare_sina"
+    assert bars[0].timestamp.isoformat() == "2026-04-29T09:31:00"
+    assert str(bars[0].close) == "4.19"
+    assert calls[0][0] == "https://quotes.sina.cn/cn/api/jsonp_v2.php/=/CN_MarketDataService.getKLineData"
+    assert calls[0][1] == 4.0
+    assert calls[0][2]["symbol"] == "sh510300"
+
+
+def test_akshare_provider_uses_explicit_chain_after_eastmoney_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_urls: list[str] = []
+
+    def fake_get(url: str, *, timeout: float, params: dict[str, str]) -> object:
+        called_urls.append(url)
+        if "push2his.eastmoney.com" in url:
+            raise RuntimeError("RemoteDisconnected")
+        return FakeTextResponse(
+            '=([{"day":"2026-04-29 09:31:00","open":"4.18","high":"4.20",'
+            '"low":"4.18","close":"4.19","volume":"100","amount":"419"}]);'
+        )
+
+    def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", fake_get)
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.sleep", no_sleep)
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_em,akshare_sina",
+        intraday_timeout_seconds=2.0,
+        intraday_retry_attempts=2,
+        intraday_retry_backoff_seconds=0,
+    )
+
+    bars = provider.get_intraday_bars(date(2026, 4, 29), ["510300"])
+
+    assert len(bars) == 1
+    assert bars[0].source == "akshare_sina"
+    assert len(called_urls) == 3
+    assert "push2his.eastmoney.com" in called_urls[0]
+    assert "quotes.sina.cn" in called_urls[-1]
+    assert provider.last_intraday_source_attempts == [
+        {
+            "source": "akshare_em",
+            "symbol": "510300",
+            "status": "failed",
+            "returned_rows": 0,
+            "retry_attempts": 2,
+            "timeout_seconds": 2.0,
+            "last_error": "RemoteDisconnected",
+        },
+        {
+            "source": "akshare_sina",
+            "symbol": "510300",
+            "status": "success",
+            "returned_rows": 1,
+            "retry_attempts": 2,
+            "timeout_seconds": 2.0,
+            "last_error": None,
+        },
+    ]
+
+
+def test_akshare_provider_single_source_does_not_silently_fallback_to_sina(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called_urls: list[str] = []
+
+    def fake_get(url: str, *, timeout: float, params: dict[str, str]) -> object:
+        called_urls.append(url)
+        raise RuntimeError("RemoteDisconnected")
+
+    def no_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", fake_get)
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.sleep", no_sleep)
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_em",
+        intraday_timeout_seconds=2.0,
+        intraday_retry_attempts=2,
+        intraday_retry_backoff_seconds=0,
+    )
+
+    with pytest.raises(DataProviderError) as caught:
+        provider.get_intraday_bars(date(2026, 4, 29), ["510300"])
+
+    assert len(called_urls) == 2
+    assert all("push2his.eastmoney.com" in url for url in called_urls)
+    assert "akshare_sina" not in str(caught.value)
+
+
 def test_akshare_provider_retries_intraday_source_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -274,11 +392,33 @@ def test_akshare_provider_returns_empty_intraday_when_symbol_has_no_minutes(
     assert provider.get_intraday_bars(date(2026, 4, 29), ["510300"]) == []
 
 
+def test_akshare_provider_returns_empty_when_chain_sources_have_no_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_get(url: str, *, timeout: float, params: dict[str, str]) -> object:
+        if "push2his.eastmoney.com" in url:
+            return FakeResponse({"data": {"trends": []}})
+        return FakeTextResponse("=([]);")
+
+    monkeypatch.setattr("ashare_agent.providers.akshare_provider.requests.get", fake_get)
+    provider = AKShareProvider(
+        [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
+        intraday_source="akshare_em,akshare_sina",
+        intraday_retry_attempts=1,
+    )
+
+    assert provider.get_intraday_bars(date(2026, 4, 29), ["510300"]) == []
+    assert [attempt["status"] for attempt in provider.last_intraday_source_attempts] == [
+        "empty",
+        "empty",
+    ]
+
+
 def test_akshare_provider_rejects_unknown_intraday_source() -> None:
     with pytest.raises(ValueError) as caught:
         AKShareProvider(
             [Asset(symbol="510300", name="沪深300ETF", asset_type="ETF")],
-            intraday_source="unknown",
+            intraday_source="akshare_em,unknown",
         )
 
     assert "未知 ASHARE_INTRADAY_SOURCE" in str(caught.value)
@@ -293,6 +433,14 @@ class FakeResponse:
 
     def json(self) -> dict[str, object]:
         return self._payload
+
+
+class FakeTextResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def raise_for_status(self) -> None:
+        return None
 
 
 def _patch_eastmoney_intraday(

@@ -184,10 +184,13 @@ class DataCollector:
         }
         timeout = getattr(self._provider, "intraday_timeout_seconds", None)
         retry_attempts = getattr(self._provider, "intraday_retry_attempts", None)
+        source_attempts = getattr(self._provider, "last_intraday_source_attempts", None)
         if timeout is not None:
             metadata["timeout_seconds"] = timeout
         if retry_attempts is not None:
             metadata["retry_attempts"] = retry_attempts
+        if source_attempts is not None:
+            metadata["source_attempts"] = list(source_attempts)
         return metadata
 
     def collect(self, trade_date: date, lookback_days: int = 30) -> MarketDataset:

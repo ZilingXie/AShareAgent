@@ -180,6 +180,19 @@ class DashboardSourceSnapshot:
 
 
 @dataclass(frozen=True)
+class DashboardIntradaySourceHealth:
+    run_id: str
+    stage: str | None
+    source: str
+    symbol: str
+    status: str
+    returned_rows: int
+    retry_attempts: int | None
+    timeout_seconds: float | None
+    last_error: str | None
+
+
+@dataclass(frozen=True)
 class DashboardDataQualityIssue:
     severity: str
     check_name: str
@@ -363,6 +376,10 @@ def _empty_source_snapshots() -> list[DashboardSourceSnapshot]:
     return []
 
 
+def _empty_intraday_source_health() -> list[DashboardIntradaySourceHealth]:
+    return []
+
+
 def _empty_data_quality_reports() -> list[DashboardDataQualityReport]:
     return []
 
@@ -388,6 +405,9 @@ class DashboardDaySummary:
     review_report: DashboardReviewReport | None = None
     source_snapshots: list[DashboardSourceSnapshot] = field(
         default_factory=_empty_source_snapshots
+    )
+    intraday_source_health: list[DashboardIntradaySourceHealth] = field(
+        default_factory=_empty_intraday_source_health
     )
     trading_calendar: DashboardTradingCalendarDay | None = None
     data_quality_reports: list[DashboardDataQualityReport] = field(
@@ -458,6 +478,7 @@ class DashboardQueryAgent:
             portfolio_snapshot=self.latest_portfolio_snapshot(trade_date),
             review_report=self.latest_review_report(trade_date),
             source_snapshots=self.source_snapshots(trade_date, run_stage_by_id),
+            intraday_source_health=self.intraday_source_health(trade_date, run_stage_by_id),
             trading_calendar=self.trading_calendar_day(trade_date),
             data_quality_reports=self.data_quality_reports(trade_date),
             data_reliability_reports=self.data_reliability_reports(trade_date),
@@ -668,6 +689,60 @@ class DashboardQueryAgent:
             for row in self.repository.payload_rows("raw_source_snapshots", trade_date=trade_date)
             if _is_normal_row(row, "raw_source_snapshots")
         ]
+
+    def intraday_source_health(
+        self,
+        trade_date: date,
+        run_stage_by_id: Mapping[str, str] | None = None,
+    ) -> list[DashboardIntradaySourceHealth]:
+        stages = run_stage_by_id or {
+            run.run_id: run.stage for run in self._pipeline_runs_for_day(trade_date)
+        }
+        items: list[DashboardIntradaySourceHealth] = []
+        for row in self.repository.payload_rows("raw_source_snapshots", trade_date=trade_date):
+            if not _is_normal_row(row, "raw_source_snapshots"):
+                continue
+            payload = _payload(row, "raw_source_snapshots")
+            if payload.get("source") != "intraday_bars":
+                continue
+            metadata = _required_mapping(payload, "raw_source_snapshots", "metadata")
+            raw_attempts = metadata.get("source_attempts", [])
+            if raw_attempts is None:
+                continue
+            if not isinstance(raw_attempts, list):
+                raise ValueError("raw_source_snapshots.metadata.source_attempts 必须是 list")
+            run_id = _row_run_id(row, "raw_source_snapshots")
+            for raw_attempt in cast(list[object], raw_attempts):
+                if not isinstance(raw_attempt, Mapping):
+                    raise ValueError(
+                        "raw_source_snapshots.metadata.source_attempts item 必须是 object"
+                    )
+                attempt = cast(Mapping[str, object], raw_attempt)
+                status = _required_str(attempt, "source_attempts", "status")
+                if status not in {"success", "failed", "empty"}:
+                    raise ValueError(f"source_attempts 字段 status 未知: {status}")
+                items.append(
+                    DashboardIntradaySourceHealth(
+                        run_id=run_id,
+                        stage=stages.get(run_id),
+                        source=_required_str(attempt, "source_attempts", "source"),
+                        symbol=_required_str(attempt, "source_attempts", "symbol"),
+                        status=status,
+                        returned_rows=_required_int(attempt, "source_attempts", "returned_rows"),
+                        retry_attempts=_optional_int(
+                            attempt.get("retry_attempts"),
+                            "source_attempts",
+                            "retry_attempts",
+                        ),
+                        timeout_seconds=_optional_float(
+                            attempt.get("timeout_seconds"),
+                            "source_attempts",
+                            "timeout_seconds",
+                        ),
+                        last_error=_optional_str(attempt.get("last_error")),
+                    )
+                )
+        return items
 
     def data_quality_reports(self, trade_date: date) -> list[DashboardDataQualityReport]:
         return [
@@ -1523,6 +1598,18 @@ def _optional_decimal(value: object, table_name: str) -> str | None:
     if value is None:
         return None
     return _decimal_text(_decimal_value(value, table_name, "decimal"))
+
+
+def _optional_int(value: object, table_name: str, field_name: str) -> int | None:
+    if value is None:
+        return None
+    return _int_value(value, table_name, field_name)
+
+
+def _optional_float(value: object, table_name: str, field_name: str) -> float | None:
+    if value is None:
+        return None
+    return float(_decimal_value(value, table_name, field_name))
 
 
 def _date_value(value: object, table_name: str, field_name: str) -> date:

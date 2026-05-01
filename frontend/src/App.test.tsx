@@ -175,6 +175,30 @@ const dayFixture: DashboardDay = {
       collected_at: "2026-04-29T07:00:00+00:00",
     },
   ],
+  intraday_source_health: [
+    {
+      run_id: "run-intraday",
+      stage: "intraday_watch",
+      source: "akshare_em",
+      symbol: "510300",
+      status: "failed",
+      returned_rows: 0,
+      retry_attempts: 2,
+      timeout_seconds: 2,
+      last_error: "RemoteDisconnected",
+    },
+    {
+      run_id: "run-intraday",
+      stage: "intraday_watch",
+      source: "akshare_sina",
+      symbol: "510300",
+      status: "success",
+      returned_rows: 3,
+      retry_attempts: 2,
+      timeout_seconds: 2,
+      last_error: null,
+    },
+  ],
   trading_calendar: {
     trade_date: "2026-04-29",
     is_trade_date: true,
@@ -362,6 +386,10 @@ describe("dashboard", () => {
     expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
     expect(screen.getByText("触发止损")).toBeInTheDocument();
     expect(screen.getByText("成交失败")).toBeInTheDocument();
+    expect(screen.getByText("分钟线源健康")).toBeInTheDocument();
+    expect(screen.getByText("akshare_em")).toBeInTheDocument();
+    expect(screen.getByText("akshare_sina")).toBeInTheDocument();
+    expect(screen.getByText("RemoteDisconnected")).toBeInTheDocument();
     expect(screen.getAllByText("mock_intraday").length).toBeGreaterThan(0);
     expect(screen.getAllByText("first_valid_1m_bar").length).toBeGreaterThan(0);
     expect(screen.getByText("无分钟线，无法成交")).toBeInTheDocument();
@@ -435,6 +463,7 @@ describe("dashboard", () => {
       execution_events: [],
       positions: [],
       source_snapshots: [],
+      intraday_source_health: [],
       trading_calendar: null,
       data_quality_reports: [],
       data_reliability_reports: [],
@@ -447,6 +476,7 @@ describe("dashboard", () => {
     await waitFor(() => expect(screen.getByText("暂无观察名单")).toBeInTheDocument());
     expect(screen.getByText("暂无盘中模拟订单")).toBeInTheDocument();
     expect(screen.getByText("暂无成交失败")).toBeInTheDocument();
+    expect(screen.getByText("暂无分钟线源健康记录")).toBeInTheDocument();
     expect(screen.getByText("暂无持仓")).toBeInTheDocument();
     expect(screen.getByText("暂无 source snapshot")).toBeInTheDocument();
     expect(screen.getByText("暂无数据质量报告")).toBeInTheDocument();

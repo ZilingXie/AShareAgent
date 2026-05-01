@@ -43,6 +43,8 @@ markers = [
   "external: tests that require network or live third-party services",
   "external_daily: live calendar and daily market-bar data source smoke tests",
   "external_intraday: live intraday minute-bar data source smoke tests",
+  "external_intraday_akshare_em: live EastMoney intraday minute-bar smoke tests",
+  "external_intraday_akshare_sina: live Sina intraday minute-bar smoke tests",
 ]
 
 [tool.ruff]

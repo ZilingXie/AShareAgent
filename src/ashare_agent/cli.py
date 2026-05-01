@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import Annotated
 
 import typer
 
@@ -16,6 +17,10 @@ from ashare_agent.providers.akshare_provider import AKShareProvider
 from ashare_agent.providers.base import DataProvider, DataProviderError
 from ashare_agent.providers.mock import MockProvider
 from ashare_agent.repository import PostgresRepository
+from ashare_agent.strategy_evaluation import (
+    StrategyEvaluationRunner,
+    load_strategy_evaluation_config,
+)
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -25,6 +30,12 @@ def _parse_trade_date(value: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise typer.BadParameter("日期格式必须是 YYYY-MM-DD") from exc
+
+
+def _parse_optional_trade_date(value: str | None) -> date | None:
+    if value is None:
+        return None
+    return _parse_trade_date(value)
 
 
 def _build_provider(settings: Settings) -> tuple[DataProvider, set[str]]:
@@ -83,6 +94,17 @@ def _load_strategy_params(settings_strategy_config: Path) -> StrategyParams:
 def _default_backtest_id(provider_name: str, start_date: date, end_date: date) -> str:
     timestamp = now_utc().strftime("%Y%m%d%H%M%S")
     return f"{provider_name.lower()}-{start_date.isoformat()}-{end_date.isoformat()}-{timestamp}"
+
+
+def _require_sina_fallback_for_strategy_evaluation(settings: Settings) -> None:
+    if settings.provider.lower() != "akshare":
+        return
+    sources = {item.strip() for item in settings.intraday_source.split(",") if item.strip()}
+    if "akshare_sina" not in sources:
+        raise typer.BadParameter(
+            "strategy-evaluate 使用 akshare 时 "
+            "ASHARE_INTRADAY_SOURCE 必须包含 akshare_sina"
+        )
 
 
 @app.command()
@@ -166,4 +188,44 @@ def backtest(
         f"成功 {result.payload['succeeded_days']}/"
         f"{result.payload['attempted_days']}, "
         f"失败 {result.payload['failed_days']}"
+    )
+
+
+@app.command()
+def strategy_evaluate(
+    config: Annotated[Path, typer.Option(..., "--config")],
+    evaluation_id: Annotated[str | None, typer.Option("--evaluation-id")] = None,
+    start_date: Annotated[str | None, typer.Option("--start-date")] = None,
+    end_date: Annotated[str | None, typer.Option("--end-date")] = None,
+) -> None:
+    settings = load_settings()
+    if not settings.database_url:
+        raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
+    _require_sina_fallback_for_strategy_evaluation(settings)
+    try:
+        strategy_config = load_strategy_evaluation_config(config)
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(f"无法加载策略评估配置: {exc}") from exc
+    provider, required_data_sources = _build_provider(settings)
+    runner = StrategyEvaluationRunner(
+        provider=provider,
+        llm_client=MockLLMClient(),
+        report_root=Path(settings.report_root),
+        repository=PostgresRepository(settings.database_url),
+        strategy_config=strategy_config,
+        provider_name=settings.provider.lower(),
+        required_data_sources=required_data_sources,
+    )
+    try:
+        result = runner.run(
+            evaluation_id=evaluation_id,
+            start_date=_parse_optional_trade_date(start_date),
+            end_date=_parse_optional_trade_date(end_date),
+        )
+    except (DataProviderError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "策略评估完成: "
+        f"{result.payload['evaluation_id']}, "
+        f"报告 {result.payload['report_path']}"
     )

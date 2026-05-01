@@ -105,59 +105,61 @@ class StrategyParamsAgent:
         raw_data = cast(object, safe_load(self.config_path.read_text(encoding="utf-8")))
         if not isinstance(raw_data, dict):
             raise ValueError("策略参数配置必须是 YAML object")
-        raw = cast(dict[str, object], raw_data)
+        return load_strategy_params_from_mapping(cast(dict[str, object], raw_data))
 
-        version = _required_str(raw, "version")
-        risk = _required_mapping(raw, "risk")
-        paper_trader = _required_mapping(raw, "paper_trader")
-        signal = _required_mapping(raw, "signal")
-        signal_weights = _required_mapping(signal, "signal.weights")
 
-        min_holding_trade_days = _required_int(risk, "risk.min_holding_trade_days", minimum=0)
-        max_holding_trade_days = _required_int(risk, "risk.max_holding_trade_days", minimum=0)
-        if max_holding_trade_days < min_holding_trade_days:
-            raise ValueError(
-                "策略参数配置非法: risk.max_holding_trade_days "
-                "不能小于 risk.min_holding_trade_days"
-            )
+def load_strategy_params_from_mapping(raw: Mapping[str, object]) -> StrategyParams:
+    version = _required_str(raw, "version")
+    risk = _required_mapping(raw, "risk")
+    paper_trader = _required_mapping(raw, "paper_trader")
+    signal = _required_mapping(raw, "signal")
+    signal_weights = _required_mapping(signal, "signal.weights")
 
-        return StrategyParams(
-            version=version,
-            risk=RiskParams(
-                max_positions=_required_int(risk, "risk.max_positions", minimum=1),
-                target_position_pct=_required_pct(risk, "risk.target_position_pct"),
-                min_cash=_required_decimal(risk, "risk.min_cash", minimum=Decimal("0")),
-                max_daily_loss_pct=_required_pct(risk, "risk.max_daily_loss_pct"),
-                stop_loss_pct=_required_pct(risk, "risk.stop_loss_pct"),
-                price_limit_pct=_required_pct(risk, "risk.price_limit_pct"),
-                min_holding_trade_days=min_holding_trade_days,
-                max_holding_trade_days=max_holding_trade_days,
-                blacklist=_required_str_set(risk, "risk.blacklist"),
-            ),
-            paper_trader=PaperTraderParams(
-                initial_cash=_required_decimal(
-                    paper_trader,
-                    "paper_trader.initial_cash",
-                    minimum=Decimal("0"),
-                ),
-                position_size_pct=_required_pct(paper_trader, "paper_trader.position_size_pct"),
-                slippage_pct=_required_pct(paper_trader, "paper_trader.slippage_pct"),
-            ),
-            signal=SignalParams(
-                min_score=_required_ratio(signal, "signal.min_score"),
-                max_daily_signals=_required_int(
-                    signal,
-                    "signal.max_daily_signals",
-                    minimum=1,
-                ),
-                weights=SignalWeights(
-                    technical=_required_ratio(signal_weights, "signal.weights.technical"),
-                    market=_required_ratio(signal_weights, "signal.weights.market"),
-                    event=_required_ratio(signal_weights, "signal.weights.event"),
-                    risk_penalty=_required_ratio(signal_weights, "signal.weights.risk_penalty"),
-                ),
-            ),
+    min_holding_trade_days = _required_int(risk, "risk.min_holding_trade_days", minimum=0)
+    max_holding_trade_days = _required_int(risk, "risk.max_holding_trade_days", minimum=0)
+    if max_holding_trade_days < min_holding_trade_days:
+        raise ValueError(
+            "策略参数配置非法: risk.max_holding_trade_days "
+            "不能小于 risk.min_holding_trade_days"
         )
+
+    return StrategyParams(
+        version=version,
+        risk=RiskParams(
+            max_positions=_required_int(risk, "risk.max_positions", minimum=1),
+            target_position_pct=_required_pct(risk, "risk.target_position_pct"),
+            min_cash=_required_decimal(risk, "risk.min_cash", minimum=Decimal("0")),
+            max_daily_loss_pct=_required_pct(risk, "risk.max_daily_loss_pct"),
+            stop_loss_pct=_required_pct(risk, "risk.stop_loss_pct"),
+            price_limit_pct=_required_pct(risk, "risk.price_limit_pct"),
+            min_holding_trade_days=min_holding_trade_days,
+            max_holding_trade_days=max_holding_trade_days,
+            blacklist=_required_str_set(risk, "risk.blacklist"),
+        ),
+        paper_trader=PaperTraderParams(
+            initial_cash=_required_decimal(
+                paper_trader,
+                "paper_trader.initial_cash",
+                minimum=Decimal("0"),
+            ),
+            position_size_pct=_required_pct(paper_trader, "paper_trader.position_size_pct"),
+            slippage_pct=_required_pct(paper_trader, "paper_trader.slippage_pct"),
+        ),
+        signal=SignalParams(
+            min_score=_required_ratio(signal, "signal.min_score"),
+            max_daily_signals=_required_int(
+                signal,
+                "signal.max_daily_signals",
+                minimum=1,
+            ),
+            weights=SignalWeights(
+                technical=_required_ratio(signal_weights, "signal.weights.technical"),
+                market=_required_ratio(signal_weights, "signal.weights.market"),
+                event=_required_ratio(signal_weights, "signal.weights.event"),
+                risk_penalty=_required_ratio(signal_weights, "signal.weights.risk_penalty"),
+            ),
+        ),
+    )
 
 
 def _required(raw: Mapping[str, object], field_name: str) -> object:

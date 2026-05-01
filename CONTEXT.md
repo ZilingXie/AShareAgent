@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-真实三阶段日常运行已重新跑通，`ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 生效；当前完成 dashboard 策略版本对比 duplicate key warning 清理，准备进入策略评估。
+正在实现连续多日真实数据回放和策略参数评估入口：新增 `strategy-evaluate`，基于显式 variants 配置批量运行 backtest，聚合信号、风控、成交失败、收益和回撤指标。
 
 ## 上次停在哪
 
@@ -59,6 +59,8 @@
 - 最新 `raw_source_snapshots(source=intraday_bars)` 为 success，metadata 显示 `intraday_source=akshare_em,akshare_sina`；`akshare_em` 对 510300 仍因 EastMoney/代理连接失败，随后 `akshare_sina` 成功返回 240 条 1 分钟 K 线。
 - dashboard smoke 已确认页面可见“分钟线源健康”、`akshare_em`、`akshare_sina`、盘中模拟订单、成交失败和收盘复盘区块。
 - 本轮已清理 dashboard 策略版本对比 duplicate key warning：backtest 列表和策略对比按 `backtest_id` 保序去重，只读展示层保留最新 summary，不删除历史回放数据。
+- 本轮新增 `StrategyEvaluationRunner`、`CachingDataProvider` 和 `ashare strategy-evaluate`，读取 `configs/strategy_evaluation.yml` 后按 variant 生成独立 `backtest_id`，复用真实源缓存并输出 `reports/<evaluation_id>/strategy-evaluation.md`。
+- 策略评估聚合结果复用现有 `pipeline_runs(stage=strategy_evaluation)` 和 `artifacts(artifact_type=strategy_evaluation)`，不新增数据库迁移；单个 variant 明细继续复用 backtest 专表和 `backtest_id` 隔离。
 
 ## 近期关键决定和原因
 
@@ -81,6 +83,8 @@
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
 - backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
+- strategy-evaluate 同样强制使用 mock LLM，不修改 `configs/strategy_params.yml`；当 `ASHARE_PROVIDER=akshare` 时要求 `ASHARE_INTRADAY_SOURCE` 包含 `akshare_sina`，确保真实分钟线 fallback 链路被纳入评估。
+- 策略评估第一版只输出历史模拟指标和人工复核建议，不新增 dashboard 面板，不做自动参数搜索，不接真实交易。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
 - `daily-run` 遇到非交易日默认写 skipped 审计和可靠性报告，不进入策略分析，也不更新模拟订单或持仓。
@@ -98,4 +102,4 @@
 
 ## 下一步
 
-- 下一步进入策略评估：基于已跑通的真实三阶段和现有 backtest/strategy comparison，开始评估策略参数、信号质量、拒绝率、回撤和收益表现。
+- 下一步验证 `strategy-evaluate` 全量测试、静态检查和前端回归；通过后合并回 `main`。

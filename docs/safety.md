@@ -1,6 +1,6 @@
 # AShareAgent 安全边界
 
-当前状态：已落地 Mock pipeline、真实数据入口、分钟线模拟成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run、完整 PaperTrader 模拟持仓生命周期、策略参数版本审计、多日 backtest 回放和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
+当前状态：已落地 Mock pipeline、真实数据入口、分钟线模拟成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run、完整 PaperTrader 模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
 
 ## 交易边界
 
@@ -15,6 +15,7 @@
 - `PaperTrader` 只允许生成模拟订单；卖出同样只写入 `paper_orders` 和 `paper_positions`，不接任何真实交易通道。
 - 当前默认退出规则由 `configs/strategy_params.yml` 驱动：T+1、止损 5%、趋势走弱、最多持有 10 个交易日；止损可在 T+1 后突破最少持有 2 个交易日限制。
 - `BacktestRunner` 只运行 `PaperTrader` 模拟交易闭环，使用 `backtest_id` 隔离状态，不提供真实交易或模拟交易手动操作入口。
+- `StrategyEvaluationRunner` 只批量运行 backtest 和聚合审计指标；评估报告只能给出“人工复核后可考虑”的参数建议，不允许自动修改 `configs/strategy_params.yml`，也不允许触发真实交易。
 - `intraday-watch` 是唯一允许新增模拟订单的日内阶段，且必须依赖同日成功 `pre-market` 风控决策；缺失决策时必须显式失败并写 failed run。
 - 盘中模拟成交必须使用分钟线估价；不允许用日线 close 兜底成交。缺少分钟线、停牌、买入涨停或卖出跌停时不写失败订单，只写 rejected execution event。
 - `post-market-review` 不允许新增模拟订单，只能读取盘中订单，生成收盘持仓/组合快照、复盘和审计报告。
@@ -35,6 +36,7 @@
 - 必需源空数据、交易日缺失当日行情、OHLC 异常、成交量/成交额为负或相邻收盘价异常跳变时，必须阻断后续策略分析或模拟交易更新。
 - 交易日内近 30 个交易日行情缺口必须进入质量门禁和运行可靠性报告；不能用旧行情、Mock 或空记录补齐。
 - 非交易日 `daily-run` 只记录 skipped 审计、结构化交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；非交易日不能伪造成交易日。
+- `strategy-evaluate` 使用真实 AKShare 时必须显式配置包含 `akshare_sina` 的分钟线 source chain，避免遗漏 Sina fallback 验收；真实源失败日只计入失败率并继续评估，不能切回 Mock、补数据或吞错。
 
 ## Mock 边界
 
@@ -45,7 +47,7 @@
 ## LLM 边界
 
 - LLM 只做盘前结构化分析辅助。
-- backtest 强制使用 mock LLM，避免多日回放消耗真实 API；LLM 不参与 SignalEngine 或 RiskManager 决策。
+- backtest 和 strategy-evaluate 强制使用 mock LLM，避免多日回放消耗真实 API；LLM 不参与 SignalEngine 或 RiskManager 决策。
 - 买入信号只能由 `SignalEngine` 规则生成，并必须经过 `RiskManager`。
 - `.env` 中的 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 不进入 Git。
 - LLM 输出不得写收益承诺、荐股结论或真实交易建议。

@@ -1,0 +1,22 @@
+base_config: configs/strategy_params.yml
+variants:
+  - id: baseline
+    version: strategy-params-v1-baseline
+    label: 当前参数
+    overrides: {}
+  - id: signal-more-technical
+    version: strategy-params-v1-tech050
+    label: 提高技术权重
+    overrides:
+      signal:
+        weights:
+          technical: "0.50"
+          market: "0.20"
+          event: "0.20"
+          risk_penalty: "0.10"
+  - id: risk-looser-stop
+    version: strategy-params-v1-stop070
+    label: 放宽止损
+    overrides:
+      risk:
+        stop_loss_pct: "0.07"

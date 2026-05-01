@@ -53,7 +53,7 @@
 
 `signal` 参数控制 SignalEngine 的 `min_score`、`max_daily_signals` 和 `weights.technical/market/event/risk_penalty`。每条 `watchlist_candidates` 和 `signals` payload 也必须保留完整策略版本和快照；历史数据缺失这些字段时不参与策略版本对比。
 
-`configs/strategy_evaluation.yml` 是策略评估配置，必须包含 `base_config` 和非空 `variants`。每个 variant 必须有唯一 `id` 和 `version`，`label` 用于报告展示，`overrides` 只能覆盖基础策略配置中已存在的字段；未知字段、重复 id/version、非法百分比或非法持有期都必须显式失败。variant 的 `version` 会写入合并后的策略参数并进入对应 backtest 的策略快照。
+`configs/strategy_evaluation.yml` 是策略评估配置，必须包含 `base_config` 和非空 `variants`，可配置 `default_window_trade_days`，合法范围为 20 到 60，缺省为 60。每个 variant 必须有唯一 `id` 和 `version`，`label` 用于报告展示，`overrides` 只能覆盖基础策略配置中已存在的字段；未知字段、重复 id/version、非法百分比、非法持有期或非法窗口都必须显式失败。variant 的 `version` 会写入合并后的策略参数并进入对应 backtest 的策略快照。
 
 ## PostgreSQL schema
 
@@ -93,7 +93,7 @@ Alembic 迁移创建以下表分组：
 - `daily-run` 先采集并 upsert 结构化 `trading_calendar`；非交易日写 `pipeline_runs(stage=daily_run,status=skipped)` 和 `data_reliability_reports` 后退出；交易日依次运行盘前、盘中和复盘，并在成功或失败后写 `data_reliability_reports` 和 `daily_run` 审计。
 - `paper_positions` 中的 payload 可保存 `open` 和 `closed` 状态；repository 恢复开放持仓时只返回每个 symbol 的最新 `open` payload。
 - `backtest` 不新增表；每个交易日按 `pre_market -> intraday_watch -> post_market_review` 执行，每条回放 payload 使用 `run_mode=backtest` 和同一个 `backtest_id`。repository 恢复持仓、订单、现金和最新 snapshot 时按运行模式隔离，普通 `run_mode=normal` 不读取回放状态。
-- `strategy-evaluate` 不新增表或列；每个 variant 复用 `backtest` 写入的专表，并使用独立 `backtest_id=<evaluation_id>-<variant_id>` 隔离。聚合结果写一条 `pipeline_runs(stage=strategy_evaluation, run_mode=backtest, backtest_id=<evaluation_id>)` 和一条 `artifacts(artifact_type=strategy_evaluation)`，payload 至少包含 `evaluation_id`、provider、日期范围、variant 列表、每个 variant 的 backtest_id、尝试/成功/失败天数、source/data quality failure rate、信号数、风控通过/拒绝、拒绝原因分布、订单数、成交失败事件、closed/open position、信号命中率、持仓收益、总收益率、最大回撤、调整建议和 Markdown 报告路径。
+- `strategy-evaluate` 不新增表或列；每个 variant 复用 `backtest` 写入的专表，并使用独立 `backtest_id=<evaluation_id>-<variant_id>` 隔离。聚合结果写一条 `pipeline_runs(stage=strategy_evaluation, run_mode=backtest, backtest_id=<evaluation_id>)` 和一条 `artifacts(artifact_type=strategy_evaluation)`，payload 至少包含 `evaluation_id`、provider、日期范围、variant 列表、每个 variant 的 backtest_id、尝试/成功/失败天数、source/data quality failure rate、信号数、日均信号数、无信号天数、风控通过/拒绝、拒绝原因分布、订单数、成交失败事件、买入后 2/5/10 个交易日表现、卖出触发原因、市场环境覆盖、closed/open position、信号命中率、持仓收益、总收益率、最大回撤、variant spread、调整建议和 Markdown 报告路径。
 
 策略评估中的“信号命中率”只统计已经 closed 的模拟持仓：`signal_hit_count` 为 closed position 盈利数量，`signal_hit_rate = signal_hit_count / closed_trade_count`；未关闭持仓不进分母，单独计入 `open_position_count` 和未实现收益。成交失败事件来自 `intraday_watch.pipeline_runs.payload.execution_events` 中的 rejected 事件，不把未写订单的失败静默忽略。
 

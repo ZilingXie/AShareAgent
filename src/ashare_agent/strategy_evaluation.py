@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
 from yaml import safe_load  # type: ignore[import-untyped]
 
+from ashare_agent.agents.market_regime_analyzer import MarketRegimeAnalyzer
 from ashare_agent.agents.strategy_params_agent import (
     StrategyParams,
     load_strategy_params_from_mapping,
@@ -49,6 +50,7 @@ class StrategyEvaluationVariant:
 class StrategyEvaluationConfig:
     base_config: Path
     variants: list[StrategyEvaluationVariant]
+    default_window_trade_days: int = 60
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,7 @@ class StrategyEvaluationRunner:
         self.provider_name = provider_name
         self.required_data_sources = required_data_sources
         self.today = today or date.today()
+        self._scoped_rows_cache: dict[tuple[str, str], list[PayloadRecord]] = {}
 
     def run(
         self,
@@ -243,12 +246,14 @@ class StrategyEvaluationRunner:
                 )
 
         recommendation = self._recommendation(variant_payloads)
+        variant_spread = self._variant_spread(variant_payloads)
         report_path = self._write_report(
             evaluation_id=resolved_id,
             start_date=resolved_start,
             end_date=resolved_end,
             variants=variant_payloads,
             recommendation=recommendation,
+            variant_spread=variant_spread,
         )
         payload: dict[str, Any] = {
             "evaluation_id": resolved_id,
@@ -257,6 +262,7 @@ class StrategyEvaluationRunner:
             "end_date": resolved_end.isoformat(),
             "variant_count": len(variant_payloads),
             "variants": variant_payloads,
+            "variant_spread": variant_spread,
             "recommendation": recommendation,
             "report_path": str(report_path),
         }
@@ -281,9 +287,12 @@ class StrategyEvaluationRunner:
                 raise ValueError("start_date 不能晚于 end_date")
             return start_date, end_date
         trade_days = sorted(day for day in self.provider.get_trade_calendar() if day <= self.today)
-        if len(trade_days) < 10:
-            raise DataProviderError("交易日历不足 10 个交易日，无法生成默认评估窗口")
-        return trade_days[-10], trade_days[-1]
+        window = self.strategy_config.default_window_trade_days
+        if len(trade_days) < window:
+            raise DataProviderError(
+                f"交易日历不足 {window} 个交易日，无法生成默认评估窗口"
+            )
+        return trade_days[-window], trade_days[-1]
 
     def _variant_failure_payload(
         self,
@@ -305,15 +314,22 @@ class StrategyEvaluationRunner:
             "source_failure_rate": 1.0,
             "data_quality_failure_rate": 1.0,
             "signal_count": 0,
+            "average_signals_per_day": 0.0,
+            "no_signal_day_count": 0,
             "risk_approved_count": 0,
             "risk_rejected_count": 0,
+            "risk_approved_rate": 0.0,
+            "risk_rejected_rate": 0.0,
             "risk_reject_reasons": {},
             "order_count": 0,
             "buy_order_count": 0,
             "sell_order_count": 0,
+            "exit_reason_counts": _empty_exit_reason_counts(),
             "execution_event_count": 0,
             "execution_failed_count": 0,
             "execution_failure_reasons": {},
+            "forward_return_horizons": _empty_forward_return_horizons(),
+            "market_regime_coverage": _empty_market_regime_coverage(),
             "closed_trade_count": 0,
             "signal_hit_count": 0,
             "signal_hit_rate": 0.0,
@@ -340,6 +356,7 @@ class StrategyEvaluationRunner:
         portfolio_rows = self._scoped_rows("portfolio_snapshots", backtest_id)
         source_rows = self._scoped_rows("raw_source_snapshots", backtest_id)
         quality_rows = self._scoped_rows("data_quality_reports", backtest_id)
+        market_rows = self._scoped_rows("market_bars", backtest_id)
 
         approved_count = 0
         rejected_count = 0
@@ -397,6 +414,10 @@ class StrategyEvaluationRunner:
             len(failed_quality_dates) / attempted_days if attempted_days else 0.0
         )
         signal_hit_rate = signal_hit_count / closed_trade_count if closed_trade_count else 0.0
+        signal_trade_dates = {_date_value(row["trade_date"]) for row in signal_rows}
+        risk_total = approved_count + rejected_count
+        average_signals_per_day = len(signal_rows) / attempted_days if attempted_days else 0.0
+        no_signal_day_count = max(attempted_days - len(signal_trade_dates), 0)
         return {
             "attempted_days": attempted_days,
             "succeeded_days": _int_value(backtest_payload.get("succeeded_days", 0)),
@@ -405,17 +426,34 @@ class StrategyEvaluationRunner:
             "source_failure_rate": source_failure_rate,
             "data_quality_failure_rate": data_quality_failure_rate,
             "signal_count": len(signal_rows),
+            "average_signals_per_day": average_signals_per_day,
+            "no_signal_day_count": no_signal_day_count,
             "risk_approved_count": approved_count,
             "risk_rejected_count": rejected_count,
+            "risk_approved_rate": approved_count / risk_total if risk_total else 0.0,
+            "risk_rejected_rate": rejected_count / risk_total if risk_total else 0.0,
             "risk_reject_reasons": dict(sorted(reject_reasons.items())),
             "order_count": len(order_rows),
             "buy_order_count": buy_count,
             "sell_order_count": sell_count,
+            "exit_reason_counts": self._exit_reason_counts(order_rows),
             "execution_event_count": len(execution_events),
             "execution_failed_count": sum(
                 1 for event in execution_events if event.get("status") == "rejected"
             ),
             "execution_failure_reasons": dict(sorted(execution_reasons.items())),
+            "forward_return_horizons": self._forward_return_horizons(
+                order_rows=order_rows,
+                position_rows=position_rows,
+                market_rows=market_rows,
+            ),
+            "market_regime_coverage": self._market_regime_coverage(
+                pipeline_rows=pipeline_rows,
+                signal_rows=signal_rows,
+                risk_rows=risk_rows,
+                order_rows=order_rows,
+                market_rows=market_rows,
+            ),
             "closed_trade_count": closed_trade_count,
             "signal_hit_count": signal_hit_count,
             "signal_hit_rate": signal_hit_rate,
@@ -426,13 +464,13 @@ class StrategyEvaluationRunner:
         }
 
     def _scoped_rows(self, table_name: str, backtest_id: str) -> list[PayloadRecord]:
-        rows = self.repository.payload_rows(table_name)
-        return [
-            row
-            for row in rows
-            if _payload(row).get("run_mode") == "backtest"
-            and _payload(row).get("backtest_id") == backtest_id
-        ]
+        cache_key = (table_name, backtest_id)
+        if cache_key in self._scoped_rows_cache:
+            return list(self._scoped_rows_cache[cache_key])
+
+        scoped = self.repository.payload_rows_for_backtest(table_name, backtest_id)
+        self._scoped_rows_cache[cache_key] = list(scoped)
+        return list(scoped)
 
     def _position_metrics(
         self,
@@ -466,6 +504,187 @@ class StrategyEvaluationRunner:
                 open_position_count += 1
         return closed_trade_count, signal_hit_count, open_position_count, holding_pnl
 
+    def _exit_reason_counts(self, order_rows: list[PayloadRecord]) -> dict[str, int]:
+        counts = Counter[str]()
+        for row in order_rows:
+            payload = _payload(row)
+            if payload.get("side") != "sell":
+                continue
+            reason = str(payload.get("reason", ""))
+            if "触发止损" in reason:
+                counts["stop_loss"] += 1
+            elif "趋势走弱卖出" in reason:
+                counts["trend_weakness"] += 1
+            elif "持有满" in reason and "到期卖出" in reason:
+                counts["max_holding_days"] += 1
+            else:
+                counts["other"] += 1
+        result = _empty_exit_reason_counts()
+        result.update(dict(sorted(counts.items())))
+        return result
+
+    def _forward_return_horizons(
+        self,
+        *,
+        order_rows: list[PayloadRecord],
+        position_rows: list[PayloadRecord],
+        market_rows: list[PayloadRecord],
+    ) -> dict[str, dict[str, float | int]]:
+        closes_by_symbol = self._market_closes_by_symbol(market_rows)
+        positions = self._latest_positions_by_symbol_and_open_date(position_rows)
+        horizon_returns: dict[int, list[Decimal]] = {2: [], 5: [], 10: []}
+        early_exit_counts: dict[int, int] = {2: 0, 5: 0, 10: 0}
+        for row in order_rows:
+            payload = _payload(row)
+            if payload.get("side") != "buy":
+                continue
+            symbol = str(payload.get("symbol", ""))
+            buy_date = _date_value(payload.get("trade_date", row["trade_date"]))
+            entry_price = _decimal(payload.get("price", "0"))
+            if not symbol or entry_price <= 0:
+                continue
+            symbol_closes = closes_by_symbol.get(symbol, {})
+            if not symbol_closes:
+                continue
+            ordered_dates = sorted(symbol_closes)
+            position = positions.get((symbol, buy_date))
+            closed_at = (
+                _optional_date_value(position.get("closed_at"))
+                if position is not None
+                else None
+            )
+            exit_price = (
+                _optional_decimal_value(position.get("exit_price"))
+                if position is not None
+                else None
+            )
+            for horizon in horizon_returns:
+                target_date = _target_horizon_date(ordered_dates, buy_date, horizon)
+                terminal_price: Decimal | None = None
+                if (
+                    closed_at is not None
+                    and exit_price is not None
+                    and (target_date is None or closed_at <= target_date)
+                ):
+                    terminal_price = exit_price
+                    early_exit_counts[horizon] += 1
+                elif target_date is not None:
+                    terminal_price = symbol_closes.get(target_date)
+                if terminal_price is None:
+                    continue
+                horizon_returns[horizon].append((terminal_price - entry_price) / entry_price)
+
+        result: dict[str, dict[str, float | int]] = {}
+        for horizon, returns in horizon_returns.items():
+            win_count = sum(1 for item in returns if item > 0)
+            average_return = (
+                sum(returns, Decimal("0")) / Decimal(len(returns)) if returns else Decimal("0")
+            )
+            result[str(horizon)] = {
+                "sample_count": len(returns),
+                "win_count": win_count,
+                "win_rate": win_count / len(returns) if returns else 0.0,
+                "average_return": float(average_return),
+                "early_exit_count": early_exit_counts[horizon],
+            }
+        return result
+
+    def _market_closes_by_symbol(
+        self,
+        market_rows: list[PayloadRecord],
+    ) -> dict[str, dict[date, Decimal]]:
+        closes: dict[str, dict[date, Decimal]] = defaultdict(dict)
+        for row in market_rows:
+            payload = _payload(row)
+            symbol = str(payload.get("symbol", row.get("symbol", "")))
+            if not symbol:
+                continue
+            trade_date = _date_value(payload.get("trade_date", row["trade_date"]))
+            closes[symbol][trade_date] = _decimal(payload.get("close", "0"))
+        return dict(closes)
+
+    def _latest_positions_by_symbol_and_open_date(
+        self,
+        position_rows: list[PayloadRecord],
+    ) -> dict[tuple[str, date], Mapping[str, object]]:
+        positions: dict[tuple[str, date], Mapping[str, object]] = {}
+        for row in position_rows:
+            payload = _payload(row)
+            symbol = str(payload.get("symbol", row.get("symbol", "")))
+            if not symbol:
+                continue
+            opened_at = _date_value(payload.get("opened_at", row["trade_date"]))
+            positions[(symbol, opened_at)] = payload
+        return positions
+
+    def _market_regime_coverage(
+        self,
+        *,
+        pipeline_rows: list[PayloadRecord],
+        signal_rows: list[PayloadRecord],
+        risk_rows: list[PayloadRecord],
+        order_rows: list[PayloadRecord],
+        market_rows: list[PayloadRecord],
+    ) -> dict[str, dict[str, object]]:
+        coverage = _empty_market_regime_coverage()
+        pre_market_runs: dict[str, date] = {}
+        for row in pipeline_rows:
+            payload = _payload(row)
+            if payload.get("stage") == "pre_market" and payload.get("status") == "success":
+                pre_market_runs[str(row["run_id"])] = _date_value(row["trade_date"])
+
+        bars_by_run_id: dict[str, list[MarketBar]] = defaultdict(list)
+        for row in market_rows:
+            run_id = str(row["run_id"])
+            if run_id not in pre_market_runs:
+                continue
+            bars_by_run_id[run_id].append(_market_bar_from_payload(row))
+
+        analyzer = MarketRegimeAnalyzer()
+        regime_by_date: dict[date, str] = {}
+        for run_id, trade_date in pre_market_runs.items():
+            bars = bars_by_run_id.get(run_id, [])
+            if not bars:
+                continue
+            status = analyzer.analyze(trade_date=trade_date, bars=bars).status
+            regime_by_date[trade_date] = status
+            coverage[status]["trade_days"] = _int_value(coverage[status]["trade_days"]) + 1
+
+        for row in signal_rows:
+            status = regime_by_date.get(_date_value(row["trade_date"]))
+            if status is not None:
+                coverage[status]["signal_count"] = (
+                    _int_value(coverage[status]["signal_count"]) + 1
+                )
+
+        for row in risk_rows:
+            payload = _payload(row)
+            status = regime_by_date.get(_date_value(row["trade_date"]))
+            if status is not None and not bool(payload.get("approved")):
+                coverage[status]["risk_rejected_count"] = (
+                    _int_value(coverage[status]["risk_rejected_count"]) + 1
+                )
+
+        for row in order_rows:
+            payload = _payload(row)
+            status = regime_by_date.get(_date_value(row["trade_date"]))
+            if status is None:
+                continue
+            if payload.get("side") == "buy":
+                coverage[status]["buy_order_count"] = (
+                    _int_value(coverage[status]["buy_order_count"]) + 1
+                )
+            elif payload.get("side") == "sell":
+                coverage[status]["sell_order_count"] = (
+                    _int_value(coverage[status]["sell_order_count"]) + 1
+                )
+
+        for status_payload in coverage.values():
+            status_payload["coverage_status"] = (
+                "covered" if _int_value(status_payload["trade_days"]) > 0 else "missing"
+            )
+        return coverage
+
     def _total_return(
         self,
         portfolio_rows: list[PayloadRecord],
@@ -491,6 +710,30 @@ class StrategyEvaluationRunner:
             if drawdown > max_drawdown:
                 max_drawdown = drawdown
         return float(max_drawdown)
+
+    def _variant_spread(self, variants: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+        metric_names = [
+            "total_return",
+            "max_drawdown",
+            "signal_count",
+            "risk_rejected_rate",
+            "source_failure_rate",
+            "data_quality_failure_rate",
+        ]
+        spread: dict[str, dict[str, float]] = {}
+        for metric_name in metric_names:
+            values = [_float_value(item.get(metric_name, 0.0)) for item in variants]
+            if not values:
+                spread[metric_name] = {"min": 0.0, "max": 0.0, "spread": 0.0}
+                continue
+            min_value = min(values)
+            max_value = max(values)
+            spread[metric_name] = {
+                "min": min_value,
+                "max": max_value,
+                "spread": max_value - min_value,
+            }
+        return spread
 
     def _recommendation(self, variants: list[dict[str, Any]]) -> dict[str, Any]:
         if not variants:
@@ -523,6 +766,7 @@ class StrategyEvaluationRunner:
         end_date: date,
         variants: list[dict[str, Any]],
         recommendation: Mapping[str, object],
+        variant_spread: Mapping[str, Mapping[str, float]],
     ) -> Path:
         ranking = sorted(
             variants,
@@ -592,6 +836,87 @@ class StrategyEvaluationRunner:
                         for item in variants
                     ],
                 ),
+                "信号充足度": MarkdownTable(
+                    headers=[
+                        "id",
+                        "signals",
+                        "avg/day",
+                        "no_signal_days",
+                        "risk_pass_rate",
+                        "risk_reject_rate",
+                    ],
+                    rows=[
+                        [
+                            item["id"],
+                            item.get("signal_count", 0),
+                            f"{float(item.get('average_signals_per_day', 0)):.2f}",
+                            item.get("no_signal_day_count", 0),
+                            f"{float(item.get('risk_approved_rate', 0)):.2%}",
+                            f"{float(item.get('risk_rejected_rate', 0)):.2%}",
+                        ]
+                        for item in variants
+                    ],
+                ),
+                "买入后表现": MarkdownTable(
+                    headers=[
+                        "id",
+                        "2d_avg",
+                        "2d_win",
+                        "5d_avg",
+                        "5d_win",
+                        "10d_avg",
+                        "10d_win",
+                    ],
+                    rows=[
+                        [
+                            item["id"],
+                            _horizon_report_value(item, "2", "average_return"),
+                            _horizon_report_value(item, "2", "win_rate"),
+                            _horizon_report_value(item, "5", "average_return"),
+                            _horizon_report_value(item, "5", "win_rate"),
+                            _horizon_report_value(item, "10", "average_return"),
+                            _horizon_report_value(item, "10", "win_rate"),
+                        ]
+                        for item in variants
+                    ],
+                ),
+                "卖出触发": MarkdownTable(
+                    headers=["id", "stop_loss", "trend_weakness", "max_holding_days", "other"],
+                    rows=[
+                        [
+                            item["id"],
+                            _exit_reason_count(item, "stop_loss"),
+                            _exit_reason_count(item, "trend_weakness"),
+                            _exit_reason_count(item, "max_holding_days"),
+                            _exit_reason_count(item, "other"),
+                        ]
+                        for item in variants
+                    ],
+                ),
+                "市场环境覆盖": MarkdownTable(
+                    headers=["id", "上涨", "震荡", "下跌"],
+                    rows=[
+                        [
+                            item["id"],
+                            _regime_report_value(item, "risk_on"),
+                            _regime_report_value(item, "neutral"),
+                            _regime_report_value(item, "risk_off"),
+                        ]
+                        for item in variants
+                    ],
+                ),
+                "参数差异": MarkdownTable(
+                    headers=["metric", "min", "max", "spread"],
+                    rows=[
+                        [
+                            metric_name,
+                            f"{values.get('min', 0):.4f}",
+                            f"{values.get('max', 0):.4f}",
+                            f"{values.get('spread', 0):.4f}",
+                        ]
+                        for metric_name, values in variant_spread.items()
+                    ],
+                ),
                 "调整建议": str(recommendation.get("summary", "")),
                 "安全边界": "本报告只基于历史模拟回放，不自动修改策略参数，不构成投资建议。",
             },
@@ -610,6 +935,7 @@ def load_strategy_evaluation_config(config_path: Path) -> StrategyEvaluationConf
         raise ValueError("策略评估配置缺少 base_config")
     base_config_path = _resolve_config_path(config_path, base_config_value)
     base_raw = _load_base_strategy_config(base_config_path)
+    default_window_trade_days = _default_window_trade_days(raw.get("default_window_trade_days", 60))
     raw_variants = raw.get("variants")
     if not isinstance(raw_variants, list) or not raw_variants:
         raise ValueError("策略评估配置必须包含 variants 列表")
@@ -651,7 +977,21 @@ def load_strategy_evaluation_config(config_path: Path) -> StrategyEvaluationConf
                 overrides=cast(dict[str, Any], deepcopy(overrides)),
             )
         )
-    return StrategyEvaluationConfig(base_config=base_config_path, variants=variants)
+    return StrategyEvaluationConfig(
+        base_config=base_config_path,
+        variants=variants,
+        default_window_trade_days=default_window_trade_days,
+    )
+
+
+def _default_window_trade_days(value: object) -> int:
+    try:
+        window = int(str(value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("default_window_trade_days 必须是整数") from exc
+    if window < 20 or window > 60:
+        raise ValueError("default_window_trade_days 必须在 20 到 60 之间")
+    return window
 
 
 def _resolve_config_path(config_path: Path, value: str) -> Path:
@@ -713,6 +1053,48 @@ def _payload(row: PayloadRecord) -> Mapping[str, object]:
     return cast(Mapping[str, object], payload)
 
 
+def _empty_exit_reason_counts() -> dict[str, int]:
+    return {
+        "stop_loss": 0,
+        "trend_weakness": 0,
+        "max_holding_days": 0,
+        "other": 0,
+    }
+
+
+def _empty_forward_return_horizons() -> dict[str, dict[str, float | int]]:
+    return {
+        str(horizon): {
+            "sample_count": 0,
+            "win_count": 0,
+            "win_rate": 0.0,
+            "average_return": 0.0,
+            "early_exit_count": 0,
+        }
+        for horizon in (2, 5, 10)
+    }
+
+
+def _empty_market_regime_coverage() -> dict[str, dict[str, object]]:
+    return {
+        "risk_on": _empty_market_regime_payload("上涨"),
+        "neutral": _empty_market_regime_payload("震荡"),
+        "risk_off": _empty_market_regime_payload("下跌"),
+    }
+
+
+def _empty_market_regime_payload(label: str) -> dict[str, object]:
+    return {
+        "label": label,
+        "trade_days": 0,
+        "signal_count": 0,
+        "buy_order_count": 0,
+        "sell_order_count": 0,
+        "risk_rejected_count": 0,
+        "coverage_status": "missing",
+    }
+
+
 def _string_values(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -725,3 +1107,99 @@ def _decimal(value: object) -> Decimal:
 
 def _int_value(value: object) -> int:
     return int(str(value))
+
+
+def _float_value(value: object) -> float:
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _date_value(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value))
+
+
+def _optional_date_value(value: object) -> date | None:
+    if value is None:
+        return None
+    return _date_value(value)
+
+
+def _optional_decimal_value(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    return _decimal(value)
+
+
+def _target_horizon_date(
+    ordered_dates: list[date],
+    buy_date: date,
+    horizon: int,
+) -> date | None:
+    for index, trade_date in enumerate(ordered_dates):
+        if trade_date >= buy_date:
+            target_index = index + horizon
+            if target_index < len(ordered_dates):
+                return ordered_dates[target_index]
+            return None
+    return None
+
+
+def _market_bar_from_payload(row: PayloadRecord) -> MarketBar:
+    payload = _payload(row)
+    return MarketBar(
+        symbol=str(payload.get("symbol", row.get("symbol", ""))),
+        trade_date=_date_value(payload.get("trade_date", row["trade_date"])),
+        open=_decimal(payload.get("open", "0")),
+        high=_decimal(payload.get("high", "0")),
+        low=_decimal(payload.get("low", "0")),
+        close=_decimal(payload.get("close", "0")),
+        volume=_int_value(payload.get("volume", 0)),
+        amount=_decimal(payload.get("amount", "0")),
+        source=str(payload.get("source", "")),
+    )
+
+
+def _exit_reason_count(item: Mapping[str, object], reason: str) -> int:
+    raw = item.get("exit_reason_counts", {})
+    if not isinstance(raw, Mapping):
+        return 0
+    values = cast(Mapping[str, object], raw)
+    return _int_value(values.get(reason, 0))
+
+
+def _horizon_report_value(
+    item: Mapping[str, object],
+    horizon: str,
+    field_name: str,
+) -> str:
+    raw = item.get("forward_return_horizons", {})
+    if not isinstance(raw, Mapping):
+        return "0.00%"
+    values = cast(Mapping[str, object], raw)
+    horizon_payload = values.get(horizon, {})
+    if not isinstance(horizon_payload, Mapping):
+        return "0.00%"
+    horizon_values = cast(Mapping[str, object], horizon_payload)
+    return f"{_float_value(horizon_values.get(field_name, 0)):.2%}"
+
+
+def _regime_report_value(item: Mapping[str, object], regime: str) -> str:
+    raw = item.get("market_regime_coverage", {})
+    if not isinstance(raw, Mapping):
+        return "0日/0信号/missing"
+    values = cast(Mapping[str, object], raw)
+    regime_payload = values.get(regime, {})
+    if not isinstance(regime_payload, Mapping):
+        return "0日/0信号/missing"
+    regime_values = cast(Mapping[str, object], regime_payload)
+    trade_days = _int_value(regime_values.get("trade_days", 0))
+    signal_count = _int_value(regime_values.get("signal_count", 0))
+    buy_count = _int_value(regime_values.get("buy_order_count", 0))
+    status = str(regime_values.get("coverage_status", "missing"))
+    return f"{trade_days}日/{signal_count}信号/{buy_count}买/{status}"

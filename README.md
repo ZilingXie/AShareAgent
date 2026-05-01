@@ -307,7 +307,7 @@ ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina \
   --config configs/strategy_evaluation.yml
 ```
 
-`strategy-evaluate` 读取 `configs/strategy_evaluation.yml`，按 `base_config + variants[].overrides` 生成多组策略参数。默认使用 provider 交易日历中截至当前日期的最近 10 个交易日，也可用 `--start-date` 和 `--end-date` 覆盖。每个 variant 会生成独立 `backtest_id=<evaluation_id>-<variant_id>`，失败日计入失败率并继续后续日期/variant；聚合结果写入 `pipeline_runs(stage=strategy_evaluation)`、`artifacts(artifact_type=strategy_evaluation)` 和 `reports/<evaluation_id>/strategy-evaluation.md`。该入口强制使用 mock LLM，不接真实交易，不自动修改 `configs/strategy_params.yml`。当 `ASHARE_PROVIDER=akshare` 时，`ASHARE_INTRADAY_SOURCE` 必须包含 `akshare_sina`，用于验收 Sina 分钟线 fallback 链路。
+`strategy-evaluate` 读取 `configs/strategy_evaluation.yml`，按 `base_config + variants[].overrides` 生成多组策略参数。默认窗口由 `default_window_trade_days` 控制，当前示例为最近 60 个交易日；也可用 `--start-date` 和 `--end-date` 覆盖。每个 variant 会生成独立 `backtest_id=<evaluation_id>-<variant_id>`，失败日计入失败率并继续后续日期/variant；聚合结果写入 `pipeline_runs(stage=strategy_evaluation)`、`artifacts(artifact_type=strategy_evaluation)` 和 `reports/<evaluation_id>/strategy-evaluation.md`。报告会汇总信号充足度、买入后 2/5/10 个交易日表现、卖出触发原因、数据源失败率、市场环境覆盖和参数差异。该入口强制使用 mock LLM，不接真实交易，不自动修改 `configs/strategy_params.yml`。当 `ASHARE_PROVIDER=akshare` 时，`ASHARE_INTRADAY_SOURCE` 必须包含 `akshare_sina`，用于验收 Sina 分钟线 fallback 链路。
 
 验证：
 
@@ -340,7 +340,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
-策略评估不新增数据库迁移；聚合结果复用 `pipeline_runs` 和 `artifacts`，单个 variant 的明细复用 backtest 已有专表和 `backtest_id` 隔离。
+策略评估不新增数据库迁移；聚合结果复用 `pipeline_runs` 和 `artifacts`，单个 variant 的明细复用 backtest 已有专表和 `backtest_id` 隔离。`configs/strategy_evaluation.yml` 的 `default_window_trade_days` 必须在 20 到 60 之间，显式 CLI 日期范围优先于该默认窗口。
 
 `intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录 `intraday_source`、请求/返回/缺失 symbol、period、timeout、retry 配置和 `source_attempts`。成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。显式链路中的所有分钟线源都不可用时写 failed snapshot 和 failed run；至少一个源正常响应但单个 symbol 无分钟线时 run 可成功，不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
 

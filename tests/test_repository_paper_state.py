@@ -290,6 +290,31 @@ def test_repository_payload_rows_filter_by_table_date_and_run_id() -> None:
     ] == "second-run"
 
 
+def test_repository_payload_rows_for_backtest_filters_by_scope() -> None:
+    repository = InMemoryRepository()
+    normal_context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="normal-run")
+    first_backtest_context = PipelineRunContext(
+        trade_date=date(2026, 4, 29),
+        run_id="bt-a-run",
+        run_mode="backtest",
+        backtest_id="bt-a",
+    )
+    second_backtest_context = PipelineRunContext(
+        trade_date=date(2026, 4, 30),
+        run_id="bt-b-run",
+        run_mode="backtest",
+        backtest_id="bt-b",
+    )
+
+    repository.save_pipeline_run(normal_context, "pre_market", "success", {})
+    repository.save_pipeline_run(first_backtest_context, "pre_market", "success", {})
+    repository.save_pipeline_run(second_backtest_context, "pre_market", "success", {})
+
+    rows = repository.payload_rows_for_backtest("pipeline_runs", backtest_id="bt-a")
+
+    assert [row["run_id"] for row in rows] == ["bt-a-run"]
+
+
 def test_repository_saves_data_quality_report_payload() -> None:
     repository = InMemoryRepository()
     context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="quality-run")

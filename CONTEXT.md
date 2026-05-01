@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在实现策略评估 dashboard 决策入口：在只读观察台新增“策略评估”视图，展示已落库 evaluation 批次、variant 排名、推荐结论和不可推荐原因。
+正在收尾策略评估窗口扩展：`strategy-evaluate` 已支持默认 60 个交易日窗口，长窗口指标已落库并写入 Markdown 报告，真实 AKShare + mock LLM 60 日验收已跑通。
 
 ## 上次停在哪
 
@@ -62,6 +62,9 @@
 - 本轮新增 `StrategyEvaluationRunner`、`CachingDataProvider` 和 `ashare strategy-evaluate`，读取 `configs/strategy_evaluation.yml` 后按 variant 生成独立 `backtest_id`，复用真实源缓存并输出 `reports/<evaluation_id>/strategy-evaluation.md`。
 - 策略评估聚合结果复用现有 `pipeline_runs(stage=strategy_evaluation)` 和 `artifacts(artifact_type=strategy_evaluation)`，不新增数据库迁移；单个 variant 明细继续复用 backtest 专表和 `backtest_id` 隔离。
 - 本轮新增 dashboard 策略评估只读查询/API/前端视图：可列出 evaluation 批次，查看 variant 收益、命中率、回撤、失败率、推荐结论、不可推荐原因和 Markdown 报告路径。
+- 本轮已将策略评估默认窗口扩展为 `default_window_trade_days=60`，并在评估 payload / Markdown 报告中补充日均信号、无信号天数、买入后 2/5/10 个交易日表现、卖出触发原因、市场环境覆盖和参数差异。
+- 已用真实 AKShare provider + mock LLM 跑通 `eval-real-60d-20260501-r4`：窗口为 2026-01-28 到 2026-04-30，共 60 个交易日、3 个 variant，全部 succeeded_days=60、failed_days=0；报告已生成到 `reports/eval-real-60d-20260501-r4/strategy-evaluation.md`。
+- 为支撑长窗口验收，`PostgresRepository` 已增加按 `backtest_id` 过滤 payload 的读取接口，并将结构化交易日历保存改为分批 bulk upsert，避免策略评估汇总和多日回放在真实 PostgreSQL 上反复全表扫描或单行 upsert。
 
 ## 近期关键决定和原因
 
@@ -85,8 +88,8 @@
 - backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
 - strategy-evaluate 同样强制使用 mock LLM，不修改 `configs/strategy_params.yml`；当 `ASHARE_PROVIDER=akshare` 时要求 `ASHARE_INTRADAY_SOURCE` 包含 `akshare_sina`，确保真实分钟线 fallback 链路被纳入评估。
-- 策略评估运行入口只输出历史模拟指标和人工复核建议，不做自动参数搜索，不接真实交易。
-- 策略评估 dashboard 只解释历史模拟结果，不读取 Markdown 正文，不重新计算 backtest，不自动修改策略参数，也不把评估结论包装成实盘建议。
+- 策略评估运行入口只输出历史模拟指标和人工复核建议，不做自动参数搜索，不接真实交易；默认窗口用最近 60 个交易日，CLI 显式日期范围优先。
+- 策略评估 dashboard 只解释历史模拟结果，不读取 Markdown 正文，不重新计算 backtest，不自动修改策略参数，也不把评估结论包装成实盘建议；本轮不改 dashboard 前端。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
 - `daily-run` 遇到非交易日默认写 skipped 审计和可靠性报告，不进入策略分析，也不更新模拟订单或持仓。
@@ -104,4 +107,4 @@
 
 ## 下一步
 
-- 下一步完成全量验证、提交 task 分支并按 worktree 规则合并回 `main`。
+- 下一步将本轮 `codex/strategy-eval-window` 验证通过后合并回 `main`；后续可基于 60 日真实评估结果继续做参数差异分析和更长市场环境样本扩展。

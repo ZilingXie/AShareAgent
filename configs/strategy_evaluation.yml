@@ -1,4 +1,5 @@
 base_config: configs/strategy_params.yml
+default_window_trade_days: 60
 variants:
   - id: baseline
     version: strategy-params-v1-baseline

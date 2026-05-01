@@ -395,6 +395,12 @@ class PipelineRepository(Protocol):
         run_id: str | None = None,
     ) -> list[PayloadRecord]: ...
 
+    def payload_rows_for_backtest(
+        self,
+        table_name: str,
+        backtest_id: str,
+    ) -> list[PayloadRecord]: ...
+
 
 class RepositoryBase:
     def _save_payload(
@@ -415,6 +421,17 @@ class RepositoryBase:
     ) -> list[PayloadRecord]:
         raise NotImplementedError
 
+    def _rows_for_backtest(self, table_name: str, backtest_id: str) -> list[PayloadRecord]:
+        return [
+            row
+            for row in self._rows(table_name)
+            if _scope_matches(
+                cast(Mapping[str, object], row["payload"]),
+                run_mode="backtest",
+                backtest_id=backtest_id,
+            )
+        ]
+
     def payload_rows(
         self,
         table_name: str,
@@ -424,6 +441,15 @@ class RepositoryBase:
         if table_name not in PAYLOAD_TABLES:
             raise ValueError(f"未知 payload table: {table_name}")
         return self._rows(table_name, trade_date=trade_date, run_id=run_id)
+
+    def payload_rows_for_backtest(
+        self,
+        table_name: str,
+        backtest_id: str,
+    ) -> list[PayloadRecord]:
+        if table_name not in PAYLOAD_TABLES:
+            raise ValueError(f"未知 payload table: {table_name}")
+        return self._rows_for_backtest(table_name, backtest_id=backtest_id)
 
     def save_pipeline_run(
         self,
@@ -975,6 +1001,27 @@ class PostgresRepository(RepositoryBase):
             for row in rows
         ]
 
+    def _rows_for_backtest(self, table_name: str, backtest_id: str) -> list[PayloadRecord]:
+        table = self._tables[table_name]
+        statement = (
+            select(table)
+            .where(table.c.payload["run_mode"].as_string() == "backtest")
+            .where(table.c.payload["backtest_id"].as_string() == backtest_id)
+            .order_by(table.c.id.asc())
+        )
+        with self.engine.begin() as conn:
+            rows = conn.execute(statement).mappings().all()
+        return [
+            {
+                "id": int(row["id"]),
+                "run_id": str(row["run_id"]),
+                "trade_date": row["trade_date"],
+                "symbol": row["symbol"],
+                "payload": cast(dict[str, Any], row["payload"]),
+            }
+            for row in rows
+        ]
+
     def save_trading_calendar_days(
         self,
         context: PipelineRunContext,
@@ -982,19 +1029,25 @@ class PostgresRepository(RepositoryBase):
     ) -> None:
         if not days:
             return
+        values = [
+            {
+                "calendar_date": day.calendar_date,
+                "is_trade_date": day.is_trade_date,
+                "source": day.source,
+                "collected_at": day.collected_at,
+            }
+            for day in days
+        ]
         with self.engine.begin() as conn:
-            for day in days:
+            for start in range(0, len(values), 5000):
                 statement = postgresql_insert(self.trading_calendar).values(
-                    calendar_date=day.calendar_date,
-                    is_trade_date=day.is_trade_date,
-                    source=day.source,
-                    collected_at=day.collected_at,
+                    values[start : start + 5000]
                 )
                 statement = statement.on_conflict_do_update(
                     index_elements=["calendar_date", "source"],
                     set_={
-                        "is_trade_date": day.is_trade_date,
-                        "collected_at": day.collected_at,
+                        "is_trade_date": statement.excluded.is_trade_date,
+                        "collected_at": statement.excluded.collected_at,
                     },
                 )
                 conn.execute(statement)

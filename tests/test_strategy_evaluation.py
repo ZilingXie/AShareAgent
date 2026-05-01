@@ -8,7 +8,7 @@ import pytest
 from ashare_agent.llm.mock import MockLLMClient
 from ashare_agent.providers.base import DataProviderError
 from ashare_agent.providers.mock import MockProvider
-from ashare_agent.repository import InMemoryRepository
+from ashare_agent.repository import InMemoryRepository, PayloadRecord
 from ashare_agent.strategy_evaluation import (
     CachingDataProvider,
     StrategyEvaluationRunner,
@@ -47,10 +47,22 @@ signal:
     )
 
 
-def _write_eval_config(path: Path, base_config: Path, variants: str) -> None:
+def _write_eval_config(
+    path: Path,
+    base_config: Path,
+    variants: str,
+    *,
+    default_window_trade_days: int | None = None,
+) -> None:
+    window_line = (
+        f"default_window_trade_days: {default_window_trade_days}\n"
+        if default_window_trade_days is not None
+        else ""
+    )
     path.write_text(
         f"""
 base_config: {base_config.as_posix()}
+{window_line}\
 variants:
 {variants}
 """,
@@ -85,10 +97,12 @@ def test_strategy_evaluation_config_loads_base_overrides(tmp_path: Path) -> None
       risk:
         stop_loss_pct: "0.07"
 """,
+        default_window_trade_days=45,
     )
 
     config = load_strategy_evaluation_config(eval_config)
 
+    assert config.default_window_trade_days == 45
     assert [variant.id for variant in config.variants] == ["baseline", "tech050", "stop070"]
     assert config.variants[0].params.version == "strategy-params-v1-baseline"
     assert config.variants[1].params.signal.weights.technical == 0.50
@@ -138,6 +152,22 @@ def test_strategy_evaluation_config_rejects_duplicates_and_unknown_fields(
 
     with pytest.raises(ValueError, match="未知策略参数字段"):
         load_strategy_evaluation_config(unknown_config)
+
+    invalid_window_config = tmp_path / "invalid_window.yml"
+    _write_eval_config(
+        invalid_window_config,
+        base_config,
+        """
+  - id: baseline
+    version: strategy-params-v1-baseline
+    label: 当前参数
+    overrides: {}
+""",
+        default_window_trade_days=10,
+    )
+
+    with pytest.raises(ValueError, match="default_window_trade_days 必须在 20 到 60 之间"):
+        load_strategy_evaluation_config(invalid_window_config)
 
 
 def test_caching_data_provider_reuses_values_and_failures() -> None:
@@ -226,12 +256,30 @@ def test_strategy_evaluation_runner_runs_variants_and_writes_summary(
     fast_exit = result.payload["variants"][1]
     assert fast_exit["attempted_days"] == 5
     assert fast_exit["signal_count"] > 0
+    assert fast_exit["average_signals_per_day"] > 0
+    assert fast_exit["no_signal_day_count"] >= 0
+    assert 0 <= fast_exit["risk_approved_rate"] <= 1
+    assert 0 <= fast_exit["risk_rejected_rate"] <= 1
     assert fast_exit["order_count"] > 0
     assert fast_exit["closed_trade_count"] >= 1
+    assert fast_exit["exit_reason_counts"]["max_holding_days"] >= 1
+    assert set(fast_exit["forward_return_horizons"]) == {"2", "5", "10"}
+    assert fast_exit["forward_return_horizons"]["2"]["sample_count"] >= 1
+    assert "average_return" in fast_exit["forward_return_horizons"]["2"]
+    assert set(fast_exit["market_regime_coverage"]) == {"risk_on", "neutral", "risk_off"}
+    assert fast_exit["market_regime_coverage"]["risk_on"]["trade_days"] >= 1
     assert fast_exit["open_position_count"] >= 0
     assert fast_exit["max_drawdown"] >= 0
     assert fast_exit["signal_hit_rate"] == 0
-    assert (tmp_path / "reports" / "eval-smoke" / "strategy-evaluation.md").exists()
+    assert result.payload["variant_spread"]["total_return"]["spread"] >= 0
+    report_text = (
+        tmp_path / "reports" / "eval-smoke" / "strategy-evaluation.md"
+    ).read_text(encoding="utf-8")
+    assert "信号充足度" in report_text
+    assert "买入后表现" in report_text
+    assert "卖出触发" in report_text
+    assert "市场环境覆盖" in report_text
+    assert "参数差异" in report_text
 
     pipeline_runs = repository.records_for("pipeline_runs")
     assert {
@@ -244,7 +292,7 @@ def test_strategy_evaluation_runner_runs_variants_and_writes_summary(
     assert repository.records[-1]["artifact_type"] == "strategy_evaluation"
 
 
-def test_strategy_evaluation_runner_uses_latest_10_trade_days_by_default(
+def test_strategy_evaluation_runner_uses_configured_default_trade_day_window(
     tmp_path: Path,
 ) -> None:
     base_config = tmp_path / "strategy_params.yml"
@@ -269,14 +317,50 @@ def test_strategy_evaluation_runner_uses_latest_10_trade_days_by_default(
         strategy_config=load_strategy_evaluation_config(eval_config),
         provider_name="mock",
         required_data_sources=set(),
-        today=date(2026, 1, 15),
+        today=date(2026, 3, 15),
     )
 
     result = runner.run(evaluation_id="eval-default-window")
 
+    assert result.payload["start_date"] == "2026-01-15"
+    assert result.payload["end_date"] == "2026-03-15"
+    assert result.payload["variants"][0]["attempted_days"] == 60
+
+
+def test_strategy_evaluation_runner_allows_shorter_configured_window(
+    tmp_path: Path,
+) -> None:
+    base_config = tmp_path / "strategy_params.yml"
+    eval_config = tmp_path / "strategy_evaluation.yml"
+    _write_base_params(base_config)
+    _write_eval_config(
+        eval_config,
+        base_config,
+        """
+  - id: baseline
+    version: strategy-params-v1-baseline
+    label: 当前参数
+    overrides: {}
+""",
+        default_window_trade_days=20,
+    )
+    repository = InMemoryRepository()
+    runner = StrategyEvaluationRunner(
+        provider=CachingDataProvider(MockProvider()),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path / "reports",
+        repository=repository,
+        strategy_config=load_strategy_evaluation_config(eval_config),
+        provider_name="mock",
+        required_data_sources=set(),
+        today=date(2026, 1, 25),
+    )
+
+    result = runner.run(evaluation_id="eval-config-window")
+
     assert result.payload["start_date"] == "2026-01-06"
-    assert result.payload["end_date"] == "2026-01-15"
-    assert result.payload["variants"][0]["attempted_days"] == 10
+    assert result.payload["end_date"] == "2026-01-25"
+    assert result.payload["variants"][0]["attempted_days"] == 20
 
 
 def test_strategy_evaluation_runner_counts_failed_days(tmp_path: Path) -> None:
@@ -322,3 +406,98 @@ def test_strategy_evaluation_runner_counts_failed_days(tmp_path: Path) -> None:
     assert variant["failed_days"] == 1
     assert variant["data_quality_failure_rate"] == 1 / 3
     assert variant["source_failure_rate"] > 0
+
+
+def test_strategy_evaluation_metrics_reads_payload_tables_by_backtest_scope(
+    tmp_path: Path,
+) -> None:
+    class CountingRepository(InMemoryRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.payload_row_calls: list[tuple[str, object, object]] = []
+            self.backtest_row_calls: list[tuple[str, str]] = []
+
+        def payload_rows(
+            self,
+            table_name: str,
+            trade_date: date | None = None,
+            run_id: str | None = None,
+        ) -> list[PayloadRecord]:
+            self.payload_row_calls.append((table_name, trade_date, run_id))
+            return super().payload_rows(table_name, trade_date=trade_date, run_id=run_id)
+
+        def payload_rows_for_backtest(
+            self,
+            table_name: str,
+            backtest_id: str,
+        ) -> list[PayloadRecord]:
+            self.backtest_row_calls.append((table_name, backtest_id))
+            return super().payload_rows_for_backtest(table_name, backtest_id=backtest_id)
+
+    base_config = tmp_path / "strategy_params.yml"
+    eval_config = tmp_path / "strategy_evaluation.yml"
+    _write_base_params(base_config)
+    _write_eval_config(
+        eval_config,
+        base_config,
+        """
+  - id: baseline
+    version: strategy-params-v1-baseline
+    label: 当前参数
+    overrides: {}
+""",
+    )
+    repository = CountingRepository()
+    runner = StrategyEvaluationRunner(
+        provider=CachingDataProvider(MockProvider()),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path / "reports",
+        repository=repository,
+        strategy_config=load_strategy_evaluation_config(eval_config),
+        provider_name="mock",
+        required_data_sources=set(),
+        today=date(2026, 5, 1),
+    )
+
+    result = runner.run(
+        evaluation_id="eval-scoped-reads",
+        start_date=date(2026, 4, 27),
+        end_date=date(2026, 4, 29),
+    )
+    backtest_id = result.payload["variants"][0]["backtest_id"]
+    backtest_payload = next(
+        row["payload"]
+        for row in repository.records_for("pipeline_runs")
+        if row["payload"]["stage"] == "backtest"
+        and row["payload"]["backtest_id"] == backtest_id
+    )
+    metrics_runner = StrategyEvaluationRunner(
+        provider=CachingDataProvider(MockProvider()),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path / "reports",
+        repository=repository,
+        strategy_config=load_strategy_evaluation_config(eval_config),
+        provider_name="mock",
+        required_data_sources=set(),
+        today=date(2026, 5, 1),
+    )
+
+    repository.payload_row_calls.clear()
+    repository.backtest_row_calls.clear()
+    metrics_runner._metrics_for_backtest(  # pyright: ignore[reportPrivateUsage]  # noqa: SLF001
+        backtest_id=backtest_id,
+        backtest_payload=backtest_payload,
+        params=metrics_runner.strategy_config.variants[0].params,
+    )
+    assert repository.payload_row_calls == []
+    assert {call[0] for call in repository.backtest_row_calls} == {
+        "pipeline_runs",
+        "signals",
+        "risk_decisions",
+        "paper_orders",
+        "paper_positions",
+        "portfolio_snapshots",
+        "raw_source_snapshots",
+        "data_quality_reports",
+        "market_bars",
+    }

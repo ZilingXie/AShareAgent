@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -10,6 +10,7 @@
 - 默认测试不访问外网；真实数据源测试必须单独标记。
 - `ASHARE_PROVIDER=akshare` 只读取 `configs/universe.yml` 中 `enabled=true` 的固定池资产。
 - `AKShareProvider` 的日线行情标准化为统一 `MarketBar`：ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`，返回的英文字段会映射为 `date/open/high/low/close/volume/amount` 对应的 domain 字段。
+- `DataProvider.get_intraday_bars(trade_date, symbols, period="1")` 返回统一 `IntradayBar`，用于盘中模拟成交估价；ETF 使用 `fund_etf_hist_min_em`，A 股使用 `stock_zh_a_hist_min_em`。接口异常必须抛 `DataProviderError`，不能静默返回空数据或切回 Mock。
 
 ## 审计字段原则
 
@@ -23,6 +24,7 @@
 - 股票代码或市场标识。
 - 决策原因。
 - 失败原因或排除原因。
+- 模拟成交依据、估价方法、价格时间点和是否使用日线兜底。
 - 策略参数版本和参数快照。
 - 运行模式 `run_mode` 和回放批次 `backtest_id`。
 
@@ -30,11 +32,11 @@
 
 当前代码中的标准模型集中在 `src/ashare_agent/domain.py`：
 
-- 数据输入：`Asset`、`MarketBar`、`AnnouncementItem`、`NewsItem`、`PolicyItem`、`IndustrySnapshot`。
+- 数据输入：`Asset`、`MarketBar`、`IntradayBar`、`AnnouncementItem`、`NewsItem`、`PolicyItem`、`IndustrySnapshot`。
 - 分析输出：`AnnouncementEvent`、`TechnicalIndicator`、`MarketRegime`、`LLMAnalysis`。
 - 数据质量与可靠性：`DataQualityIssue`、`DataQualityReport`、`TradingCalendarDay`、`DataReliabilityIssue`、`DataSourceHealth`、`MarketBarGap`、`DataReliabilityReport`。
 - 信号与风控：`WatchlistCandidate`、`Signal`、`RiskDecision`、`ExitDecision`。
-- 模拟交易：`PaperOrder`、`PaperPosition`、`PortfolioSnapshot`、`ReviewReport`。
+- 模拟交易：`PaperOrder`、`PaperPosition`、`PortfolioSnapshot`、`ReviewReport`、`ExecutionEvent`。
 - 流程审计：`SourceSnapshot`、`MarketDataset`、`PipelineRunContext`、`AgentResult`。
 
 ## 公告分析规则契约
@@ -81,7 +83,8 @@ Alembic 迁移创建以下表分组：
 当前 repository 已将核心运行结果写入专表，payload 额外保存策略参数版本、完整参数快照、`run_mode` 和 `backtest_id`，不新增数据库列：
 
 - `pre-market` 先写入 `universe_assets`、`raw_source_snapshots`、`trading_calendar`、`market_bars`、`announcements`、`news_items`、`policy_items`，再写入 `data_quality_reports`；质量通过或仅警告后继续写 `technical_indicators`、`pipeline_runs`、`llm_analyses`、`watchlist_candidates`、`signals`、`risk_decisions` 和 `artifacts`。
-- `intraday-watch` 从 repository 读取同日成功 `pre-market` 风控决策、开放持仓、最新现金和当日已有模拟订单；当日已有模拟订单只认同日成功 `intraday_watch` run 生成的 `paper_orders`。若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`，再写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`pipeline_runs` 和 `artifacts`。同日重复运行不会重复生成买卖订单。
+- `intraday-watch` 从 repository 读取同日成功 `pre-market` 风控决策、开放持仓、最新现金和当日已有模拟订单；当日已有模拟订单只认同日成功 `intraday_watch` run 生成的 `paper_orders`。若当前 pipeline 没有内存中的 market dataset，会重新采集并写入 raw/source 专表和 `trading_calendar`。执行模拟买卖前会按获批买入 symbol 和当前 open position symbol 采集 1 分钟 K 线，只写 `raw_source_snapshots(source=intraday_bars)` 审计，不新增分钟线专表。成功成交写入 `paper_orders`、`paper_positions`、`portfolio_snapshots`、`pipeline_runs` 和 `artifacts`；同日重复运行不会重复生成买卖订单。
+- 模拟成交契约：`IntradayPriceEstimator` 固定选择当日首个有效 1 分钟 K 线；有效 K 线必须有 timestamp、正数 OHLC、`volume > 0` 且 `amount > 0`。买入遇涨停、卖出遇跌停、缺少分钟线或无有效成交量时，不写 `paper_orders`，只在 `intraday_watch` artifact / pipeline payload 的 `execution_events` 中记录 `status=rejected`、失败原因、估价方法和 `used_daily_fallback=false`。成功 `PaperOrder` payload 必须包含 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price`、`used_daily_fallback=false` 和空的 `execution_failure_reason`；历史订单缺少这些字段时读取层按可选字段兼容。
 - `post-market-review` 不新增 `paper_orders`，只读取同日成功 `intraday_watch` run 生成的盘中订单和持仓，执行收盘盯市，再写入 `paper_positions`、`portfolio_snapshots`、`review_reports`、`pipeline_runs` 和 `artifacts`。盘后还会生成 `strategy-experiment.md`，并在 `post_market_review` artifact 与 pipeline run payload 中记录 `new_order_count=0`、`reviewed_order_count` 和 `experiment_report_path`；`reviewed_order_count` 不统计旧流程遗留的 `post_market_review` 订单。
 - 历史兼容规则：旧数据库中已经存在的 `post_market_review` 订单不删除、不迁移；dashboard “盘中模拟订单”、盘后 `reviewed_orders` 和复盘订单统计只读取可关联到同日成功 `intraday_watch` run 的订单。
 - `daily-run` 先采集并 upsert 结构化 `trading_calendar`；非交易日写 `pipeline_runs(stage=daily_run,status=skipped)` 和 `data_reliability_reports` 后退出；交易日依次运行盘前、盘中和复盘，并在成功或失败后写 `data_reliability_reports` 和 `daily_run` 审计。
@@ -123,7 +126,7 @@ Alembic 迁移创建以下表分组：
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
-- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports、range trends 和 strategy comparison。
+- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、execution events、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports、range trends 和 strategy comparison。
 - `DashboardDaySummary.llm_analysis` 使用所选交易日最新成功 `pre_market` run 对应的 `llm_analyses` 记录；没有成功盘前 run 或没有 LLM 记录时为 `null`，记录存在但 payload 缺字段或类型错误时显式失败。
 - `DashboardLLMAnalysis` 字段包括 `run_id`、`trade_date`、`model`、`summary`、`key_points`、`risk_notes` 和 `created_at`。DTO 只展示已落库 LLM 审计内容，不在查询时重新调用 LLM。
 - `list_backtests(limit)` 返回最近的 backtest summary run；`strategy_comparison(backtest_ids)` 只比较明确传入的 backtest 批次。
@@ -144,7 +147,8 @@ Alembic 迁移创建以下表分组：
   - `average_holding_days`：只统计 closed trade，沿用自然日口径；无 closed trade 时为 `0`。
   - `sell_reason_distribution`：按截至所选日可关联到成功 `intraday_watch` run 的模拟卖单 `reason` 原文计数，不做额外归类。
   - `max_drawdown`：按截至所选日 `portfolio_snapshots.total_value` 序列计算峰值到谷值最大跌幅，输出正数百分比小数。
-- `DashboardPaperOrder.reason` 使用 `PaperOrder.reason` 原文；卖出原因不做自动归类。`PaperOrder.is_real_trade` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，前端也会显式展示该字段。
+- `DashboardPaperOrder.reason` 使用 `PaperOrder.reason` 原文；卖出原因不做自动归类。`PaperOrder.is_real_trade`、`execution_source`、`execution_timestamp`、`execution_method`、`reference_price`、`used_daily_fallback` 和 `execution_failure_reason` 必须保留在 DTO 和 API JSON 中；正常模拟订单必须为 `False`，`used_daily_fallback` 必须为 `False`，前端也会显式展示这些字段。
+- `DashboardExecutionEvent` 从最新成功 `intraday_watch` run payload 的 `execution_events` 读取，展示无法成交的 symbol、side、估价方法、失败原因、参考价和 `used_daily_fallback`。该 DTO 只读展示失败审计，不代表订单。
 - 查询层遇到缺字段、字段类型错误、未知枚举或当前阶段语义内的 `paper_orders.is_real_trade=True` 时必须显式失败，不能补默认值或静默兜底；复盘指标计算也遵守同一规则。
 
 ## 后续维护

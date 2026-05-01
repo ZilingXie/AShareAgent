@@ -114,6 +114,40 @@ def test_akshare_provider_returns_standard_audit_models(
     def tool_trade_date_hist_sina() -> FakeDataFrame:
         return FakeDataFrame([{"trade_date": "2026-04-28"}, {"trade_date": "2026-04-29"}])
 
+    def fund_etf_hist_min_em(**kwargs: object) -> FakeDataFrame:
+        assert kwargs["symbol"] == "510300"
+        assert kwargs["period"] == "1"
+        return FakeDataFrame(
+            [
+                {
+                    "时间": "2026-04-29 09:31:00",
+                    "开盘": "4.18",
+                    "收盘": "4.19",
+                    "最高": "4.20",
+                    "最低": "4.18",
+                    "成交量": 100,
+                    "成交额": "419",
+                }
+            ]
+        )
+
+    def stock_zh_a_hist_min_em(**kwargs: object) -> FakeDataFrame:
+        assert kwargs["symbol"] == "600000"
+        assert kwargs["period"] == "1"
+        return FakeDataFrame(
+            [
+                {
+                    "时间": "2026-04-29 09:31:00",
+                    "开盘": "9.10",
+                    "收盘": "9.11",
+                    "最高": "9.12",
+                    "最低": "9.09",
+                    "成交量": 200,
+                    "成交额": "1822",
+                }
+            ]
+        )
+
     fake_akshare = ModuleType("akshare")
     fake_akshare.__dict__.update(
         {
@@ -123,6 +157,8 @@ def test_akshare_provider_returns_standard_audit_models(
             "stock_news_em": stock_news_em,
             "news_cctv": news_cctv,
             "tool_trade_date_hist_sina": tool_trade_date_hist_sina,
+            "fund_etf_hist_min_em": fund_etf_hist_min_em,
+            "stock_zh_a_hist_min_em": stock_zh_a_hist_min_em,
         }
     )
     monkeypatch.setitem(sys.modules, "akshare", fake_akshare)
@@ -138,9 +174,16 @@ def test_akshare_provider_returns_standard_audit_models(
     news = provider.get_news(date(2026, 4, 29))
     policy = provider.get_policy_items(date(2026, 4, 29))
     calendar = provider.get_trade_calendar()
+    intraday_bars = provider.get_intraday_bars(
+        date(2026, 4, 29),
+        symbols=["510300", "600000"],
+    )
 
     assert {bar.symbol for bar in bars} == {"510300", "600000"}
     assert all(bar.source == "akshare" for bar in bars)
+    assert {bar.symbol for bar in intraday_bars} == {"510300", "600000"}
+    assert all(bar.source == "akshare_intraday" for bar in intraday_bars)
+    assert intraday_bars[0].timestamp.isoformat() == "2026-04-29T09:31:00"
     assert {item.symbol for item in announcements} == {"510300"}
     assert {item.symbol for item in news} == {"510300", "600000"}
     assert policy[0].source == "akshare_cctv"

@@ -47,7 +47,28 @@ export interface DashboardPaperOrder {
   slippage: string;
   reason: string;
   is_real_trade: boolean;
+  execution_source: string | null;
+  execution_timestamp: string | null;
+  execution_method: string | null;
+  reference_price: string | null;
+  used_daily_fallback: boolean;
+  execution_failure_reason: string | null;
   created_at: string | null;
+}
+
+export interface DashboardExecutionEvent {
+  symbol: string;
+  trade_date: string;
+  side: string;
+  status: string;
+  execution_method: string;
+  used_daily_fallback: boolean;
+  execution_source: string | null;
+  execution_timestamp: string | null;
+  reference_price: string | null;
+  estimated_price: string | null;
+  slippage: string | null;
+  failure_reason: string | null;
 }
 
 export interface DashboardPosition {
@@ -243,6 +264,7 @@ export interface DashboardDay {
   risk_decisions: DashboardRiskDecision[];
   llm_analysis: DashboardLLMAnalysis | null;
   paper_orders: DashboardPaperOrder[];
+  execution_events: DashboardExecutionEvent[];
   positions: DashboardPosition[];
   portfolio_snapshot: DashboardPortfolioSnapshot | null;
   review_report: DashboardReviewReport | null;

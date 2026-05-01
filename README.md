@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / PostgreSQL Persistence / Paper Trading Lifecycle / Strategy Params Audit / Strategy Backtest / Read-only Dashboard`
+当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / PostgreSQL Persistence / Paper Trading Lifecycle / Intraday Price Realism / Strategy Params Audit / Strategy Backtest / Read-only Dashboard`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -27,6 +27,7 @@
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
 - 在盘中完成模拟买卖和持仓/组合更新，收盘后完成盯市、复盘结果和错误归因。
+- 模拟成交使用分钟线估价，不使用日线 close 兜底；无法成交时记录可审计失败原因。
 - 用 mock 或真实公开源做多日历史回放，并按策略版本比较胜率、回撤、收益、拒绝率和数据质量失败率。
 - 通过只读观察台查看日期范围趋势、pipeline run、观察名单、风控、盘中模拟订单、持仓、复盘、数据源状态和运行可靠性报告。
 
@@ -38,6 +39,7 @@ AShareAgent
 │   ├── 公告抓取
 │   ├── 新闻抓取
 │   ├── 行情抓取
+│   ├── 分钟线抓取
 │   ├── 指数/板块数据
 │   └── 交易日历
 │
@@ -113,7 +115,7 @@ BacktestRunner
 - `SignalEngine`：负责策略规则、候选股票评分和观察名单决策，不绕过风控。
 - `StrategyParamsAgent`：负责加载和校验策略参数配置，并为每次 pipeline run 生成可追溯参数快照。
 - `RiskManager`：负责所有交易前风险过滤和仓位约束，是模拟交易前的强制门禁。
-- `PaperTrader`：负责模拟成交、持仓、滑点和资金曲线，不接真实交易通道。
+- `PaperTrader`：负责基于盘中分钟线估价模拟成交、持仓、滑点和资金曲线，不接真实交易通道。
 - `ReviewAgent`：负责复盘、统计、错误归因和参数调整建议，不直接修改生产策略参数。
 - `BacktestRunner`：负责多日策略回放，只复用 `PaperTrader` 模拟交易闭环，不接真实券商。
 
@@ -193,6 +195,7 @@ BacktestRunner
 - [x] 展示候选股票评分。
 - [x] 展示风控拒绝原因。
 - [x] 展示盘中模拟订单和真实交易安全标记。
+- [x] 展示模拟订单成交依据、是否日线兜底和成交失败原因。
 - [x] 展示模拟持仓和资金曲线摘要。
 - [x] 展示日期范围内的资金曲线、信号趋势、风控拒绝原因和数据质量趋势。
 - [x] 展示收盘复盘结果。
@@ -252,7 +255,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 策略参数默认从 `configs/strategy_params.yml` 读取，也可用 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向另一份配置。配置包含 `risk`、`paper_trader` 和 `signal` 三组参数；`signal` 控制 SignalEngine 权重、最低分阈值和每日最大信号数。策略参数配置缺字段、百分比非法、持有期范围非法或每日最大信号数小于 1 时，CLI 会明确失败，不会使用代码里的静默默认值。
 
-当前真实日线行情使用 AKShare 的 Sina 路径：ETF 走 `fund_etf_hist_sina`，A 股走 `stock_zh_a_daily`。EastMoney 历史 K 线端点在本机代理和直连下都可能断开，provider 不会静默切回 Mock 或伪造行情。
+当前真实日线行情使用 AKShare 的 Sina 路径：ETF 走 `fund_etf_hist_sina`，A 股走 `stock_zh_a_daily`。盘中成交估价使用 1 分钟 K 线：ETF 走 `fund_etf_hist_min_em`，A 股走 `stock_zh_a_hist_min_em`。EastMoney 历史 K 线端点在本机代理和直连下都可能断开，provider 不会静默切回 Mock 或伪造行情。
 
 运行 CLI 前必须先配置 `DATABASE_URL` 并完成迁移。CLI 不配置数据库会明确失败，避免误以为结果已持久化。
 
@@ -305,7 +308,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
-`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。买卖订单写入 `paper_orders`，持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`；重复运行同一交易日不会重复买入或卖出。
+`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计；成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。缺少分钟线、停牌、买入涨停或卖出跌停时不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
 
 `post-market-review` 不新增 `paper_orders`，只恢复同日成功 `intraday_watch` run 生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。`reviewed_order_count` 和复盘报告里的订单列表只统计盘中订单，历史 `post_market_review` 订单不会污染新阶段语义。
 
@@ -325,7 +328,7 @@ pnpm --dir frontend install
 pnpm --dir frontend dev --host 127.0.0.1 --port 5173
 ```
 
-前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。页面支持日期范围筛选、范围趋势和策略版本对比；所选单日的“盘中模拟订单”只展示同日成功 `intraday_watch` run 的订单，历史盘后订单不会展示到该区域。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何当前盘中订单出现 `True` 都视为安全异常。
+前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易或模拟交易操作按钮。页面支持日期范围筛选、范围趋势和策略版本对比；所选单日的“盘中模拟订单”只展示同日成功 `intraday_watch` run 的订单，历史盘后订单不会展示到该区域。订单表会显示成交依据、价格时间点、估价方法、是否使用日线兜底和真实交易标记；“成交失败”区域展示分钟线缺失、停牌或涨跌停导致的 rejected execution events。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何当前盘中订单出现 `True` 都视为安全异常。
 
 前端验证：
 

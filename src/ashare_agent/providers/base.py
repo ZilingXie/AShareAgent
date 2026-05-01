@@ -7,6 +7,7 @@ from ashare_agent.domain import (
     AnnouncementItem,
     Asset,
     IndustrySnapshot,
+    IntradayBar,
     MarketBar,
     NewsItem,
     PolicyItem,
@@ -21,6 +22,13 @@ class DataProvider(Protocol):
     def get_universe(self) -> list[Asset]: ...
 
     def get_market_bars(self, trade_date: date, lookback_days: int) -> list[MarketBar]: ...
+
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]: ...
 
     def get_announcements(self, trade_date: date) -> list[AnnouncementItem]: ...
 

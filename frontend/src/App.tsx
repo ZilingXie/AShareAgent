@@ -32,6 +32,7 @@ import type {
   DashboardStrategyComparisonItem,
   DashboardDataQualityReport,
   DashboardDataReliabilityReport,
+  DashboardExecutionEvent,
   DashboardLLMAnalysis,
   DashboardPaperOrder,
   DashboardPosition,
@@ -52,6 +53,8 @@ const statusLabels: Record<string, string> = {
   passed: "通过",
   warning: "警告",
   skipped: "跳过",
+  rejected: "拒绝",
+  filled: "成交",
 };
 
 export default function App(): JSX.Element {
@@ -331,6 +334,10 @@ export default function App(): JSX.Element {
 
             <Section icon={Activity} title="盘中模拟订单">
               <OrdersTable orders={day.paper_orders} />
+            </Section>
+
+            <Section icon={AlertTriangle} title="成交失败">
+              <ExecutionEventsTable events={day.execution_events} />
             </Section>
 
             <Section icon={BriefcaseBusiness} title="当前持仓">
@@ -698,7 +705,7 @@ function StatusBadge({ status }: { status: string }): JSX.Element {
   const className =
     status === "success" || status === "passed"
       ? "safe"
-      : status === "failed"
+      : status === "failed" || status === "rejected"
         ? "danger"
         : status === "warning" || status === "skipped"
           ? "warning"
@@ -929,6 +936,10 @@ function OrdersTable({ orders }: { orders: DashboardPaperOrder[] }): JSX.Element
           <th>金额</th>
           <th>原因</th>
           <th>滑点</th>
+          <th>成交依据</th>
+          <th>价格时间点</th>
+          <th>估价方法</th>
+          <th>日线兜底</th>
           <th>真实交易</th>
         </tr>
       </thead>
@@ -944,11 +955,64 @@ function OrdersTable({ orders }: { orders: DashboardPaperOrder[] }): JSX.Element
             <td>{money(order.amount)}</td>
             <td>{order.reason}</td>
             <td>{order.slippage}</td>
+            <td>{order.execution_source ?? "-"}</td>
+            <td>{order.execution_timestamp ?? "-"}</td>
+            <td>{order.execution_method ?? "-"}</td>
+            <td>
+              <span className={`badge ${order.used_daily_fallback ? "danger" : "safe"}`}>
+                {boolText(order.used_daily_fallback)}
+              </span>
+            </td>
             <td>
               <span className={`badge ${order.is_real_trade ? "danger" : "safe"}`}>
                 {boolText(order.is_real_trade)}
               </span>
             </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ExecutionEventsTable({ events }: { events: DashboardExecutionEvent[] }): JSX.Element {
+  const rejectedEvents = events.filter((event) => event.status === "rejected");
+  if (rejectedEvents.length === 0) {
+    return <EmptyState text="暂无成交失败" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>side</th>
+          <th>symbol</th>
+          <th>status</th>
+          <th>估价方法</th>
+          <th>成交依据</th>
+          <th>参考价</th>
+          <th>日线兜底</th>
+          <th>失败原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rejectedEvents.map((event) => (
+          <tr key={`${event.trade_date}-${event.side}-${event.symbol}-${event.failure_reason}`}>
+            <td>
+              <span className={`side ${event.side}`}>{event.side}</span>
+            </td>
+            <td>{event.symbol}</td>
+            <td>
+              <StatusBadge status={event.status} />
+            </td>
+            <td>{event.execution_method}</td>
+            <td>{event.execution_source ?? "-"}</td>
+            <td>{event.reference_price ? money(event.reference_price) : "-"}</td>
+            <td>
+              <span className={`badge ${event.used_daily_fallback ? "danger" : "safe"}`}>
+                {boolText(event.used_daily_fallback)}
+              </span>
+            </td>
+            <td className="failure-cell">{event.failure_reason ?? "-"}</td>
           </tr>
         ))}
       </tbody>

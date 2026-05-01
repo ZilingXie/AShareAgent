@@ -8,6 +8,7 @@ from ashare_agent.domain import (
     AnnouncementItem,
     Asset,
     IndustrySnapshot,
+    IntradayBar,
     MarketBar,
     NewsItem,
     PolicyItem,
@@ -122,6 +123,65 @@ class AKShareProvider:
                 raise
             except Exception as exc:  # noqa: BLE001
                 raise DataProviderError(f"{asset.symbol} 行情解析失败: {exc}") from exc
+        return bars
+
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]:
+        ak = self._ak()
+        assets_by_symbol = {asset.symbol: asset for asset in self._universe}
+        start_date = f"{trade_date.isoformat()} 09:30:00"
+        end_date = f"{trade_date.isoformat()} 15:00:00"
+        bars: list[IntradayBar] = []
+        for symbol in symbols:
+            asset = assets_by_symbol.get(symbol)
+            if asset is None:
+                raise DataProviderError(f"{symbol} 不在 universe 中，无法获取分钟线")
+            try:
+                if asset.asset_type == "ETF":
+                    df = ak.fund_etf_hist_min_em(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        period=period,
+                        adjust="",
+                    )
+                else:
+                    df = ak.stock_zh_a_hist_min_em(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        period=period,
+                        adjust="",
+                    )
+            except Exception as exc:  # noqa: BLE001
+                raise DataProviderError(f"{symbol} 分钟线获取失败: {exc}") from exc
+            try:
+                for row in df.to_dict("records"):
+                    timestamp = _parse_datetime(_row_value(row, "时间", "time"), trade_date)
+                    if timestamp.date() != trade_date:
+                        continue
+                    bars.append(
+                        IntradayBar(
+                            symbol=symbol,
+                            trade_date=trade_date,
+                            timestamp=timestamp,
+                            open=_to_decimal(_row_value(row, "开盘", "open")),
+                            high=_to_decimal(_row_value(row, "最高", "high")),
+                            low=_to_decimal(_row_value(row, "最低", "low")),
+                            close=_to_decimal(_row_value(row, "收盘", "close")),
+                            volume=int(_to_decimal(_row_value(row, "成交量", "volume"))),
+                            amount=_to_decimal(_row_value(row, "成交额", "amount")),
+                            source="akshare_intraday",
+                        )
+                    )
+            except DataProviderError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                raise DataProviderError(f"{symbol} 分钟线解析失败: {exc}") from exc
         return bars
 
     def get_announcements(self, trade_date: date) -> list[AnnouncementItem]:

@@ -12,6 +12,7 @@ SignalAction = Literal["observe", "paper_buy", "paper_sell"]
 OrderSide = Literal["buy", "sell"]
 PositionStatus = Literal["open", "closed"]
 ExitReason = Literal["stop_loss", "trend_weakness", "max_holding_days"]
+ExecutionStatus = Literal["filled", "rejected"]
 DataQualitySeverity = Literal["warning", "error"]
 DataQualityStatus = Literal["passed", "warning", "failed"]
 DataReliabilityStatus = Literal["passed", "warning", "failed", "skipped"]
@@ -47,6 +48,21 @@ class Asset:
 class MarketBar:
     symbol: str
     trade_date: date
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+    amount: Decimal
+    source: str
+    collected_at: datetime = field(default_factory=now_utc)
+
+
+@dataclass(frozen=True)
+class IntradayBar:
+    symbol: str
+    trade_date: date
+    timestamp: datetime
     open: Decimal
     high: Decimal
     low: Decimal
@@ -330,7 +346,33 @@ class PaperOrder:
     slippage: Decimal
     reason: str
     is_real_trade: bool = False
+    execution_source: str | None = None
+    execution_timestamp: datetime | None = None
+    execution_method: str | None = None
+    reference_price: Decimal | None = None
+    used_daily_fallback: bool = False
+    execution_failure_reason: str | None = None
     created_at: datetime = field(default_factory=now_utc)
+
+
+@dataclass(frozen=True)
+class ExecutionEvent:
+    symbol: str
+    trade_date: date
+    side: OrderSide
+    status: ExecutionStatus
+    execution_method: str
+    used_daily_fallback: bool
+    execution_source: str | None = None
+    execution_timestamp: datetime | None = None
+    reference_price: Decimal | None = None
+    estimated_price: Decimal | None = None
+    slippage: Decimal | None = None
+    failure_reason: str | None = None
+
+
+def empty_execution_events() -> list[ExecutionEvent]:
+    return []
 
 
 @dataclass
@@ -354,6 +396,7 @@ class PaperTradeResult:
     cash: Decimal
     orders: list[PaperOrder]
     positions: list[PaperPosition]
+    execution_events: list[ExecutionEvent] = field(default_factory=empty_execution_events)
 
 
 @dataclass(frozen=True)

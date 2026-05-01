@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -132,7 +132,21 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
         intraday_context,
         "intraday_watch",
         "success",
-        {"report_path": "reports/2026-04-29/intraday-watch.md", "order_count": 2},
+        {
+            "report_path": "reports/2026-04-29/intraday-watch.md",
+            "order_count": 2,
+            "execution_events": [
+                {
+                    "symbol": "512000",
+                    "trade_date": "2026-04-29",
+                    "side": "buy",
+                    "status": "rejected",
+                    "execution_method": "first_valid_1m_bar",
+                    "used_daily_fallback": False,
+                    "failure_reason": "无分钟线，无法成交",
+                }
+            ],
+        },
     )
     repository.save_paper_orders(
         intraday_context,
@@ -147,6 +161,11 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
                 amount=Decimal("410.41"),
                 slippage=Decimal("0.001"),
                 reason="通过",
+                execution_source="mock_intraday",
+                execution_timestamp=datetime(2026, 4, 29, 9, 31),
+                execution_method="first_valid_1m_bar",
+                reference_price=Decimal("4.1000"),
+                used_daily_fallback=False,
             ),
             PaperOrder(
                 order_id="paper-2026-04-29-159915-sell",
@@ -158,6 +177,11 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
                 amount=Decimal("5500"),
                 slippage=Decimal("0.001"),
                 reason="趋势走弱卖出",
+                execution_source="mock_intraday",
+                execution_timestamp=datetime(2026, 4, 29, 9, 31),
+                execution_method="first_valid_1m_bar",
+                reference_price=Decimal("110"),
+                used_daily_fallback=False,
             )
         ],
     )
@@ -343,6 +367,14 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     ]
     assert day.paper_orders[0].is_real_trade is False
     assert day.paper_orders[0].price == "4.1041"
+    assert day.paper_orders[0].execution_source == "mock_intraday"
+    assert day.paper_orders[0].execution_timestamp == "2026-04-29T09:31:00"
+    assert day.paper_orders[0].execution_method == "first_valid_1m_bar"
+    assert day.paper_orders[0].reference_price == "4.1000"
+    assert day.paper_orders[0].used_daily_fallback is False
+    assert day.paper_orders[0].execution_failure_reason is None
+    assert day.execution_events[0].status == "rejected"
+    assert day.execution_events[0].failure_reason == "无分钟线，无法成交"
     assert day.positions[0].pnl_amount == "20.00"
     assert day.positions[0].holding_days == 2
     assert day.portfolio_snapshot is not None

@@ -17,6 +17,8 @@ def test_akshare_external_smoke_returns_calendar_and_market_bars() -> None:
 
     calendar = provider.get_trade_calendar()
     bars = provider.get_market_bars(date(2026, 4, 29), lookback_days=2)
+    intraday_bars = provider.get_intraday_bars(date(2026, 4, 29), [assets[0].symbol])
 
     assert calendar
     assert bars
+    assert intraday_bars

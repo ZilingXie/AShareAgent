@@ -160,6 +160,14 @@ def _optional_date(value: object) -> date | None:
     return _date_value(value)
 
 
+def _optional_datetime(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
 def _optional_decimal(value: object) -> Decimal | None:
     if value is None:
         return None
@@ -202,6 +210,24 @@ def _paper_order_from_payload(payload: Mapping[str, object]) -> PaperOrder:
         slippage=_decimal_value(payload["slippage"]),
         reason=str(payload["reason"]),
         is_real_trade=bool(payload.get("is_real_trade", False)),
+        execution_source=(
+            str(payload["execution_source"])
+            if payload.get("execution_source") is not None
+            else None
+        ),
+        execution_timestamp=_optional_datetime(payload.get("execution_timestamp")),
+        execution_method=(
+            str(payload["execution_method"])
+            if payload.get("execution_method") is not None
+            else None
+        ),
+        reference_price=_optional_decimal(payload.get("reference_price")),
+        used_daily_fallback=bool(payload.get("used_daily_fallback", False)),
+        execution_failure_reason=(
+            str(payload["execution_failure_reason"])
+            if payload.get("execution_failure_reason") is not None
+            else None
+        ),
     )
 
 

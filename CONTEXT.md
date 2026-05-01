@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/order-stage-filter`：修复旧流程遗留 `post_market_review` 模拟订单污染“盘中模拟订单”和盘后 reviewed orders 统计的问题。
+盘中成交真实度增强已完成实现：`intraday_watch` 使用首个有效 1 分钟 K 线估价模拟成交，缺少分钟线、停牌或涨跌停时不成交并记录失败事件。
 
 ## 上次停在哪
 
@@ -46,7 +46,9 @@
 - 本轮已将 `ASharePipeline` 的盘中交易输入准备、模拟买卖执行、盘中报告、收盘复盘总结拆成内部方法，保持现有 CLI/API/schema 不变。
 - 前端单日详情已将“模拟订单”改为“盘中模拟订单”，将“复盘报告”改为“收盘复盘”，空状态同步改为“暂无盘中模拟订单”。
 - 遗留 `codex/stage-contracts` worktree 已处理，当前 `main` 保留已合入的三阶段职责重排。
-- 本轮正在实现订单阶段过滤：旧 `post_market_review` 订单保留在数据库中，但 dashboard 盘中订单、盘后 `reviewed_orders`、`reviewed_order_count` 和复盘卖出原因统计只读取可关联到同日成功 `intraday_watch` run 的订单。
+- 订单阶段过滤已完成：旧 `post_market_review` 订单保留在数据库中，但 dashboard 盘中订单、盘后 `reviewed_orders`、`reviewed_order_count` 和复盘卖出原因统计只读取可关联到同日成功 `intraday_watch` run 的订单。
+- 盘中成交真实度增强已实现：DataProvider 增加分钟线接口，Mock/AKShare provider 可返回标准 `IntradayBar`；PaperTrader 不再用日线 close 成交，订单记录成交来源、价格时间点、估价方法、参考价和 `used_daily_fallback=False`。
+- 不可成交不写 `paper_orders`，只在 `intraday_watch` artifact / pipeline payload 的 `execution_events` 中记录失败原因；dashboard 已增加成交依据和成交失败只读展示。
 
 ## 近期关键决定和原因
 
@@ -63,6 +65,7 @@
 - `intraday_watch` 必须依赖同日成功 `pre_market` 风控决策；缺失时显式失败并写 failed run，不空跑。
 - `post_market_review` 不再新增 `paper_orders`；盘后只读取盘中订单和持仓，生成收盘盯市、复盘和审计。
 - 历史 `post_market_review` 模拟订单不删除、不迁移；读取层用 `pipeline_runs.stage` 过滤，新阶段语义只承认成功 `intraday_watch` run 生成的盘中订单。
+- 盘中模拟成交只能使用分钟线估价，不允许日线 close 兜底成交；缺少分钟线、停牌、买入涨停或卖出跌停都必须记录 rejected execution event，不能写失败订单。
 - 策略参数使用显式版本号加完整快照，不使用自动哈希；当前已覆盖风控、模拟交易和 SignalEngine 评分参数。
 - backtest 结果不新增数据库表，每个交易日必须按 `pre_market -> intraday_watch -> post_market_review` 执行；订单只归属 `intraday_watch` run，并用现有 payload 专表和 `backtest_id` 隔离。
 - backtest 强制使用 mock LLM，避免多日回放消耗真实 API；真实数据失败必须记录失败并继续后续日期，不能切回 Mock 或伪造数据。
@@ -83,4 +86,4 @@
 
 ## 下一步
 
-- 下一步完成 `codex/order-stage-filter` 的全量验证、提交、合并回 `main`，并按 worktree 规则清理任务分支。
+- 下一步做完整验证、合并 `codex/intraday-price-realism` 回 `main`，然后继续真实 AKShare 分钟线外部验收。

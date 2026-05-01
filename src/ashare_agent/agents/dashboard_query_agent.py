@@ -94,7 +94,29 @@ class DashboardPaperOrder:
     slippage: str
     reason: str
     is_real_trade: bool
+    execution_source: str | None
+    execution_timestamp: str | None
+    execution_method: str | None
+    reference_price: str | None
+    used_daily_fallback: bool
+    execution_failure_reason: str | None
     created_at: str | None
+
+
+@dataclass(frozen=True)
+class DashboardExecutionEvent:
+    symbol: str
+    trade_date: str
+    side: str
+    status: str
+    execution_method: str
+    used_daily_fallback: bool
+    execution_source: str | None
+    execution_timestamp: str | None
+    reference_price: str | None
+    estimated_price: str | None
+    slippage: str | None
+    failure_reason: str | None
 
 
 @dataclass(frozen=True)
@@ -329,6 +351,10 @@ def _empty_paper_orders() -> list[DashboardPaperOrder]:
     return []
 
 
+def _empty_execution_events() -> list[DashboardExecutionEvent]:
+    return []
+
+
 def _empty_positions() -> list[DashboardPosition]:
     return []
 
@@ -354,6 +380,9 @@ class DashboardDaySummary:
     llm_analysis: DashboardLLMAnalysis | None = None
     risk_decisions: list[DashboardRiskDecision] = field(default_factory=_empty_risk_decisions)
     paper_orders: list[DashboardPaperOrder] = field(default_factory=_empty_paper_orders)
+    execution_events: list[DashboardExecutionEvent] = field(
+        default_factory=_empty_execution_events
+    )
     positions: list[DashboardPosition] = field(default_factory=_empty_positions)
     portfolio_snapshot: DashboardPortfolioSnapshot | None = None
     review_report: DashboardReviewReport | None = None
@@ -424,6 +453,7 @@ class DashboardQueryAgent:
             llm_analysis=self.llm_analysis(trade_date, pre_market_run_id),
             risk_decisions=self.risk_decisions(trade_date, pre_market_run_id),
             paper_orders=self.paper_orders(trade_date),
+            execution_events=self.execution_events(trade_date),
             positions=self.positions_as_of(trade_date),
             portfolio_snapshot=self.latest_portfolio_snapshot(trade_date),
             review_report=self.latest_review_report(trade_date),
@@ -568,6 +598,23 @@ class DashboardQueryAgent:
             )
             if _is_normal_row(row, "paper_orders")
         ]
+
+    def execution_events(self, trade_date: date) -> list[DashboardExecutionEvent]:
+        intraday_run_id = self._latest_successful_run_id(trade_date, "intraday_watch")
+        if intraday_run_id is None:
+            return []
+        rows = self.repository.payload_rows(
+            "pipeline_runs",
+            trade_date=trade_date,
+            run_id=intraday_run_id,
+        )
+        if not rows:
+            return []
+        payload = _payload(rows[-1], "pipeline_runs")
+        raw_events = payload.get("execution_events", [])
+        if not isinstance(raw_events, list):
+            raise ValueError("pipeline_runs 字段 execution_events 必须是 list")
+        return [self._execution_event(item) for item in cast(list[object], raw_events)]
 
     def positions_as_of(self, trade_date: date) -> list[DashboardPosition]:
         latest_by_symbol: dict[str, PayloadRecord] = {}
@@ -1081,7 +1128,42 @@ class DashboardQueryAgent:
             slippage=_required_decimal(payload, "paper_orders", "slippage"),
             reason=_required_str(payload, "paper_orders", "reason"),
             is_real_trade=is_real_trade,
+            execution_source=_optional_str(payload.get("execution_source")),
+            execution_timestamp=_optional_str(payload.get("execution_timestamp")),
+            execution_method=_optional_str(payload.get("execution_method")),
+            reference_price=_optional_decimal(payload.get("reference_price"), "paper_orders"),
+            used_daily_fallback=bool(payload.get("used_daily_fallback", False)),
+            execution_failure_reason=_optional_str(payload.get("execution_failure_reason")),
             created_at=_optional_str(payload.get("created_at")),
+        )
+
+    def _execution_event(self, value: object) -> DashboardExecutionEvent:
+        if not isinstance(value, Mapping):
+            raise ValueError("pipeline_runs execution_events item 必须是 object")
+        payload = cast(Mapping[str, object], value)
+        status = _required_str(payload, "execution_events", "status")
+        if status not in {"filled", "rejected"}:
+            raise ValueError(f"execution_events 字段 status 未知: {status}")
+        side = _required_str(payload, "execution_events", "side")
+        if side not in {"buy", "sell"}:
+            raise ValueError(f"execution_events 字段 side 未知: {side}")
+        return DashboardExecutionEvent(
+            symbol=_required_str(payload, "execution_events", "symbol"),
+            trade_date=_required_date(payload, "execution_events", "trade_date").isoformat(),
+            side=side,
+            status=status,
+            execution_method=_required_str(payload, "execution_events", "execution_method"),
+            used_daily_fallback=_required_bool(
+                payload,
+                "execution_events",
+                "used_daily_fallback",
+            ),
+            execution_source=_optional_str(payload.get("execution_source")),
+            execution_timestamp=_optional_str(payload.get("execution_timestamp")),
+            reference_price=_optional_decimal(payload.get("reference_price"), "execution_events"),
+            estimated_price=_optional_decimal(payload.get("estimated_price"), "execution_events"),
+            slippage=_optional_decimal(payload.get("slippage"), "execution_events"),
+            failure_reason=_optional_str(payload.get("failure_reason")),
         )
 
     def _position(self, row: PayloadRecord, trade_date: date) -> DashboardPosition:
@@ -1435,6 +1517,12 @@ def _optional_decimal_value(value: object, table_name: str, field_name: str) -> 
     if value is None:
         return None
     return _decimal_value(value, table_name, field_name)
+
+
+def _optional_decimal(value: object, table_name: str) -> str | None:
+    if value is None:
+        return None
+    return _decimal_text(_decimal_value(value, table_name, "decimal"))
 
 
 def _date_value(value: object, table_name: str, field_name: str) -> date:

@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from typing import Any, TypeVar
 
 from ashare_agent.domain import (
+    IntradayBar,
     MarketDataset,
     SourceSnapshot,
     TradingCalendarDay,
@@ -21,6 +22,12 @@ class TradeCalendarCollection:
     snapshot: TradingCalendarSnapshot | None
     dates: list[date]
     days: list[TradingCalendarDay]
+    source_snapshot: SourceSnapshot
+
+
+@dataclass(frozen=True)
+class IntradayBarsCollection:
+    bars: list[IntradayBar]
     source_snapshot: SourceSnapshot
 
 
@@ -127,6 +134,26 @@ class DataCollector:
             days=self._structured_trade_calendar_days(calendar_dates),
             source_snapshot=snapshots[0],
         )
+
+    def collect_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> IntradayBarsCollection:
+        snapshots: list[SourceSnapshot] = []
+        bars = self._collect(
+            "intraday_bars",
+            trade_date,
+            lambda: self._provider.get_intraday_bars(trade_date, symbols, period),
+            snapshots,
+            lambda rows: {
+                "requested_symbols": symbols,
+                "returned_symbols": sorted({bar.symbol for bar in rows}),
+                "period": period,
+            },
+        )
+        return IntradayBarsCollection(bars=bars, source_snapshot=snapshots[0])
 
     def collect(self, trade_date: date, lookback_days: int = 30) -> MarketDataset:
         snapshots: list[SourceSnapshot] = []

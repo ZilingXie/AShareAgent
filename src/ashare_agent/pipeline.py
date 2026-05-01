@@ -21,6 +21,8 @@ from ashare_agent.agents.signal_engine import SignalEngine
 from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyParamsAgent
 from ashare_agent.domain import (
     AgentResult,
+    ExecutionEvent,
+    IntradayBar,
     MarketDataset,
     PaperOrder,
     PipelineRunContext,
@@ -93,6 +95,7 @@ class ASharePipeline:
             initial_cash=self.strategy_params.paper_trader.initial_cash,
             position_size_pct=self.strategy_params.paper_trader.position_size_pct,
             slippage_pct=self.strategy_params.paper_trader.slippage_pct,
+            price_limit_pct=self.strategy_params.risk.price_limit_pct,
         )
         self.review_agent = ReviewAgent()
         self.llm_client = llm_client
@@ -354,12 +357,15 @@ class ASharePipeline:
         dataset: MarketDataset,
         decisions: list[RiskDecision],
         existing_orders: list[PaperOrder],
-    ) -> tuple[list[PaperOrder], PortfolioSnapshot]:
+    ) -> tuple[list[PaperOrder], PortfolioSnapshot, list[ExecutionEvent]]:
         trade_date = context.trade_date
+        execution_symbols = self._execution_symbols(decisions)
+        intraday_bars = self._collect_intraday_bars_for_execution(context, execution_symbols)
         buy_result = self.trader.apply_pre_market_decisions(
             trade_date=trade_date,
             decisions=decisions,
             bars=dataset.bars,
+            intraday_bars=intraday_bars,
             existing_orders=existing_orders,
         )
         self.trader.mark_to_market(dataset.bars)
@@ -374,9 +380,11 @@ class ASharePipeline:
             trade_date=trade_date,
             decisions=exit_decisions,
             bars=dataset.bars,
+            intraday_bars=intraday_bars,
             existing_orders=existing_orders + buy_result.orders,
         )
         orders = buy_result.orders + sell_result.orders
+        execution_events = buy_result.execution_events + sell_result.execution_events
         snapshot, _ = self.review_agent.review(
             trade_date=trade_date,
             cash=self.trader.cash,
@@ -385,12 +393,44 @@ class ASharePipeline:
         self.repository.save_paper_orders(context, orders)
         self.repository.save_paper_positions(context, self.trader.positions)
         self.repository.save_portfolio_snapshot(context, snapshot)
-        return orders, snapshot
+        return orders, snapshot, execution_events
+
+    def _execution_symbols(self, decisions: list[RiskDecision]) -> list[str]:
+        symbols = {
+            decision.symbol
+            for decision in decisions
+            if decision.approved and decision.signal_action == "paper_buy"
+        }
+        symbols.update(position.symbol for position in self.trader.open_positions())
+        return sorted(symbols)
+
+    def _collect_intraday_bars_for_execution(
+        self,
+        context: PipelineRunContext,
+        symbols: list[str],
+    ) -> list[IntradayBar]:
+        if not symbols:
+            return []
+        collection = self.collector.collect_intraday_bars(context.trade_date, symbols, period="1")
+        self.repository.save_raw_source_snapshots(context, [collection.source_snapshot])
+        if collection.source_snapshot.status == "failed":
+            failure_reason = collection.source_snapshot.failure_reason or "unknown failure"
+            payload = {
+                "run_id": context.run_id,
+                "failure_reason": f"分钟线获取失败: {failure_reason}",
+                **self._run_scope_payload(),
+                **self._strategy_params_payload(),
+            }
+            self.repository.save_artifact(context.trade_date, "intraday_watch_failed", payload)
+            self.repository.save_pipeline_run(context, "intraday_watch", "failed", payload)
+            raise DataProviderError(payload["failure_reason"])
+        return collection.bars
 
     def _write_intraday_report(
         self,
         trade_date: date,
         orders: list[PaperOrder],
+        execution_events: list[ExecutionEvent],
     ) -> Path:
         return write_markdown_report(
             self.report_root,
@@ -400,6 +440,11 @@ class ASharePipeline:
                 "状态": "盘中执行模拟交易，不执行真实交易。",
                 "模拟买入": [order.symbol for order in orders if order.side == "buy"],
                 "模拟卖出": [order.symbol for order in orders if order.side == "sell"],
+                "成交失败": [
+                    f"{event.side} {event.symbol}: {event.failure_reason}"
+                    for event in execution_events
+                    if event.status == "rejected"
+                ],
                 "安全边界": "本项目 v1 只有 paper trading。",
             },
         )
@@ -538,16 +583,17 @@ class ASharePipeline:
         context = self._context(trade_date)
         decisions, existing_orders = self._load_intraday_trade_inputs(context)
         dataset = self._dataset_for_stage(context, "intraday_watch")
-        orders, snapshot = self._execute_intraday_paper_trades(
+        orders, snapshot, execution_events = self._execute_intraday_paper_trades(
             context=context,
             dataset=dataset,
             decisions=decisions,
             existing_orders=existing_orders,
         )
-        report_path = self._write_intraday_report(trade_date, orders)
+        report_path = self._write_intraday_report(trade_date, orders, execution_events)
         payload = {
             "run_id": context.run_id,
             "orders": _to_dict_list(orders),
+            "execution_events": _to_dict_list(execution_events),
             "positions": _to_dict_list(self.trader.positions),
             "portfolio": asdict(snapshot),
             "report_path": str(report_path),
@@ -555,6 +601,10 @@ class ASharePipeline:
             "order_count": len(orders),
             "buy_order_count": len([order for order in orders if order.side == "buy"]),
             "sell_order_count": len([order for order in orders if order.side == "sell"]),
+            "execution_event_count": len(execution_events),
+            "execution_rejected_count": len(
+                [event for event in execution_events if event.status == "rejected"]
+            ),
             "open_positions": snapshot.open_positions,
             **self._run_scope_payload(),
             **self._strategy_params_payload(),
@@ -570,6 +620,11 @@ class ASharePipeline:
                 "order_count": len(orders),
                 "buy_order_count": len([order for order in orders if order.side == "buy"]),
                 "sell_order_count": len([order for order in orders if order.side == "sell"]),
+                "execution_events": _to_dict_list(execution_events),
+                "execution_event_count": len(execution_events),
+                "execution_rejected_count": len(
+                    [event for event in execution_events if event.status == "rejected"]
+                ),
                 "open_positions": snapshot.open_positions,
                 **self._strategy_params_payload(),
             },

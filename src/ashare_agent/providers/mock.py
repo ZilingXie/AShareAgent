@@ -7,6 +7,7 @@ from ashare_agent.domain import (
     AnnouncementItem,
     Asset,
     IndustrySnapshot,
+    IntradayBar,
     MarketBar,
     NewsItem,
     PolicyItem,
@@ -45,6 +46,40 @@ class MockProvider:
                         volume=1_000_000 + idx * 20_000 - asset_index * 30_000,
                         amount=(close * Decimal("1000000")).quantize(Decimal("0.01")),
                         source="mock",
+                    )
+                )
+        return bars
+
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]:
+        requested = set(symbols)
+        bars: list[IntradayBar] = []
+        for asset_index, asset in enumerate(self._assets):
+            if asset.symbol not in requested:
+                continue
+            base = Decimal("3.00") + Decimal(asset_index) * Decimal("0.40")
+            for minute_offset in range(3):
+                timestamp = datetime.combine(trade_date, datetime.min.time()).replace(
+                    hour=9,
+                    minute=31 + minute_offset,
+                )
+                close = base + Decimal("0.55") + Decimal(minute_offset) * Decimal("0.01")
+                bars.append(
+                    IntradayBar(
+                        symbol=asset.symbol,
+                        trade_date=trade_date,
+                        timestamp=timestamp,
+                        open=close - Decimal("0.005"),
+                        high=close + Decimal("0.010"),
+                        low=close - Decimal("0.010"),
+                        close=close,
+                        volume=100_000 + minute_offset * 1_000,
+                        amount=(close * Decimal("100000")).quantize(Decimal("0.01")),
+                        source="mock_intraday",
                     )
                 )
         return bars

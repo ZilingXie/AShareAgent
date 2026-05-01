@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -8,6 +8,7 @@ from typing import Any
 from ashare_agent.agents.strategy_params_agent import StrategyParams, StrategyParamsAgent
 from ashare_agent.domain import (
     Asset,
+    IntradayBar,
     MarketBar,
     PaperOrder,
     PaperPosition,
@@ -51,6 +52,48 @@ class ExitScenarioProvider(MockProvider):
 
     def get_trade_calendar(self) -> list[date]:
         return list(self._calendar)
+
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]:
+        return [
+            IntradayBar(
+                symbol=symbol,
+                trade_date=trade_date,
+                timestamp=datetime(trade_date.year, trade_date.month, trade_date.day, 9, 31),
+                open=self._close,
+                high=self._close,
+                low=self._close,
+                close=self._close,
+                volume=1_000_000,
+                amount=self._close * Decimal("1000000"),
+                source="test_intraday",
+            )
+            for symbol in symbols
+        ]
+
+
+class NoIntradayBarsProvider(MockProvider):
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]:
+        return []
+
+
+class BrokenIntradayProvider(MockProvider):
+    def get_intraday_bars(
+        self,
+        trade_date: date,
+        symbols: list[str],
+        period: str = "1",
+    ) -> list[IntradayBar]:
+        raise DataProviderError("分钟线接口失败")
 
 
 def _write_strategy_params(
@@ -204,6 +247,21 @@ def test_intraday_watch_executes_buy_sell_and_updates_positions(tmp_path: Path) 
     assert [order["side"] for order in intraday_orders] == ["buy", "sell"]
     assert {order["symbol"] for order in intraday_orders} == {"510300", "159915"}
     assert all(order["is_real_trade"] is False for order in intraday_orders)
+    assert all(order["execution_method"] == "first_valid_1m_bar" for order in intraday_orders)
+    assert all(order["used_daily_fallback"] is False for order in intraday_orders)
+    assert all(order["execution_source"] == "mock_intraday" for order in intraday_orders)
+    assert intraday.payload["execution_events"]
+    assert all(event["status"] == "filled" for event in intraday.payload["execution_events"])
+    intraday_run_payload = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert len(intraday_run_payload["execution_events"]) == len(
+        intraday.payload["execution_events"]
+    )
+    assert intraday_run_payload["execution_events"][0]["status"] == "filled"
+    assert intraday_run_payload["execution_events"][0]["used_daily_fallback"] is False
+    assert any(
+        row["payload"]["source"] == "intraday_bars"
+        for row in repository.records_for("raw_source_snapshots")
+    )
     latest_positions = [row["payload"] for row in repository.records_for("paper_positions")]
     assert any(
         position["symbol"] == "510300" and position["status"] == "open"
@@ -233,6 +291,64 @@ def test_intraday_watch_is_idempotent_for_same_trade_date(tmp_path: Path) -> Non
 
     assert first_order_count > 0
     assert len(repository.records_for("paper_orders")) == first_order_count
+
+
+def test_intraday_watch_records_rejected_execution_event_without_minute_bars(
+    tmp_path: Path,
+) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=NoIntradayBarsProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+    intraday = pipeline.run_intraday_watch(trade_date)
+
+    assert intraday.success is True
+    assert intraday.payload["orders"] == []
+    assert intraday.payload["execution_events"][0]["status"] == "rejected"
+    assert intraday.payload["execution_events"][0]["failure_reason"] == "无分钟线，无法成交"
+    assert intraday.payload["execution_events"][0]["used_daily_fallback"] is False
+    intraday_run_payload = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert intraday_run_payload["execution_events"][0]["status"] == "rejected"
+    assert (
+        intraday_run_payload["execution_events"][0]["failure_reason"]
+        == "无分钟线，无法成交"
+    )
+    assert repository.records_for("paper_orders") == []
+
+
+def test_intraday_watch_fails_when_intraday_provider_fails(tmp_path: Path) -> None:
+    trade_date = date(2026, 4, 29)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=BrokenIntradayProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pipeline.run_pre_market(trade_date)
+
+    try:
+        pipeline.run_intraday_watch(trade_date)
+    except DataProviderError as exc:
+        assert "分钟线接口失败" in str(exc)
+    else:
+        raise AssertionError("分钟线 provider 整体失败时 intraday_watch 必须失败")
+
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "intraday_watch"
+    assert latest_run["status"] == "failed"
+    assert any(
+        row["payload"]["source"] == "intraday_bars"
+        and row["payload"]["status"] == "failed"
+        for row in repository.records_for("raw_source_snapshots")
+    )
 
 
 def test_intraday_watch_fails_without_successful_pre_market_decisions(tmp_path: Path) -> None:

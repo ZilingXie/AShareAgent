@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做真实三阶段日常运行验收：`intraday-minute-source-fallback` 已合并、清理并推送，当前验证 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 下的真实 AKShare 三阶段流程和 dashboard 展示。
+本次真实三阶段日常运行验收已完成：`intraday-minute-source-fallback` 已合并、清理并推送，`ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 已写入本机 ignored `.env`；盘前成功，盘中在日线数据质量门禁失败，盘后按规则未继续执行。
 
 ## 上次停在哪
 

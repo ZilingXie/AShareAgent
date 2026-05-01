@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在收尾 `codex/intraday-minute-source-reliability`：真实分钟线源可靠性修复已实现，正在完成验证、合并、清理和 push。
+`codex/intraday-minute-source-reliability` 已完成：真实分钟线源可靠性修复已实现并准备清理 task worktree / 本地分支。
 
 ## 上次停在哪
 
@@ -90,4 +90,4 @@
 
 ## 下一步
 
-- 下一步合并 `codex/intraday-minute-source-reliability` 回 `main`，复验后清理 task worktree 和本地分支，并把 `main` 推送到 GitHub。
+- 下一步继续真实分钟线外部源排查或接入备用分钟线 adapter；当前代码已经能把 EastMoney 分钟线源不可用与单个 symbol 无分钟线分开审计。

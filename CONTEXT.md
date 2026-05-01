@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在做 `codex/intraday-trading-stage`：把模拟成交职责从 `post_market_review` 前移到 `intraday_watch`，让盘后只做收盘盯市、复盘和审计。
+正在做 `codex/intraday-stage-cleanup`：在盘中成交职责已迁移的基础上，收敛 `ASharePipeline` 内联逻辑，并强化 dashboard/文档里的盘中订单和收盘复盘语义。
 
 ## 上次停在哪
 
@@ -43,6 +43,9 @@
 - 本轮新增 `BacktestRunner` 和 `ashare backtest`，按 provider 交易日历多日执行 `pre_market + intraday_watch + post_market_review` 回放，并用 `run_mode=backtest`、`backtest_id` 隔离回放状态。
 - 本轮新增 dashboard backtest 列表和策略版本对比 DTO/API/前端区块，按 `backtest_id` 展示胜率、最大回撤、总收益率、风控拒绝率和数据质量失败率。
 - 本轮正在迁移盘中成交职责：`pre_market` 只生成信号和风控决策，`intraday_watch` 执行模拟买入/卖出、持仓和组合快照，`post_market_review` 不新增订单，只生成收盘快照、复盘和策略实验报告。
+- 本轮已将 `ASharePipeline` 的盘中交易输入准备、模拟买卖执行、盘中报告、收盘复盘总结拆成内部方法，保持现有 CLI/API/schema 不变。
+- 前端单日详情已将“模拟订单”改为“盘中模拟订单”，将“复盘报告”改为“收盘复盘”，空状态同步改为“暂无盘中模拟订单”。
+- 遗留 `codex/stage-contracts` worktree 有未提交差异且与当前 `main` 不完全一致，按规则暂不删除。
 
 ## 近期关键决定和原因
 
@@ -78,4 +81,4 @@
 
 ## 下一步
 
-- 下一步完成盘中成交迁移的全量验证、提交、合并回 `main`，并按 worktree 规则清理任务分支。
+- 下一步完成本轮拆分和语义收尾的全量验证、提交、合并回 `main`，并按 worktree 规则清理任务分支。

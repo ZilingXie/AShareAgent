@@ -47,7 +47,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `daily-run` 先刷新交易日历；非交易日只写 skipped 审计和可靠性报告，不进入策略分析或模拟交易更新；交易日按盘前、盘中、复盘顺序运行，失败时先落库可靠性报告和 failed `daily_run`。
-- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、模拟订单、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势和策略版本对比查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
+- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势和策略版本对比查询，输出稳定 DTO。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 模块边界发生变化时，同步更新本文件。
@@ -75,4 +75,4 @@ configs/
 
 `src/ashare_agent/agents/dashboard_query_agent.py` 属于只读查询适配层，不参与 pipeline 写入、不执行交易、不修改策略状态。`src/ashare_agent/dashboard.py` 是 API 使用的薄兼容层，避免前端/API 依赖内部 agent 文件路径。
 
-前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，左侧展示日期范围内的 pipeline runs，右侧展示范围趋势、策略版本对比、所选交易日的观察名单、风控结果、LLM 盘前分析、模拟订单、持仓、复盘、数据质量、运行可靠性、数据源状态和运行详情。
+前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，左侧展示日期范围内的 pipeline runs，右侧展示范围趋势、策略版本对比、所选交易日的观察名单、风控结果、LLM 盘前分析、盘中模拟订单、持仓、收盘复盘、数据质量、运行可靠性、数据源状态和运行详情。

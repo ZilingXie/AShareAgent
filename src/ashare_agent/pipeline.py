@@ -308,6 +308,147 @@ class ASharePipeline:
         self.repository.save_pipeline_run(context, stage, "failed", payload)
         raise DataProviderError(payload["failure_reason"])
 
+    def _dataset_for_stage(self, context: PipelineRunContext, stage: str) -> MarketDataset:
+        if self._last_dataset is None:
+            dataset = self.collector.collect(trade_date=context.trade_date)
+            self._save_dataset(context, dataset)
+        else:
+            dataset = self._last_dataset
+        self._run_data_quality_gate(context, stage, dataset)
+        return dataset
+
+    def _load_intraday_trade_inputs(
+        self,
+        context: PipelineRunContext,
+    ) -> tuple[list[RiskDecision], list[PaperOrder]]:
+        trade_date = context.trade_date
+        if self._latest_successful_run_id(trade_date, "pre_market") is not None:
+            decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
+                trade_date,
+                run_mode=self.run_mode,
+                backtest_id=self.backtest_id,
+            )
+            self._restore_trader_state()
+            existing_orders = self.repository.load_paper_orders(
+                trade_date,
+                run_mode=self.run_mode,
+                backtest_id=self.backtest_id,
+            )
+            return decisions, existing_orders
+
+        payload = {
+            "run_id": context.run_id,
+            "failure_reason": "intraday_watch 缺少同日成功 pre_market 风控决策",
+            **self._run_scope_payload(),
+            **self._strategy_params_payload(),
+        }
+        self.repository.save_artifact(trade_date, "intraday_watch_failed", payload)
+        self.repository.save_pipeline_run(context, "intraday_watch", "failed", payload)
+        raise DataProviderError(payload["failure_reason"])
+
+    def _execute_intraday_paper_trades(
+        self,
+        *,
+        context: PipelineRunContext,
+        dataset: MarketDataset,
+        decisions: list[RiskDecision],
+        existing_orders: list[PaperOrder],
+    ) -> tuple[list[PaperOrder], PortfolioSnapshot]:
+        trade_date = context.trade_date
+        buy_result = self.trader.apply_pre_market_decisions(
+            trade_date=trade_date,
+            decisions=decisions,
+            bars=dataset.bars,
+            existing_orders=existing_orders,
+        )
+        self.trader.mark_to_market(dataset.bars)
+        indicators = calculate_indicators(trade_date=trade_date, bars=dataset.bars)
+        exit_decisions = self.risk_manager.evaluate_exits(
+            trade_date=trade_date,
+            open_positions=self.trader.open_positions(),
+            indicators=indicators,
+            trade_calendar=dataset.trade_calendar_dates,
+        )
+        sell_result = self.trader.apply_exit_decisions(
+            trade_date=trade_date,
+            decisions=exit_decisions,
+            bars=dataset.bars,
+            existing_orders=existing_orders + buy_result.orders,
+        )
+        orders = buy_result.orders + sell_result.orders
+        snapshot, _ = self.review_agent.review(
+            trade_date=trade_date,
+            cash=self.trader.cash,
+            positions=self.trader.open_positions(),
+        )
+        self.repository.save_paper_orders(context, orders)
+        self.repository.save_paper_positions(context, self.trader.positions)
+        self.repository.save_portfolio_snapshot(context, snapshot)
+        return orders, snapshot
+
+    def _write_intraday_report(
+        self,
+        trade_date: date,
+        orders: list[PaperOrder],
+    ) -> Path:
+        return write_markdown_report(
+            self.report_root,
+            trade_date.isoformat(),
+            "intraday-watch.md",
+            {
+                "状态": "盘中执行模拟交易，不执行真实交易。",
+                "模拟买入": [order.symbol for order in orders if order.side == "buy"],
+                "模拟卖出": [order.symbol for order in orders if order.side == "sell"],
+                "安全边界": "本项目 v1 只有 paper trading。",
+            },
+        )
+
+    def _run_post_market_summary(
+        self,
+        *,
+        context: PipelineRunContext,
+        dataset: MarketDataset,
+    ) -> tuple[list[PaperOrder], PortfolioSnapshot, ReviewReport, Path, Path]:
+        trade_date = context.trade_date
+        decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
+            trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
+        self._restore_trader_state()
+        reviewed_orders = self.repository.load_paper_orders(
+            trade_date,
+            run_mode=self.run_mode,
+            backtest_id=self.backtest_id,
+        )
+        self.trader.mark_to_market(dataset.bars)
+        snapshot, report = self.review_agent.review(
+            trade_date=trade_date,
+            cash=self.trader.cash,
+            positions=self.trader.open_positions(),
+        )
+        report_path = write_markdown_report(
+            self.report_root,
+            trade_date.isoformat(),
+            "post-market-review.md",
+            {
+                "复盘摘要": report.summary,
+                "持仓归因": report.attribution,
+                "参数建议": report.parameter_suggestions,
+            },
+        )
+        self.repository.save_paper_positions(context, self.trader.positions)
+        self.repository.save_portfolio_snapshot(context, snapshot)
+        self.repository.save_review_report(context, report)
+        experiment_report_path = self._write_strategy_experiment_report(
+            context=context,
+            decisions=decisions,
+            orders=reviewed_orders,
+            snapshot=snapshot,
+            report=report,
+        )
+        return reviewed_orders, snapshot, report, report_path, experiment_report_path
+
     def run_pre_market(self, trade_date: date) -> AgentResult:
         context = self._context(trade_date)
         dataset = self.collector.collect(trade_date=trade_date)
@@ -393,73 +534,15 @@ class ASharePipeline:
 
     def run_intraday_watch(self, trade_date: date) -> AgentResult:
         context = self._context(trade_date)
-        if self._latest_successful_run_id(trade_date, "pre_market") is None:
-            payload = {
-                "run_id": context.run_id,
-                "failure_reason": "intraday_watch 缺少同日成功 pre_market 风控决策",
-                **self._run_scope_payload(),
-                **self._strategy_params_payload(),
-            }
-            self.repository.save_artifact(trade_date, "intraday_watch_failed", payload)
-            self.repository.save_pipeline_run(context, "intraday_watch", "failed", payload)
-            raise DataProviderError(payload["failure_reason"])
-        if self._last_dataset is None:
-            dataset = self.collector.collect(trade_date=trade_date)
-            self._save_dataset(context, dataset)
-        else:
-            dataset = self._last_dataset
-        self._run_data_quality_gate(context, "intraday_watch", dataset)
-        decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
-            trade_date,
-            run_mode=self.run_mode,
-            backtest_id=self.backtest_id,
-        )
-        self._restore_trader_state()
-        existing_orders = self.repository.load_paper_orders(
-            trade_date,
-            run_mode=self.run_mode,
-            backtest_id=self.backtest_id,
-        )
-        buy_result = self.trader.apply_pre_market_decisions(
-            trade_date=trade_date,
+        decisions, existing_orders = self._load_intraday_trade_inputs(context)
+        dataset = self._dataset_for_stage(context, "intraday_watch")
+        orders, snapshot = self._execute_intraday_paper_trades(
+            context=context,
+            dataset=dataset,
             decisions=decisions,
-            bars=dataset.bars,
             existing_orders=existing_orders,
         )
-        self.trader.mark_to_market(dataset.bars)
-        indicators = calculate_indicators(trade_date=trade_date, bars=dataset.bars)
-        exit_decisions = self.risk_manager.evaluate_exits(
-            trade_date=trade_date,
-            open_positions=self.trader.open_positions(),
-            indicators=indicators,
-            trade_calendar=dataset.trade_calendar_dates,
-        )
-        sell_result = self.trader.apply_exit_decisions(
-            trade_date=trade_date,
-            decisions=exit_decisions,
-            bars=dataset.bars,
-            existing_orders=existing_orders + buy_result.orders,
-        )
-        orders = buy_result.orders + sell_result.orders
-        snapshot, _ = self.review_agent.review(
-            trade_date=trade_date,
-            cash=self.trader.cash,
-            positions=self.trader.open_positions(),
-        )
-        report_path = write_markdown_report(
-            self.report_root,
-            trade_date.isoformat(),
-            "intraday-watch.md",
-            {
-                "状态": "盘中执行模拟交易，不执行真实交易。",
-                "模拟买入": [order.symbol for order in orders if order.side == "buy"],
-                "模拟卖出": [order.symbol for order in orders if order.side == "sell"],
-                "安全边界": "本项目 v1 只有 paper trading。",
-            },
-        )
-        self.repository.save_paper_orders(context, orders)
-        self.repository.save_paper_positions(context, self.trader.positions)
-        self.repository.save_portfolio_snapshot(context, snapshot)
+        report_path = self._write_intraday_report(trade_date, orders)
         payload = {
             "run_id": context.run_id,
             "orders": _to_dict_list(orders),
@@ -493,59 +576,23 @@ class ASharePipeline:
 
     def run_post_market_review(self, trade_date: date) -> AgentResult:
         context = self._context(trade_date)
-        if self._last_dataset is None:
-            dataset = self.collector.collect(trade_date=trade_date)
-            self._save_dataset(context, dataset)
-        else:
-            dataset = self._last_dataset
-        self._run_data_quality_gate(context, "post_market_review", dataset)
-        decisions = self._last_risk_decisions or self.repository.load_latest_risk_decisions(
-            trade_date,
-            run_mode=self.run_mode,
-            backtest_id=self.backtest_id,
-        )
-        self._restore_trader_state()
-        existing_orders = self.repository.load_paper_orders(
-            trade_date,
-            run_mode=self.run_mode,
-            backtest_id=self.backtest_id,
-        )
-        self.trader.mark_to_market(dataset.bars)
-        snapshot, report = self.review_agent.review(
-            trade_date=trade_date,
-            cash=self.trader.cash,
-            positions=self.trader.open_positions(),
-        )
-        report_path = write_markdown_report(
-            self.report_root,
-            trade_date.isoformat(),
-            "post-market-review.md",
-            {
-                "复盘摘要": report.summary,
-                "持仓归因": report.attribution,
-                "参数建议": report.parameter_suggestions,
-            },
-        )
-        self.repository.save_paper_positions(context, self.trader.positions)
-        self.repository.save_portfolio_snapshot(context, snapshot)
-        self.repository.save_review_report(context, report)
-        experiment_report_path = self._write_strategy_experiment_report(
-            context=context,
-            decisions=decisions,
-            orders=existing_orders,
-            snapshot=snapshot,
-            report=report,
+        dataset = self._dataset_for_stage(context, "post_market_review")
+        reviewed_orders, snapshot, report, report_path, experiment_report_path = (
+            self._run_post_market_summary(
+                context=context,
+                dataset=dataset,
+            )
         )
         payload: dict[str, Any] = {
             "run_id": context.run_id,
-            "reviewed_orders": _to_dict_list(existing_orders),
+            "reviewed_orders": _to_dict_list(reviewed_orders),
             "positions": _to_dict_list(self.trader.positions),
             "portfolio": asdict(snapshot),
             "review": asdict(report),
             "report_path": f"paper:{report_path}",
             "experiment_report_path": str(experiment_report_path),
             "new_order_count": 0,
-            "reviewed_order_count": len(existing_orders),
+            "reviewed_order_count": len(reviewed_orders),
             **self._run_scope_payload(),
             **self._strategy_params_payload(),
         }
@@ -558,7 +605,7 @@ class ASharePipeline:
                 "report_path": str(report_path),
                 "experiment_report_path": str(experiment_report_path),
                 "new_order_count": 0,
-                "reviewed_order_count": len(existing_orders),
+                "reviewed_order_count": len(reviewed_orders),
                 "open_positions": snapshot.open_positions,
                 **self._strategy_params_payload(),
             },

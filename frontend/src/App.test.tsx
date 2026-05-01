@@ -330,8 +330,10 @@ describe("dashboard", () => {
     expect(screen.getByText("盘前关注指数趋势和量能。")).toBeInTheDocument();
     expect(screen.getByText("观察名单由规则信号生成")).toBeInTheDocument();
     expect(screen.getByText("仅用于模拟研究，不构成投资建议。")).toBeInTheDocument();
+    expect(screen.getByText("盘中模拟订单")).toBeInTheDocument();
     expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
     expect(screen.getByText("触发止损")).toBeInTheDocument();
+    expect(screen.getByText("收盘复盘")).toBeInTheDocument();
     expect(screen.getByText("20.00 / 5.00%")).toBeInTheDocument();
     expect(screen.getByText("已实现盈亏")).toBeInTheDocument();
     expect(screen.getByText("500.00")).toBeInTheDocument();
@@ -410,7 +412,7 @@ describe("dashboard", () => {
     render(<App />);
 
     await waitFor(() => expect(screen.getByText("暂无观察名单")).toBeInTheDocument());
-    expect(screen.getByText("暂无模拟订单")).toBeInTheDocument();
+    expect(screen.getByText("暂无盘中模拟订单")).toBeInTheDocument();
     expect(screen.getByText("暂无持仓")).toBeInTheDocument();
     expect(screen.getByText("暂无 source snapshot")).toBeInTheDocument();
     expect(screen.getByText("暂无数据质量报告")).toBeInTheDocument();

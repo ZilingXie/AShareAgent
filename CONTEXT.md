@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-正在收尾 `codex/intraday-minute-source-fallback`：备用分钟线源 `akshare_sina` 和显式 source chain 已接入，进入验证、合并、清理和 push 阶段。
+正在做真实三阶段日常运行验收：`intraday-minute-source-fallback` 已合并、清理并推送，当前验证 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 下的真实 AKShare 三阶段流程和 dashboard 展示。
 
 ## 上次停在哪
 
@@ -54,6 +54,10 @@
 - 外部测试已拆分：`uv run pytest -m external_daily -q` 通过，`uv run pytest -m external_intraday -q` 仍因 EastMoney 分钟线端点返回 ProxyError/RemoteDisconnected 失败，但失败信息已明确包含 `akshare_em`、`symbol=510300`、`attempts=3` 和 `timeout=15.0`。
 - 本轮已新增 `akshare_sina` 备用分钟线源：默认仍只用 `akshare_em`，只有显式配置 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 时才按链路尝试备用源；`raw_source_snapshots.metadata.source_attempts` 会记录每个 source/symbol 的状态、retry、timeout 和最后错误。
 - dashboard 已新增“分钟线源健康”只读展示，读取 `raw_source_snapshots.metadata.source_attempts`，展示 source、symbol、状态、retry、timeout、返回行数和最后错误。
+- 已将本机 ignored `.env` 明确配置为 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina`，用于后续真实盘中分钟线验收。
+- 本轮真实三阶段验收结果：`pre-market --trade-date 2026-04-29` 成功；`intraday-watch --trade-date 2026-04-29` 失败并停止后续 `post-market-review`。失败发生在重新采集日线后的数据质量门禁，原因是 `600000` 的 Sina 日线接口 `stock.finance.sina.com.cn` 通过代理连接断开，同时 510300/159915/600000 被判定近 30 个交易日行情缺失；本轮未进入分钟线 fallback 采集阶段。
+- 数据库审计已确认本轮 failed `pipeline_runs(stage=intraday_watch)`、failed `raw_source_snapshots(source=market_bars)` 和 failed `data_quality_reports(stage=intraday_watch)` 均记录了上述失败原因；同日已有成功盘中 run 中能看到 `intraday_source=akshare_em,akshare_sina` 和 `source_attempts` fallback 审计。
+- dashboard smoke 已确认页面可见“分钟线源健康”、`akshare_em`、`akshare_sina`、盘中模拟订单、成交失败和收盘复盘区块；同时发现策略版本对比区块存在重复 `backtest_id` 导致的 React duplicate key warning，后续可单独修复。
 
 ## 近期关键决定和原因
 
@@ -93,4 +97,4 @@
 
 ## 下一步
 
-- 下一步完成 `codex/intraday-minute-source-fallback` 合并、清理和 push；随后用 `ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina` 跑真实 `intraday-watch` 验收，若 Sina 也不可用，再评估第三个分钟线源。
+- 下一步先处理真实 AKShare 日线/公告源的代理稳定性，重点是 `stock.finance.sina.com.cn` 和 EastMoney 公告接口；稳定后再重跑 `pre-market -> intraday-watch -> post-market-review`。dashboard 另有一个低风险 UI 修复：策略版本对比列表对重复 `backtest_id` 去重，消除 React duplicate key warning。

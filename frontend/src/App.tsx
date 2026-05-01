@@ -329,7 +329,7 @@ export default function App(): JSX.Element {
               <LLMAnalysisPanel analysis={day.llm_analysis} />
             </Section>
 
-            <Section icon={Activity} title="模拟订单">
+            <Section icon={Activity} title="盘中模拟订单">
               <OrdersTable orders={day.paper_orders} />
             </Section>
 
@@ -337,7 +337,7 @@ export default function App(): JSX.Element {
               <PositionsTable positions={day.positions} />
             </Section>
 
-            <Section icon={FileText} title="复盘报告">
+            <Section icon={FileText} title="收盘复盘">
               {day.portfolio_snapshot ? (
                 <dl className="metrics">
                   <div>
@@ -916,7 +916,7 @@ function LLMAnalysisPanel({ analysis }: { analysis: DashboardLLMAnalysis | null 
 
 function OrdersTable({ orders }: { orders: DashboardPaperOrder[] }): JSX.Element {
   if (orders.length === 0) {
-    return <EmptyState text="暂无模拟订单" />;
+    return <EmptyState text="暂无盘中模拟订单" />;
   }
   return (
     <table>

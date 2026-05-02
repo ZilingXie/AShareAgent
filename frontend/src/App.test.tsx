@@ -563,7 +563,10 @@ describe("dashboard", () => {
 
     render(<App />);
 
-    expect(await screen.findByText("必需数据源失败: market_bars")).toBeInTheDocument();
+    expect(await screen.findByText("必需数据源失败: market_bars")).toHaveAttribute(
+      "title",
+      "必需数据源失败: market_bars"
+    );
     expect(await screen.findByText("EastMoney endpoint disconnected")).toBeInTheDocument();
     expect(await screen.findByText("数据质量失败")).toBeInTheDocument();
     expect(await screen.findByText("运行可靠性失败")).toBeInTheDocument();

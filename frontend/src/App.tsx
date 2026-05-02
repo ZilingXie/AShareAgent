@@ -297,7 +297,11 @@ export default function App(): JSX.Element {
                   {stageLabels[run.stage] ?? run.stage}
                   <StatusBadge status={run.status} />
                 </span>
-                {run.failure_reason ? <span className="failure">{run.failure_reason}</span> : null}
+                {run.failure_reason ? (
+                  <span className="failure" title={run.failure_reason}>
+                    {run.failure_reason}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>

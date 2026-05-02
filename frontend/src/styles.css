@@ -123,7 +123,7 @@ h3 {
   border-bottom: 1px solid #263645;
   display: grid;
   gap: 8px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding: 12px 14px;
 }
 
@@ -273,6 +273,30 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.board-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.board-wide {
+  grid-column: 1 / -1;
+}
+
+.board-wide .trend-grid {
+  grid-template-columns: 1fr;
+  margin-bottom: 0;
+}
+
+.board-note {
+  background: #f8fafb;
+  border-left: 3px solid #72a0c1;
+  color: #4d5e6b;
+  font-size: 13px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+}
+
 .trend-grid {
   display: grid;
   gap: 14px;
@@ -391,6 +415,15 @@ td {
   font-size: 18px;
   font-weight: 800;
   margin: 2px 0 0;
+}
+
+.compact-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.small-value {
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .review-metrics {
@@ -570,6 +603,33 @@ td {
   gap: 10px;
 }
 
+.batch-list {
+  display: grid;
+  gap: 8px;
+}
+
+.batch-item {
+  background: #f8fafb;
+  border: 1px solid #e6eaee;
+  border-radius: 7px;
+  color: #22313f;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.batch-item:hover,
+.batch-item.selected {
+  border-color: #72a0c1;
+}
+
+.batch-item span {
+  color: #6a7783;
+  font-size: 12px;
+}
+
 .strategy-variant-row {
   border-top: 1px solid #e6eaee;
   display: grid;
@@ -714,6 +774,38 @@ td {
   color: #6a7783;
 }
 
+.detail-drawer {
+  background: #fff;
+  border-left: 1px solid #c9d1d8;
+  box-shadow: -14px 0 28px rgba(23, 32, 42, 0.14);
+  display: grid;
+  gap: 14px;
+  max-width: min(720px, 92vw);
+  overflow-y: auto;
+  padding: 18px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: 680px;
+  z-index: 20;
+}
+
+.detail-drawer-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.detail-drawer .icon-button {
+  background: #eef3f5;
+  color: #22313f;
+}
+
+.drawer-sections {
+  display: grid;
+  gap: 12px;
+}
+
 .empty {
   background: #f8fafb;
   border: 1px dashed #c9d1d8;
@@ -746,7 +838,8 @@ td {
     max-height: 260px;
   }
 
-  .dashboard-grid {
+  .dashboard-grid,
+  .board-grid {
     grid-template-columns: 1fr;
   }
 
@@ -772,6 +865,11 @@ td {
 
   .strategy-reason-row {
     grid-template-columns: 1fr;
+  }
+
+  .detail-drawer {
+    max-width: none;
+    width: 100%;
   }
 }
 

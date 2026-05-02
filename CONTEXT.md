@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-策略假设闭环第一版已完成：`StrategyInsightAgent` 只读复盘事实，由 LLM 生成结构化策略假设，再由确定性代码编译白名单 variants，复用 20/40/60 日 `strategy-evaluate` 做验证，并在 dashboard 中只读展示人工复核状态。
+策略假设闭环第一版和 dashboard 四大看板重组已完成：`StrategyInsightAgent` 只读复盘事实生成策略假设，dashboard 前端改为 `总览 / 交易执行 / 策略 / 质量`，并复用现有 DTO 打开 `盘前 / 盘中 / 复盘` 阶段详情抽屉。
 
 ## 上次停在哪
 
@@ -62,6 +62,7 @@
 - 本轮新增 `StrategyEvaluationRunner`、`CachingDataProvider` 和 `ashare strategy-evaluate`，读取 `configs/strategy_evaluation.yml` 后按 variant 生成独立 `backtest_id`，复用真实源缓存并输出 `reports/<evaluation_id>/strategy-evaluation.md`。
 - 策略评估聚合结果复用现有 `pipeline_runs(stage=strategy_evaluation)` 和 `artifacts(artifact_type=strategy_evaluation)`，不新增数据库迁移；单个 variant 明细继续复用 backtest 专表和 `backtest_id` 隔离。
 - 本轮新增 dashboard 策略评估只读查询/API/前端视图：可列出 evaluation 批次，查看 variant 收益、命中率、回撤、失败率、推荐结论、不可推荐原因和 Markdown 报告路径。
+- 本轮重组 dashboard 前端为四大看板：`总览` 聚焦资产、盈亏、持仓和复盘摘要；`交易执行` 聚焦盘前计划、风控、盘中订单和成交失败；`策略` 聚焦信号、拒绝原因、策略对比和策略评估；`质量` 聚焦数据质量、运行可靠性、分钟线源健康、数据源状态和运行详情。左侧 run 卡片点击后打开只读阶段详情抽屉，不新增 API、schema、写接口或交易按钮。
 - 本轮已将策略评估默认窗口扩展为 `default_window_trade_days=60`，并在评估 payload / Markdown 报告中补充日均信号、无信号天数、买入后 2/5/10 个交易日表现、卖出触发原因、市场环境覆盖和参数差异。
 - 已用真实 AKShare provider + mock LLM 跑通 `eval-real-60d-20260501-r4`：窗口为 2026-01-28 到 2026-04-30，共 60 个交易日、3 个 variant，全部 succeeded_days=60、failed_days=0；报告已生成到 `reports/eval-real-60d-20260501-r4/strategy-evaluation.md`。
 - 为支撑长窗口验收，`PostgresRepository` 已增加按 `backtest_id` 过滤 payload 的读取接口，并将结构化交易日历保存改为分批 bulk upsert，避免策略评估汇总和多日回放在真实 PostgreSQL 上反复全表扫描或单行 upsert。

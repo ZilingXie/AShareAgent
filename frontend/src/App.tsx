@@ -10,6 +10,7 @@ import {
   ListChecks,
   RefreshCw,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -56,7 +57,7 @@ import type {
   DashboardTrends,
 } from "./types";
 
-type ActiveView = "daily" | "strategy" | "insights";
+type ActiveView = "overview" | "execution" | "strategy" | "quality";
 
 const stageLabels: Record<string, string> = {
   pre_market: "盘前",
@@ -75,10 +76,19 @@ const statusLabels: Record<string, string> = {
   empty: "空数据",
 };
 
+const viewLabels: Record<ActiveView, string> = {
+  overview: "总览",
+  execution: "交易执行",
+  strategy: "策略",
+  quality: "质量",
+};
+
 export default function App(): JSX.Element {
-  const [activeView, setActiveView] = useState<ActiveView>("daily");
+  const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [runs, setRuns] = useState<DashboardRun[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [isRunDetailOpen, setIsRunDetailOpen] = useState(false);
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
   const [day, setDay] = useState<DashboardDay | null>(null);
@@ -114,6 +124,11 @@ export default function App(): JSX.Element {
       const tradeDates = [...new Set(loadedRuns.map((run) => run.trade_date))].sort();
       setRuns(loadedRuns);
       setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
+      setSelectedRunId((current) =>
+        current && loadedRuns.some((run) => run.run_id === current)
+          ? current
+          : loadedRuns[0]?.run_id ?? null
+      );
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
       setStrategyEvaluations(loadedEvaluations);
@@ -301,6 +316,25 @@ export default function App(): JSX.Element {
     [selectedDate, visibleRuns]
   );
 
+  useEffect(() => {
+    if (selectedRunId && visibleRuns.some((run) => run.run_id === selectedRunId)) {
+      return;
+    }
+    setSelectedRunId(visibleRuns[0]?.run_id ?? null);
+    setIsRunDetailOpen(false);
+  }, [selectedRunId, visibleRuns]);
+
+  const selectedRun = useMemo(
+    () => selectedRuns.find((run) => run.run_id === selectedRunId) ?? null,
+    [selectedRunId, selectedRuns]
+  );
+
+  function selectRun(run: DashboardRun): void {
+    setSelectedDate(run.trade_date);
+    setSelectedRunId(run.run_id);
+    setIsRunDetailOpen(true);
+  }
+
   return (
     <main className="shell">
       <aside className="sidebar" aria-label="Dashboard navigation">
@@ -315,413 +349,669 @@ export default function App(): JSX.Element {
           </button>
         </div>
         <div className="view-toggle" aria-label="视图切换">
-          <button
-            className={activeView === "daily" ? "selected" : ""}
-            onClick={() => setActiveView("daily")}
-            type="button"
-          >
-            日常观察
-          </button>
-          <button
-            className={activeView === "strategy" ? "selected" : ""}
-            onClick={() => setActiveView("strategy")}
-            type="button"
-          >
-            策略评估
-          </button>
-          <button
-            className={activeView === "insights" ? "selected" : ""}
-            onClick={() => setActiveView("insights")}
-            type="button"
-          >
-            策略假设
-          </button>
+          {(Object.keys(viewLabels) as ActiveView[]).map((view) => (
+            <button
+              className={activeView === view ? "selected" : ""}
+              key={view}
+              onClick={() => setActiveView(view)}
+              type="button"
+            >
+              {viewLabels[view]}
+            </button>
+          ))}
         </div>
-        {activeView === "daily" ? (
-          <div className="run-list">
-            {visibleRuns.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
-            {visibleRuns.map((run) => (
-              <button
-                className={`run-item ${run.trade_date === selectedDate ? "selected" : ""}`}
-                key={`${run.run_id}-${run.stage}`}
-                onClick={() => setSelectedDate(run.trade_date)}
-                type="button"
-              >
-                <span className="run-date">{run.trade_date}</span>
-                <span className="run-meta">
-                  {stageLabels[run.stage] ?? run.stage}
-                  <StatusBadge status={run.status} />
+        <div className="run-list">
+          {visibleRuns.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
+          {visibleRuns.map((run) => (
+            <button
+              className={`run-item ${run.run_id === selectedRunId ? "selected" : ""}`}
+              key={`${run.run_id}-${run.stage}`}
+              onClick={() => selectRun(run)}
+              type="button"
+            >
+              <span className="run-date">{run.trade_date}</span>
+              <span className="run-meta">
+                {stageLabels[run.stage] ?? run.stage}
+                <StatusBadge status={run.status} />
+              </span>
+              {run.failure_reason ? (
+                <span className="failure" title={run.failure_reason}>
+                  {summarizeFailure(run.failure_reason)}
                 </span>
-                {run.failure_reason ? (
-                  <span className="failure" title={run.failure_reason}>
-                    {run.failure_reason}
-                  </span>
-                ) : null}
-              </button>
-            ))}
-          </div>
-        ) : activeView === "strategy" ? (
-          <StrategyEvaluationSidebarList
-            evaluations={strategyEvaluations}
-            loading={loading}
-            onSelect={setSelectedEvaluationId}
-            selectedEvaluationId={selectedEvaluationId}
-          />
-        ) : (
-          <StrategyInsightSidebarList
-            insights={strategyInsights}
-            loading={loading}
-            onSelect={setSelectedInsightId}
-            selectedInsightId={selectedInsightId}
-          />
-        )}
+              ) : null}
+            </button>
+          ))}
+        </div>
       </aside>
 
       <section className="content">
         <header className="topbar">
-          {activeView === "daily" ? (
-            <>
-              <div>
-                <p className="eyebrow">交易日</p>
-                <h2>{selectedDate ?? "-"}</h2>
-              </div>
-              <div className="date-controls" aria-label="日期范围">
-                <label>
-                  开始日期
-                  <input
-                    max={rangeEnd ?? undefined}
-                    onChange={(event) => setRangeStart(event.target.value || null)}
-                    type="date"
-                    value={rangeStart ?? ""}
-                  />
-                </label>
-                <label>
-                  结束日期
-                  <input
-                    min={rangeStart ?? undefined}
-                    onChange={(event) => setRangeEnd(event.target.value || null)}
-                    type="date"
-                    value={rangeEnd ?? ""}
-                  />
-                </label>
-              </div>
-              <div className="status-strip">
-                <span>{selectedRuns.length} 次运行</span>
-                <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
-                <span>{day?.positions.length ?? 0} 个持仓状态</span>
-                <span>{day ? qualityStatusSummary(day) : "无质量报告"}</span>
-                <span>{day ? reliabilityStatusSummary(day) : "无可靠性报告"}</span>
-              </div>
-            </>
-          ) : activeView === "strategy" ? (
-            <>
-              <div>
-                <p className="eyebrow">策略评估批次</p>
-                <h2>{selectedEvaluationId ? `批次 ${selectedEvaluationId}` : "-"}</h2>
-              </div>
-              <div className="status-strip">
-                <span>{strategyEvaluations.length} 个评估批次</span>
-                <span>{strategyEvaluation?.variant_count ?? 0} 个 variant</span>
-                <span>{strategyEvaluation?.provider ?? "-"}</span>
-                <span>
-                  {strategyEvaluation?.recommendation.recommended_variant_ids.length ?? 0} 个推荐候选
-                </span>
-              </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <p className="eyebrow">策略假设批次</p>
-                <h2>{selectedInsightId ? `批次 ${selectedInsightId}` : "-"}</h2>
-              </div>
-              <div className="status-strip">
-                <span>{strategyInsights.length} 个假设批次</span>
-                <span>{strategyInsight?.provider ?? "-"}</span>
-                <span>{strategyInsight ? manualStatusLabel(strategyInsight.manual_status) : "-"}</span>
-                <span>{strategyInsight?.recommended_variant_ids.length ?? 0} 个候选</span>
-              </div>
-            </>
-          )}
+          <div>
+            <p className="eyebrow">{viewLabels[activeView]}看板</p>
+            <h2>{selectedDate ?? "-"}</h2>
+          </div>
+          <div className="date-controls" aria-label="日期范围">
+            <label>
+              开始日期
+              <input
+                max={rangeEnd ?? undefined}
+                onChange={(event) => setRangeStart(event.target.value || null)}
+                type="date"
+                value={rangeStart ?? ""}
+              />
+            </label>
+            <label>
+              结束日期
+              <input
+                min={rangeStart ?? undefined}
+                onChange={(event) => setRangeEnd(event.target.value || null)}
+                type="date"
+                value={rangeEnd ?? ""}
+              />
+            </label>
+          </div>
+          <div className="status-strip">
+            <span>{selectedRuns.length} 次运行</span>
+            <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
+            <span>{day?.positions.length ?? 0} 个持仓状态</span>
+            <span>{day ? qualityStatusSummary(day) : "无质量报告"}</span>
+            <span>{day ? reliabilityStatusSummary(day) : "无可靠性报告"}</span>
+          </div>
         </header>
 
         {error ? <div className="alert">{error}</div> : null}
-        {activeView === "daily" ? (
-          <>
-            {trendError ? <div className="alert">{trendError}</div> : null}
-            {loading ? <div className="loading">加载中</div> : null}
-            {trendLoading ? <div className="loading">趋势加载中</div> : null}
+        {trendError ? <div className="alert">{trendError}</div> : null}
+        {activeView === "strategy" && strategyEvaluationError ? (
+          <div className="alert">{strategyEvaluationError}</div>
+        ) : null}
+        {activeView === "strategy" && strategyInsightError ? (
+          <div className="alert">{strategyInsightError}</div>
+        ) : null}
+        {loading ? <div className="loading">加载中</div> : null}
+        {trendLoading ? <div className="loading">趋势加载中</div> : null}
+        {activeView === "strategy" && strategyEvaluationLoading ? (
+          <div className="loading">策略评估加载中</div>
+        ) : null}
+        {activeView === "strategy" && strategyInsightLoading ? (
+          <div className="loading">策略假设加载中</div>
+        ) : null}
 
-            {trends ? <TrendPanels trends={trends} /> : null}
-            <StrategyComparisonPanel comparison={strategyComparison} />
-
-            {day ? (
-          <div className="dashboard-grid">
-            <Section icon={ListChecks} title="观察名单">
-              {day.watchlist.length === 0 ? (
-                <EmptyState text="暂无观察名单" />
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>symbol</th>
-                      <th>score</th>
-                      <th>分数拆解</th>
-                      <th>原因</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {day.watchlist.map((item) => (
-                      <tr key={`${item.run_id}-${item.symbol}`}>
-                        <td>{item.symbol}</td>
-                        <td>{score(item.score)}</td>
-                        <td>{breakdown(item.score_breakdown)}</td>
-                        <td>{listText(item.reasons)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Section>
-
-            <Section icon={ShieldCheck} title="风控结果">
-              {day.risk_decisions.length === 0 ? (
-                <EmptyState text="暂无风控结果" />
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>symbol</th>
-                      <th>动作</th>
-                      <th>结果</th>
-                      <th>原因</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {day.risk_decisions.map((decision) => (
-                      <tr key={`${decision.run_id}-${decision.symbol}`}>
-                        <td>{decision.symbol}</td>
-                        <td>{decision.signal_action}</td>
-                        <td>
-                          <span className={`badge ${decision.approved ? "safe" : "danger"}`}>
-                            {decision.approved ? "通过" : "拒绝"}
-                          </span>
-                        </td>
-                        <td>{listText(decision.reasons)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Section>
-
-            <Section icon={FileText} title="LLM 盘前分析">
-              <LLMAnalysisPanel analysis={day.llm_analysis} />
-            </Section>
-
-            <Section icon={Activity} title="盘中模拟订单">
-              <OrdersTable orders={day.paper_orders} />
-            </Section>
-
-            <Section icon={AlertTriangle} title="成交失败">
-              <ExecutionEventsTable events={day.execution_events} />
-            </Section>
-
-            <Section icon={Activity} title="分钟线源健康">
-              <IntradaySourceHealthTable items={day.intraday_source_health} />
-            </Section>
-
-            <Section icon={BriefcaseBusiness} title="当前持仓">
-              <PositionsTable positions={day.positions} />
-            </Section>
-
-            <Section icon={FileText} title="收盘复盘">
-              {day.portfolio_snapshot ? (
-                <dl className="metrics">
-                  <div>
-                    <dt>总资产</dt>
-                    <dd>{money(day.portfolio_snapshot.total_value)}</dd>
-                  </div>
-                  <div>
-                    <dt>现金</dt>
-                    <dd>{money(day.portfolio_snapshot.cash)}</dd>
-                  </div>
-                  <div>
-                    <dt>市值</dt>
-                    <dd>{money(day.portfolio_snapshot.market_value)}</dd>
-                  </div>
-                  <div>
-                    <dt>open</dt>
-                    <dd>{day.portfolio_snapshot.open_positions}</dd>
-                  </div>
-                </dl>
-              ) : null}
-              {day.review_report ? (
-                <div className="report">
-                  <dl className="metrics review-metrics">
-                    <div>
-                      <dt>已实现盈亏</dt>
-                      <dd
-                        className={
-                          Number(day.review_report.metrics.realized_pnl) >= 0
-                            ? "positive"
-                            : "negative"
-                        }
-                      >
-                        {money(day.review_report.metrics.realized_pnl)}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>胜率</dt>
-                      <dd>{percent(day.review_report.metrics.win_rate)}</dd>
-                    </div>
-                    <div>
-                      <dt>平均持仓天数</dt>
-                      <dd>{days(day.review_report.metrics.average_holding_days)}</dd>
-                    </div>
-                    <div>
-                      <dt>最大回撤</dt>
-                      <dd className="negative">{percent(day.review_report.metrics.max_drawdown)}</dd>
-                    </div>
-                  </dl>
-                  <p className="reason-distribution">
-                    卖出原因分布：
-                    {distributionText(day.review_report.metrics.sell_reason_distribution)}
-                  </p>
-                  <p>{day.review_report.summary}</p>
-                  <p className="muted">{listText(day.review_report.parameter_suggestions)}</p>
-                </div>
-              ) : (
-                <EmptyState text="暂无复盘报告" />
-              )}
-            </Section>
-
-            <Section icon={Gauge} title="数据质量">
-              <DataQualityTable reports={day.data_quality_reports} />
-            </Section>
-
-            <Section icon={Database} title="运行可靠性">
-              <ReliabilityPanel day={day} reports={day.data_reliability_reports} />
-            </Section>
-
-            <Section icon={Database} title="数据源状态">
-              {day.source_snapshots.length === 0 ? (
-                <EmptyState text="暂无 source snapshot" />
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>source</th>
-                      <th>stage</th>
-                      <th>status</th>
-                      <th>rows</th>
-                      <th>失败原因</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {day.source_snapshots.map((snapshot) => (
-                      <tr key={`${snapshot.run_id}-${snapshot.source}`}>
-                        <td>{snapshot.source}</td>
-                        <td>{snapshot.stage ?? "-"}</td>
-                        <td>
-                          <StatusBadge status={snapshot.status} />
-                        </td>
-                        <td>{snapshot.row_count}</td>
-                        <td className={snapshot.failure_reason ? "failure-cell" : ""}>
-                          {snapshot.failure_reason ?? "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Section>
-
-            <Section icon={ClipboardList} title="运行详情">
-              {day.runs.length === 0 ? (
-                <EmptyState text="暂无运行详情" />
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>stage</th>
-                      <th>status</th>
-                      <th>report</th>
-                      <th>失败原因</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {day.runs.map((run) => (
-                      <tr key={run.run_id}>
-                        <td>{stageLabels[run.stage] ?? run.stage}</td>
-                        <td>
-                          <StatusBadge status={run.status} />
-                        </td>
-                        <td>{run.report_path ?? "-"}</td>
-                        <td className={run.failure_reason ? "failure-cell" : ""}>
-                          {run.failure_reason ?? "-"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </Section>
-          </div>
-            ) : null}
-          </>
+        {activeView === "overview" ? (
+          <OverviewBoard day={day} trends={trends} />
+        ) : activeView === "execution" ? (
+          <ExecutionBoard day={day} />
         ) : activeView === "strategy" ? (
-          <>
-            {strategyEvaluationError ? (
-              <div className="alert">{strategyEvaluationError}</div>
-            ) : null}
-            {loading || strategyEvaluationLoading ? (
-              <div className="loading">策略评估加载中</div>
-            ) : null}
-            <StrategyEvaluationDecisionView
-              evaluation={strategyEvaluation}
-              evaluations={strategyEvaluations}
-            />
-          </>
-        ) : (
-          <>
-            {strategyInsightError ? <div className="alert">{strategyInsightError}</div> : null}
-            {loading || strategyInsightLoading ? (
-              <div className="loading">策略假设加载中</div>
-            ) : null}
-            <StrategyInsightDecisionView insight={strategyInsight} insights={strategyInsights} />
-          </>
-        )}
+          <StrategyBoard
+            comparison={strategyComparison}
+            day={day}
+            evaluation={strategyEvaluation}
+            evaluations={strategyEvaluations}
+            insight={strategyInsight}
+            insights={strategyInsights}
+            onSelectInsight={setSelectedInsightId}
+            onSelectEvaluation={setSelectedEvaluationId}
+            selectedEvaluationId={selectedEvaluationId}
+            selectedInsightId={selectedInsightId}
+            trends={trends}
+          />
+        ) : activeView === "quality" ? (
+          <QualityBoard day={day} trends={trends} />
+        ) : null}
+
+        {isRunDetailOpen && selectedRun && day ? (
+          <RunDetailDrawer day={day} onClose={() => setIsRunDetailOpen(false)} run={selectedRun} />
+        ) : null}
       </section>
     </main>
   );
 }
 
-function StrategyEvaluationSidebarList({
+function OverviewBoard({
+  day,
+  trends,
+}: {
+  day: DashboardDay | null;
+  trends: DashboardTrends | null;
+}): JSX.Element {
+  if (!day) {
+    return <EmptyState text="暂无交易日数据" />;
+  }
+  const equityPoints = trends?.points.filter((point) => point.total_value !== null) ?? [];
+  const latestTotal =
+    day.portfolio_snapshot?.total_value ?? equityPoints[equityPoints.length - 1]?.total_value;
+  const intervalPnl = calculateIntervalPnl(equityPoints);
+  const buyCount = day.paper_orders.filter((order) => order.side === "buy").length;
+  const sellCount = day.paper_orders.filter((order) => order.side === "sell").length;
+
+  return (
+    <div className="board-grid">
+      <Section icon={BriefcaseBusiness} title="账户总览">
+        <dl className="metrics">
+          <div>
+            <dt>总资产</dt>
+            <dd>{money(latestTotal)}</dd>
+          </div>
+          <div>
+            <dt>区间盈亏</dt>
+            <dd className={pnlClass(intervalPnl)}>{formatOptionalMoney(intervalPnl)}</dd>
+          </div>
+          <div>
+            <dt>现金</dt>
+            <dd>{money(day.portfolio_snapshot?.cash)}</dd>
+          </div>
+          <div>
+            <dt>持仓数</dt>
+            <dd>{day.portfolio_snapshot?.open_positions ?? day.positions.length}</dd>
+          </div>
+        </dl>
+      </Section>
+
+      <Section icon={Activity} title="权益曲线">
+        {trends ? <EquityTrend points={trends.points} /> : <EmptyState text="暂无权益曲线" />}
+      </Section>
+
+      <Section icon={BarChart3} title="每日盈亏">
+        <DailyPnlTable points={equityPoints} />
+      </Section>
+
+      <Section icon={Activity} title="今日交易摘要">
+        <dl className="metrics compact-metrics">
+          <div>
+            <dt>买入</dt>
+            <dd>{buyCount}</dd>
+          </div>
+          <div>
+            <dt>卖出</dt>
+            <dd>{sellCount}</dd>
+          </div>
+          <div>
+            <dt>订单</dt>
+            <dd>{day.paper_orders.length}</dd>
+          </div>
+          <div>
+            <dt>成交失败</dt>
+            <dd>{day.execution_events.filter((event) => event.status === "rejected").length}</dd>
+          </div>
+        </dl>
+        <OrdersTable orders={day.paper_orders} />
+      </Section>
+
+      <Section icon={BriefcaseBusiness} title="当前持仓">
+        <PositionsTable positions={day.positions} />
+      </Section>
+
+      <Section icon={FileText} title="收盘复盘摘要">
+        <ReviewSummary day={day} compact />
+      </Section>
+    </div>
+  );
+}
+
+function ExecutionBoard({ day }: { day: DashboardDay | null }): JSX.Element {
+  if (!day) {
+    return <EmptyState text="暂无交易执行数据" />;
+  }
+  return (
+    <div className="board-grid">
+      <Section icon={ListChecks} title="盘前计划">
+        <WatchlistTable items={day.watchlist} />
+      </Section>
+
+      <Section icon={ShieldCheck} title="风控结果">
+        <RiskDecisionsTable decisions={day.risk_decisions} />
+      </Section>
+
+      <Section icon={Activity} title="盘中模拟订单">
+        <OrdersTable orders={day.paper_orders} />
+      </Section>
+
+      <Section icon={AlertTriangle} title="成交失败">
+        <ExecutionEventsTable events={day.execution_events} />
+      </Section>
+
+      <Section icon={BriefcaseBusiness} title="当前持仓">
+        <PositionsTable positions={day.positions} />
+      </Section>
+
+      <Section icon={FileText} title="收盘复盘">
+        <ReviewSummary day={day} />
+      </Section>
+    </div>
+  );
+}
+
+function StrategyBoard({
+  comparison,
+  day,
+  evaluation,
   evaluations,
-  loading,
+  insight,
+  insights,
+  onSelectEvaluation,
+  onSelectInsight,
+  selectedEvaluationId,
+  selectedInsightId,
+  trends,
+}: {
+  comparison: DashboardStrategyComparison | null;
+  day: DashboardDay | null;
+  evaluation: DashboardStrategyEvaluation | null;
+  evaluations: DashboardStrategyEvaluation[];
+  insight: DashboardStrategyInsight | null;
+  insights: DashboardStrategyInsight[];
+  onSelectEvaluation: (evaluationId: string) => void;
+  onSelectInsight: (insightId: string) => void;
+  selectedEvaluationId: string | null;
+  selectedInsightId: string | null;
+  trends: DashboardTrends | null;
+}): JSX.Element {
+  return (
+    <div className="board-grid">
+      <Section icon={Gauge} title="信号趋势">
+        <p className="board-note">买入候选信号，不是实际买卖订单。</p>
+        {trends ? <SignalTrend points={trends.points} /> : <EmptyState text="暂无信号趋势" />}
+      </Section>
+
+      <Section icon={ListChecks} title="观察名单评分">
+        <WatchlistTable items={day?.watchlist ?? []} />
+      </Section>
+
+      <Section icon={ShieldCheck} title="风控拒绝原因">
+        {trends ? (
+          <RiskRejectReasons reasons={trends.risk_reject_reasons} />
+        ) : (
+          <EmptyState text="暂无风控拒绝原因" />
+        )}
+      </Section>
+
+      <Section icon={ClipboardList} title="策略评估批次">
+        <StrategyEvaluationBatchList
+          evaluations={evaluations}
+          onSelect={onSelectEvaluation}
+          selectedEvaluationId={selectedEvaluationId}
+        />
+      </Section>
+
+      <Section icon={BarChart3} title="策略假设批次">
+        <StrategyInsightBatchList
+          insights={insights}
+          onSelect={onSelectInsight}
+          selectedInsightId={selectedInsightId}
+        />
+      </Section>
+
+      <div className="board-wide">
+        <StrategyComparisonPanel comparison={comparison} />
+      </div>
+
+      <div className="board-wide">
+        <StrategyEvaluationDecisionView evaluation={evaluation} evaluations={evaluations} />
+      </div>
+
+      <div className="board-wide">
+        <StrategyInsightDecisionView insight={insight} insights={insights} />
+      </div>
+    </div>
+  );
+}
+
+function QualityBoard({
+  day,
+  trends,
+}: {
+  day: DashboardDay | null;
+  trends: DashboardTrends | null;
+}): JSX.Element {
+  if (!day) {
+    return <EmptyState text="暂无质量数据" />;
+  }
+  return (
+    <div className="board-grid">
+      <Section icon={Database} title="数据质量趋势">
+        <p className="board-note">质量失败会影响策略可信度，但不会被静默兜底。</p>
+        {trends ? (
+          <DataQualityTrend points={trends.points} />
+        ) : (
+          <EmptyState text="暂无数据质量趋势" />
+        )}
+      </Section>
+
+      <Section icon={Gauge} title="数据质量">
+        <DataQualityTable reports={day.data_quality_reports} />
+      </Section>
+
+      <Section icon={Database} title="运行可靠性">
+        <ReliabilityPanel day={day} reports={day.data_reliability_reports} />
+      </Section>
+
+      <Section icon={Activity} title="分钟线源健康">
+        <IntradaySourceHealthTable items={day.intraday_source_health} />
+      </Section>
+
+      <Section icon={Database} title="数据源状态">
+        <SourceSnapshotsTable snapshots={day.source_snapshots} />
+      </Section>
+
+      <Section icon={ClipboardList} title="运行详情">
+        <RunDetailsTable runs={day.runs} />
+      </Section>
+    </div>
+  );
+}
+
+function RunDetailDrawer({
+  day,
+  onClose,
+  run,
+}: {
+  day: DashboardDay;
+  onClose: () => void;
+  run: DashboardRun;
+}): JSX.Element {
+  const stage = stageLabels[run.stage] ?? run.stage;
+  const watchlist = day.watchlist.filter((item) => item.run_id === run.run_id);
+  const riskDecisions = day.risk_decisions.filter((decision) => decision.run_id === run.run_id);
+  const orders = day.paper_orders.filter((order) => order.run_id === run.run_id);
+  const sourceHealth = day.intraday_source_health.filter((item) => item.run_id === run.run_id);
+  const sourceSnapshots = day.source_snapshots.filter((snapshot) => snapshot.run_id === run.run_id);
+  const analysis = day.llm_analysis?.run_id === run.run_id ? day.llm_analysis : null;
+  const portfolioSnapshot =
+    day.portfolio_snapshot?.run_id === run.run_id ? day.portfolio_snapshot : null;
+
+  return (
+    <aside aria-label="阶段详情" className="detail-drawer" role="dialog">
+      <div className="detail-drawer-header">
+        <div>
+          <p className="eyebrow">阶段详情</p>
+          <h2>{stage}详情</h2>
+        </div>
+        <button className="icon-button" onClick={onClose} type="button">
+          <X size={16} aria-hidden="true" />
+          <span className="sr-only">关闭</span>
+        </button>
+      </div>
+
+      <dl className="metrics compact-metrics">
+        <div>
+          <dt>日期</dt>
+          <dd>{run.trade_date}</dd>
+        </div>
+        <div>
+          <dt>状态</dt>
+          <dd>
+            <StatusBadge status={run.status} />
+          </dd>
+        </div>
+        <div>
+          <dt>报告</dt>
+          <dd className="small-value">{run.report_path ?? "-"}</dd>
+        </div>
+        <div>
+          <dt>失败原因</dt>
+          <dd className="small-value" title={run.failure_reason ?? undefined}>
+            {run.failure_reason ? summarizeFailure(run.failure_reason) : "-"}
+          </dd>
+        </div>
+      </dl>
+
+      {run.stage === "pre_market" ? (
+        <div className="drawer-sections">
+          <Section icon={ListChecks} title="观察名单">
+            <WatchlistTable items={watchlist} />
+          </Section>
+          <Section icon={FileText} title="LLM 盘前分析">
+            <LLMAnalysisPanel analysis={analysis} />
+          </Section>
+          <Section icon={ShieldCheck} title="风控预检查">
+            <RiskDecisionsTable decisions={riskDecisions} />
+          </Section>
+        </div>
+      ) : null}
+
+      {run.stage === "intraday_watch" ? (
+        <div className="drawer-sections">
+          <Section icon={Activity} title="模拟订单">
+            <OrdersTable orders={orders} />
+          </Section>
+          <Section icon={AlertTriangle} title="成交失败">
+            <ExecutionEventsTable events={day.execution_events} />
+          </Section>
+          <Section icon={Activity} title="分钟线成交依据">
+            <IntradaySourceHealthTable items={sourceHealth} />
+          </Section>
+        </div>
+      ) : null}
+
+      {run.stage === "post_market_review" ? (
+        <div className="drawer-sections">
+          <Section icon={BriefcaseBusiness} title="组合快照">
+            {portfolioSnapshot ? (
+              <PortfolioSnapshotMetrics snapshot={portfolioSnapshot} />
+            ) : (
+              <EmptyState text="暂无组合快照" />
+            )}
+          </Section>
+          <Section icon={FileText} title="复盘指标">
+            <ReviewSummary day={day} />
+          </Section>
+          <Section icon={ClipboardList} title="报告路径">
+            <p className="report-path">{run.report_path ?? "-"}</p>
+          </Section>
+        </div>
+      ) : null}
+
+      {sourceSnapshots.length > 0 ? (
+        <Section icon={Database} title="本次数据源状态">
+          <SourceSnapshotsTable snapshots={sourceSnapshots} />
+        </Section>
+      ) : null}
+    </aside>
+  );
+}
+
+function WatchlistTable({ items }: { items: DashboardDay["watchlist"] }): JSX.Element {
+  if (items.length === 0) {
+    return <EmptyState text="暂无观察名单" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>symbol</th>
+          <th>score</th>
+          <th>分数拆解</th>
+          <th>原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((item) => (
+          <tr key={`${item.run_id}-${item.symbol}`}>
+            <td>{item.symbol}</td>
+            <td>{score(item.score)}</td>
+            <td>{breakdown(item.score_breakdown)}</td>
+            <td>{listText(item.reasons)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RiskDecisionsTable({
+  decisions,
+}: {
+  decisions: DashboardDay["risk_decisions"];
+}): JSX.Element {
+  if (decisions.length === 0) {
+    return <EmptyState text="暂无风控结果" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>symbol</th>
+          <th>动作</th>
+          <th>结果</th>
+          <th>原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {decisions.map((decision) => (
+          <tr key={`${decision.run_id}-${decision.symbol}`}>
+            <td>{decision.symbol}</td>
+            <td>{decision.signal_action}</td>
+            <td>
+              <span className={`badge ${decision.approved ? "safe" : "danger"}`}>
+                {decision.approved ? "通过" : "拒绝"}
+              </span>
+            </td>
+            <td>{listText(decision.reasons)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function DailyPnlTable({ points }: { points: DashboardTrendPoint[] }): JSX.Element {
+  if (points.length === 0) {
+    return <EmptyState text="暂无每日盈亏" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>日期</th>
+          <th>总资产</th>
+          <th>盈亏</th>
+        </tr>
+      </thead>
+      <tbody>
+        {points.map((point, index) => {
+          const current = Number(point.total_value);
+          const previous = index > 0 ? Number(points[index - 1].total_value) : null;
+          const pnl = previous === null ? null : current - previous;
+          return (
+            <tr key={`daily-pnl-${point.trade_date}`}>
+              <td>{point.trade_date}</td>
+              <td>{money(point.total_value)}</td>
+              <td className={pnlClass(pnl)}>{formatOptionalMoney(pnl)}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function ReviewSummary({
+  compact = false,
+  day,
+}: {
+  compact?: boolean;
+  day: DashboardDay;
+}): JSX.Element {
+  if (!day.portfolio_snapshot && !day.review_report) {
+    return <EmptyState text="暂无复盘报告" />;
+  }
+  return (
+    <div className="report">
+      {!compact && day.portfolio_snapshot ? (
+        <PortfolioSnapshotMetrics snapshot={day.portfolio_snapshot} />
+      ) : null}
+      {day.review_report ? (
+        <>
+          <dl className="metrics review-metrics">
+            <div>
+              <dt>已实现盈亏</dt>
+              <dd
+                className={
+                  Number(day.review_report.metrics.realized_pnl) >= 0 ? "positive" : "negative"
+                }
+              >
+                {money(day.review_report.metrics.realized_pnl)}
+              </dd>
+            </div>
+            <div>
+              <dt>胜率</dt>
+              <dd>{percent(day.review_report.metrics.win_rate)}</dd>
+            </div>
+            <div>
+              <dt>平均持仓天数</dt>
+              <dd>{days(day.review_report.metrics.average_holding_days)}</dd>
+            </div>
+            <div>
+              <dt>最大回撤</dt>
+              <dd className="negative">{percent(day.review_report.metrics.max_drawdown)}</dd>
+            </div>
+          </dl>
+          <p className="reason-distribution">
+            卖出原因分布：
+            {distributionText(day.review_report.metrics.sell_reason_distribution)}
+          </p>
+          <p>{day.review_report.summary}</p>
+          <p className="muted">{listText(day.review_report.parameter_suggestions)}</p>
+        </>
+      ) : (
+        <EmptyState text="暂无复盘报告" />
+      )}
+    </div>
+  );
+}
+
+function PortfolioSnapshotMetrics({
+  snapshot,
+}: {
+  snapshot: NonNullable<DashboardDay["portfolio_snapshot"]>;
+}): JSX.Element {
+  return (
+    <dl className="metrics">
+      <div>
+        <dt>总资产</dt>
+        <dd>{money(snapshot.total_value)}</dd>
+      </div>
+      <div>
+        <dt>现金</dt>
+        <dd>{money(snapshot.cash)}</dd>
+      </div>
+      <div>
+        <dt>市值</dt>
+        <dd>{money(snapshot.market_value)}</dd>
+      </div>
+      <div>
+        <dt>open</dt>
+        <dd>{snapshot.open_positions}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function StrategyEvaluationBatchList({
+  evaluations,
   onSelect,
   selectedEvaluationId,
 }: {
   evaluations: DashboardStrategyEvaluation[];
-  loading: boolean;
   onSelect: (evaluationId: string) => void;
   selectedEvaluationId: string | null;
 }): JSX.Element {
+  if (evaluations.length === 0) {
+    return <EmptyState text="暂无策略评估批次" />;
+  }
   return (
-    <div className="run-list">
-      {evaluations.length === 0 && !loading ? <EmptyState text="无评估批次" /> : null}
+    <div className="batch-list">
       {evaluations.map((evaluation) => (
         <button
-          className={`run-item ${evaluation.evaluation_id === selectedEvaluationId ? "selected" : ""}`}
+          className={`batch-item ${evaluation.evaluation_id === selectedEvaluationId ? "selected" : ""}`}
           key={evaluation.evaluation_id}
           onClick={() => onSelect(evaluation.evaluation_id)}
           type="button"
         >
-          <span className="run-date">{evaluation.evaluation_id}</span>
-          <span className="run-meta">
+          <strong>{evaluation.evaluation_id}</strong>
+          <span>
             {evaluation.provider} · {evaluation.start_date} 至 {evaluation.end_date}
           </span>
-          <span className="run-meta">
+          <span>
             {evaluation.variant_count} 个 variant · 推荐{" "}
             {evaluation.recommendation.recommended_variant_ids.length}
           </span>
@@ -731,37 +1021,111 @@ function StrategyEvaluationSidebarList({
   );
 }
 
-function StrategyInsightSidebarList({
+function StrategyInsightBatchList({
   insights,
-  loading,
   onSelect,
   selectedInsightId,
 }: {
   insights: DashboardStrategyInsight[];
-  loading: boolean;
   onSelect: (insightId: string) => void;
   selectedInsightId: string | null;
 }): JSX.Element {
+  if (insights.length === 0) {
+    return <EmptyState text="暂无策略假设" />;
+  }
   return (
-    <div className="run-list">
-      {insights.length === 0 && !loading ? <EmptyState text="无策略假设批次" /> : null}
+    <div className="batch-list">
       {insights.map((insight) => (
         <button
-          className={`run-item ${insight.insight_id === selectedInsightId ? "selected" : ""}`}
+          className={`batch-item ${insight.insight_id === selectedInsightId ? "selected" : ""}`}
           key={insight.insight_id}
           onClick={() => onSelect(insight.insight_id)}
           type="button"
         >
-          <span className="run-date">{insight.insight_id}</span>
-          <span className="run-meta">
+          <strong>{insight.insight_id}</strong>
+          <span>
             {insight.provider} · {insight.trade_date} · {manualStatusLabel(insight.manual_status)}
           </span>
-          <span className="run-meta">
+          <span>
             {insight.hypotheses.length} 个假设 · {insight.recommended_variant_ids.length} 个候选
           </span>
         </button>
       ))}
     </div>
+  );
+}
+
+function SourceSnapshotsTable({
+  snapshots,
+}: {
+  snapshots: DashboardDay["source_snapshots"];
+}): JSX.Element {
+  if (snapshots.length === 0) {
+    return <EmptyState text="暂无 source snapshot" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>source</th>
+          <th>stage</th>
+          <th>status</th>
+          <th>rows</th>
+          <th>失败原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {snapshots.map((snapshot) => (
+          <tr key={`${snapshot.run_id}-${snapshot.source}`}>
+            <td>{snapshot.source}</td>
+            <td>{snapshot.stage ?? "-"}</td>
+            <td>
+              <StatusBadge status={snapshot.status} />
+            </td>
+            <td>{snapshot.row_count}</td>
+            <td className={snapshot.failure_reason ? "failure-cell" : ""}>
+              <span title={snapshot.failure_reason ?? undefined}>
+                {snapshot.failure_reason ? summarizeFailure(snapshot.failure_reason) : "-"}
+              </span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function RunDetailsTable({ runs }: { runs: DashboardRun[] }): JSX.Element {
+  if (runs.length === 0) {
+    return <EmptyState text="暂无运行详情" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>stage</th>
+          <th>status</th>
+          <th>report</th>
+          <th>失败原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {runs.map((run) => (
+          <tr key={run.run_id}>
+            <td>{stageLabels[run.stage] ?? run.stage}</td>
+            <td>
+              <StatusBadge status={run.status} />
+            </td>
+            <td>{run.report_path ?? "-"}</td>
+            <td className={run.failure_reason ? "failure-cell" : ""}>
+              <span title={run.failure_reason ?? undefined}>
+                {run.failure_reason ? summarizeFailure(run.failure_reason) : "-"}
+              </span>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -913,9 +1277,7 @@ function StrategyInsightExperiments({
               <span>{experiment.variant_id ?? "-"}</span>
             </div>
             <span
-              className={`badge ${
-                experiment.policy_status === "approved" ? "safe" : "danger"
-              }`}
+              className={`badge ${experiment.policy_status === "approved" ? "safe" : "danger"}`}
             >
               {experiment.policy_status}
             </span>
@@ -948,9 +1310,7 @@ function StrategyInsightWindows({
               <span>{window.evaluation_id}</span>
               <span>{window.report_path}</span>
             </div>
-            <span className="badge neutral">
-              通过 {window.passed_variant_ids.length}
-            </span>
+            <span className="badge neutral">通过 {window.passed_variant_ids.length}</span>
           </div>
           <div className="trend-meta strategy-variant-metrics">
             <span>评估推荐 {listText(window.recommended_variant_ids)}</span>
@@ -1080,6 +1440,40 @@ function uniqueStrings(values: string[]): string[] {
     unique.push(normalized);
   }
   return unique;
+}
+
+function calculateIntervalPnl(points: DashboardTrendPoint[]): number | null {
+  if (points.length < 2) {
+    return null;
+  }
+  const first = Number(points[0].total_value);
+  const last = Number(points[points.length - 1].total_value);
+  if (Number.isNaN(first) || Number.isNaN(last)) {
+    return null;
+  }
+  return last - first;
+}
+
+function formatOptionalMoney(value: number | null): string {
+  if (value === null || Number.isNaN(value)) {
+    return "-";
+  }
+  return money(String(value));
+}
+
+function pnlClass(value: number | null): string {
+  if (value === null || Number.isNaN(value) || value === 0) {
+    return "";
+  }
+  return value > 0 ? "positive" : "negative";
+}
+
+function summarizeFailure(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= 72) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 72)}...`;
 }
 
 function manualStatusLabel(status: DashboardStrategyInsight["manual_status"]): string {

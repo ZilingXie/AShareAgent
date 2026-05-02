@@ -23,6 +23,8 @@ import {
   fetchStrategyComparison,
   fetchStrategyEvaluation,
   fetchStrategyEvaluations,
+  fetchStrategyInsight,
+  fetchStrategyInsights,
 } from "./api";
 import {
   boolText,
@@ -48,11 +50,13 @@ import type {
   DashboardRun,
   DashboardStrategyEvaluation,
   DashboardStrategyEvaluationVariant,
+  DashboardStrategyInsight,
+  DashboardStrategyInsightWindow,
   DashboardTrendPoint,
   DashboardTrends,
 } from "./types";
 
-type ActiveView = "daily" | "strategy";
+type ActiveView = "daily" | "strategy" | "insights";
 
 const stageLabels: Record<string, string> = {
   pre_market: "盘前",
@@ -87,12 +91,17 @@ export default function App(): JSX.Element {
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [strategyEvaluation, setStrategyEvaluation] =
     useState<DashboardStrategyEvaluation | null>(null);
+  const [strategyInsights, setStrategyInsights] = useState<DashboardStrategyInsight[]>([]);
+  const [selectedInsightId, setSelectedInsightId] = useState<string | null>(null);
+  const [strategyInsight, setStrategyInsight] = useState<DashboardStrategyInsight | null>(null);
   const [loading, setLoading] = useState(true);
   const [trendLoading, setTrendLoading] = useState(false);
   const [strategyEvaluationLoading, setStrategyEvaluationLoading] = useState(false);
+  const [strategyInsightLoading, setStrategyInsightLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [strategyEvaluationError, setStrategyEvaluationError] = useState<string | null>(null);
+  const [strategyInsightError, setStrategyInsightError] = useState<string | null>(null);
 
   async function loadRuns(): Promise<void> {
     setLoading(true);
@@ -101,16 +110,23 @@ export default function App(): JSX.Element {
       const loadedRuns = await fetchRuns(200);
       const loadedBacktests = await fetchBacktests(20);
       const loadedEvaluations = await fetchStrategyEvaluations(50);
+      const loadedInsights = await fetchStrategyInsights(50);
       const tradeDates = [...new Set(loadedRuns.map((run) => run.trade_date))].sort();
       setRuns(loadedRuns);
       setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
       setStrategyEvaluations(loadedEvaluations);
+      setStrategyInsights(loadedInsights);
       setSelectedEvaluationId((current) =>
         current && loadedEvaluations.some((item) => item.evaluation_id === current)
           ? current
           : loadedEvaluations[0]?.evaluation_id ?? null
+      );
+      setSelectedInsightId((current) =>
+        current && loadedInsights.some((item) => item.insight_id === current)
+          ? current
+          : loadedInsights[0]?.insight_id ?? null
       );
       const backtestIds = uniqueStrings(loadedBacktests.map((item) => item.backtest_id));
       if (backtestIds.length === 0) {
@@ -160,6 +176,38 @@ export default function App(): JSX.Element {
       active = false;
     };
   }, [selectedEvaluationId]);
+
+  useEffect(() => {
+    if (!selectedInsightId) {
+      setStrategyInsight(null);
+      return;
+    }
+    let active = true;
+    setStrategyInsightLoading(true);
+    setStrategyInsightError(null);
+    fetchStrategyInsight(selectedInsightId)
+      .then((loadedInsight) => {
+        if (active) {
+          setStrategyInsight(loadedInsight);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setStrategyInsightError(
+            caught instanceof Error ? caught.message : "Dashboard API 请求失败"
+          );
+          setStrategyInsight(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setStrategyInsightLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [selectedInsightId]);
 
   useEffect(() => {
     if (!selectedDate) {
@@ -281,6 +329,13 @@ export default function App(): JSX.Element {
           >
             策略评估
           </button>
+          <button
+            className={activeView === "insights" ? "selected" : ""}
+            onClick={() => setActiveView("insights")}
+            type="button"
+          >
+            策略假设
+          </button>
         </div>
         {activeView === "daily" ? (
           <div className="run-list">
@@ -305,12 +360,19 @@ export default function App(): JSX.Element {
               </button>
             ))}
           </div>
-        ) : (
+        ) : activeView === "strategy" ? (
           <StrategyEvaluationSidebarList
             evaluations={strategyEvaluations}
             loading={loading}
             onSelect={setSelectedEvaluationId}
             selectedEvaluationId={selectedEvaluationId}
+          />
+        ) : (
+          <StrategyInsightSidebarList
+            insights={strategyInsights}
+            loading={loading}
+            onSelect={setSelectedInsightId}
+            selectedInsightId={selectedInsightId}
           />
         )}
       </aside>
@@ -351,7 +413,7 @@ export default function App(): JSX.Element {
                 <span>{day ? reliabilityStatusSummary(day) : "无可靠性报告"}</span>
               </div>
             </>
-          ) : (
+          ) : activeView === "strategy" ? (
             <>
               <div>
                 <p className="eyebrow">策略评估批次</p>
@@ -364,6 +426,19 @@ export default function App(): JSX.Element {
                 <span>
                   {strategyEvaluation?.recommendation.recommended_variant_ids.length ?? 0} 个推荐候选
                 </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <p className="eyebrow">策略假设批次</p>
+                <h2>{selectedInsightId ? `批次 ${selectedInsightId}` : "-"}</h2>
+              </div>
+              <div className="status-strip">
+                <span>{strategyInsights.length} 个假设批次</span>
+                <span>{strategyInsight?.provider ?? "-"}</span>
+                <span>{strategyInsight ? manualStatusLabel(strategyInsight.manual_status) : "-"}</span>
+                <span>{strategyInsight?.recommended_variant_ids.length ?? 0} 个候选</span>
               </div>
             </>
           )}
@@ -594,7 +669,7 @@ export default function App(): JSX.Element {
           </div>
             ) : null}
           </>
-        ) : (
+        ) : activeView === "strategy" ? (
           <>
             {strategyEvaluationError ? (
               <div className="alert">{strategyEvaluationError}</div>
@@ -606,6 +681,14 @@ export default function App(): JSX.Element {
               evaluation={strategyEvaluation}
               evaluations={strategyEvaluations}
             />
+          </>
+        ) : (
+          <>
+            {strategyInsightError ? <div className="alert">{strategyInsightError}</div> : null}
+            {loading || strategyInsightLoading ? (
+              <div className="loading">策略假设加载中</div>
+            ) : null}
+            <StrategyInsightDecisionView insight={strategyInsight} insights={strategyInsights} />
           </>
         )}
       </section>
@@ -641,6 +724,40 @@ function StrategyEvaluationSidebarList({
           <span className="run-meta">
             {evaluation.variant_count} 个 variant · 推荐{" "}
             {evaluation.recommendation.recommended_variant_ids.length}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StrategyInsightSidebarList({
+  insights,
+  loading,
+  onSelect,
+  selectedInsightId,
+}: {
+  insights: DashboardStrategyInsight[];
+  loading: boolean;
+  onSelect: (insightId: string) => void;
+  selectedInsightId: string | null;
+}): JSX.Element {
+  return (
+    <div className="run-list">
+      {insights.length === 0 && !loading ? <EmptyState text="无策略假设批次" /> : null}
+      {insights.map((insight) => (
+        <button
+          className={`run-item ${insight.insight_id === selectedInsightId ? "selected" : ""}`}
+          key={insight.insight_id}
+          onClick={() => onSelect(insight.insight_id)}
+          type="button"
+        >
+          <span className="run-date">{insight.insight_id}</span>
+          <span className="run-meta">
+            {insight.provider} · {insight.trade_date} · {manualStatusLabel(insight.manual_status)}
+          </span>
+          <span className="run-meta">
+            {insight.hypotheses.length} 个假设 · {insight.recommended_variant_ids.length} 个候选
           </span>
         </button>
       ))}
@@ -700,6 +817,152 @@ function StrategyEvaluationDecisionView({
       <Section icon={AlertTriangle} title="不可推荐原因">
         <StrategyEvaluationReasons variants={evaluation.variants} />
       </Section>
+    </div>
+  );
+}
+
+function StrategyInsightDecisionView({
+  insight,
+  insights,
+}: {
+  insight: DashboardStrategyInsight | null;
+  insights: DashboardStrategyInsight[];
+}): JSX.Element {
+  if (insights.length === 0) {
+    return <EmptyState text="暂无策略假设" />;
+  }
+  if (!insight) {
+    return <EmptyState text="暂无策略假设详情" />;
+  }
+  return (
+    <div className="strategy-evaluation-grid">
+      <Section icon={BarChart3} title="策略假设">
+        <div className="strategy-summary">
+          <p className="summary-text">{insight.summary}</p>
+          <dl className="metrics strategy-metrics">
+            <div>
+              <dt>provider</dt>
+              <dd>{insight.provider}</dd>
+            </div>
+            <div>
+              <dt>交易日</dt>
+              <dd>{insight.trade_date}</dd>
+            </div>
+            <div>
+              <dt>人工状态</dt>
+              <dd>{manualStatusLabel(insight.manual_status)}</dd>
+            </div>
+            <div>
+              <dt>候选</dt>
+              <dd>{insight.recommended_variant_ids.length}</dd>
+            </div>
+          </dl>
+          <p className="report-path">{insight.report_path}</p>
+          <p className="safety-note">
+            LLM 只提出假设，代码回测验证，不自动修改策略参数。
+          </p>
+        </div>
+      </Section>
+
+      <Section icon={ListChecks} title="LLM 归因">
+        <ul className="issue-list compact-list">
+          {insight.attribution.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section icon={Gauge} title="假设与参数变更">
+        <StrategyInsightExperiments insight={insight} />
+      </Section>
+
+      <Section icon={ShieldCheck} title="三窗口验证">
+        <StrategyInsightWindows windows={insight.evaluation_windows} />
+      </Section>
+    </div>
+  );
+}
+
+function StrategyInsightExperiments({
+  insight,
+}: {
+  insight: DashboardStrategyInsight;
+}): JSX.Element {
+  return (
+    <div className="strategy-ranking">
+      {insight.hypotheses.map((hypothesis) => (
+        <div className="strategy-variant-row" key={`${hypothesis.area}-${hypothesis.direction}`}>
+          <div className="strategy-variant-head">
+            <div>
+              <strong>{hypothesis.area}</strong>
+              <span>{hypothesis.direction}</span>
+              <span>{hypothesis.reason}</span>
+              <span>{hypothesis.risk}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+      {insight.experiments.map((experiment) => (
+        <div className="strategy-variant-row" key={`${experiment.param}-${experiment.name}`}>
+          <div className="strategy-variant-head">
+            <div>
+              <strong>{experiment.name}</strong>
+              <span>
+                {experiment.param} = {experiment.candidate_value}
+              </span>
+              <span>{experiment.variant_id ?? "-"}</span>
+            </div>
+            <span
+              className={`badge ${
+                experiment.policy_status === "approved" ? "safe" : "danger"
+              }`}
+            >
+              {experiment.policy_status}
+            </span>
+          </div>
+          <div className="trend-meta strategy-variant-metrics">
+            <span>{jsonPreview(experiment.overrides)}</span>
+            {experiment.policy_reason ? <span>{experiment.policy_reason}</span> : null}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function StrategyInsightWindows({
+  windows,
+}: {
+  windows: DashboardStrategyInsightWindow[];
+}): JSX.Element {
+  if (windows.length === 0) {
+    return <EmptyState text="暂无多窗口评估" />;
+  }
+  return (
+    <div className="strategy-ranking">
+      {windows.map((window) => (
+        <div className="strategy-variant-row" key={window.evaluation_id}>
+          <div className="strategy-variant-head">
+            <div>
+              <strong>{window.window_trade_days} 日</strong>
+              <span>{window.evaluation_id}</span>
+              <span>{window.report_path}</span>
+            </div>
+            <span className="badge neutral">
+              通过 {window.passed_variant_ids.length}
+            </span>
+          </div>
+          <div className="trend-meta strategy-variant-metrics">
+            <span>评估推荐 {listText(window.recommended_variant_ids)}</span>
+            <span>门槛通过 {listText(window.passed_variant_ids)}</span>
+            {Object.entries(window.failed_variant_reasons).map(([variantId, reasons]) => (
+              <span key={variantId}>
+                {variantId}: {listText(reasons)}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -817,6 +1080,20 @@ function uniqueStrings(values: string[]): string[] {
     unique.push(normalized);
   }
   return unique;
+}
+
+function manualStatusLabel(status: DashboardStrategyInsight["manual_status"]): string {
+  if (status === "accepted") {
+    return "已接受";
+  }
+  if (status === "rejected") {
+    return "已拒绝";
+  }
+  return "待复核";
+}
+
+function jsonPreview(value: Record<string, unknown>): string {
+  return JSON.stringify(value);
 }
 
 function uniqueStrategyComparisonItems(

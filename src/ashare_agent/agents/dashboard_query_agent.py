@@ -390,6 +390,50 @@ class DashboardStrategyEvaluation:
     variants: list[DashboardStrategyEvaluationVariant]
 
 
+@dataclass(frozen=True)
+class DashboardStrategyInsightHypothesis:
+    area: str
+    direction: str
+    reason: str
+    risk: str
+
+
+@dataclass(frozen=True)
+class DashboardStrategyInsightExperiment:
+    name: str
+    param: str
+    candidate_value: str
+    policy_status: str
+    policy_reason: str | None
+    variant_id: str | None
+    overrides: dict[str, object]
+
+
+@dataclass(frozen=True)
+class DashboardStrategyInsightWindow:
+    window_trade_days: int
+    evaluation_id: str
+    report_path: str
+    recommended_variant_ids: list[str]
+    passed_variant_ids: list[str]
+    failed_variant_reasons: dict[str, list[str]]
+
+
+@dataclass(frozen=True)
+class DashboardStrategyInsight:
+    insight_id: str
+    trade_date: str
+    provider: str
+    summary: str
+    attribution: list[str]
+    manual_status: str
+    report_path: str
+    hypotheses: list[DashboardStrategyInsightHypothesis]
+    experiments: list[DashboardStrategyInsightExperiment]
+    evaluation_windows: list[DashboardStrategyInsightWindow]
+    recommended_variant_ids: list[str]
+
+
 def _empty_runs() -> list[DashboardPipelineRun]:
     return []
 
@@ -554,6 +598,32 @@ class DashboardQueryAgent:
         if row is None:
             return None
         return self._strategy_evaluation(row)
+
+    def list_strategy_insights(self, limit: int = 50) -> list[DashboardStrategyInsight]:
+        rows: list[PayloadRecord] = []
+        seen_insight_ids: set[str] = set()
+        for row in sorted(
+            self.repository.payload_rows("pipeline_runs"),
+            key=lambda item: _row_id(item, "pipeline_runs"),
+            reverse=True,
+        ):
+            if not self._is_strategy_insight_row(row):
+                continue
+            payload = _payload(row, "pipeline_runs")
+            insight_id = _required_str(payload, "pipeline_runs", "insight_id")
+            if insight_id in seen_insight_ids:
+                continue
+            seen_insight_ids.add(insight_id)
+            rows.append(row)
+            if len(rows) >= limit:
+                break
+        return [self._strategy_insight(row) for row in rows]
+
+    def strategy_insight(self, insight_id: str) -> DashboardStrategyInsight | None:
+        row = self._latest_strategy_insight_row(insight_id)
+        if row is None:
+            return None
+        return self._strategy_insight(row)
 
     def day_summary(self, trade_date: date) -> DashboardDaySummary:
         runs = self._pipeline_runs_for_day(trade_date)
@@ -896,6 +966,14 @@ class DashboardQueryAgent:
             and bool(payload.get("evaluation_id"))
         )
 
+    def _is_strategy_insight_row(self, row: PayloadRecord) -> bool:
+        payload = _payload(row, "pipeline_runs")
+        return (
+            payload.get("stage") == "strategy_insight"
+            and payload.get("run_mode", "normal") == "normal"
+            and bool(payload.get("insight_id"))
+        )
+
     def _latest_backtest_summary_row(self, backtest_id: str) -> PayloadRecord | None:
         latest: PayloadRecord | None = None
         for row in self.repository.payload_rows("pipeline_runs"):
@@ -919,6 +997,18 @@ class DashboardQueryAgent:
                 continue
             payload = _payload(row, "pipeline_runs")
             if payload.get("evaluation_id") != evaluation_id:
+                continue
+            if latest is None or _row_id(row, "pipeline_runs") > _row_id(latest, "pipeline_runs"):
+                latest = row
+        return latest
+
+    def _latest_strategy_insight_row(self, insight_id: str) -> PayloadRecord | None:
+        latest: PayloadRecord | None = None
+        for row in self.repository.payload_rows("pipeline_runs"):
+            if not self._is_strategy_insight_row(row):
+                continue
+            payload = _payload(row, "pipeline_runs")
+            if payload.get("insight_id") != insight_id:
                 continue
             if latest is None or _row_id(row, "pipeline_runs") > _row_id(latest, "pipeline_runs"):
                 latest = row
@@ -1156,6 +1246,35 @@ class DashboardQueryAgent:
                 ),
             ),
             variants=variants,
+        )
+
+    def _strategy_insight(self, row: PayloadRecord) -> DashboardStrategyInsight:
+        payload = _payload(row, "pipeline_runs")
+        gate_summary = _required_mapping(payload, "pipeline_runs", "gate_summary")
+        return DashboardStrategyInsight(
+            insight_id=_required_str(payload, "pipeline_runs", "insight_id"),
+            trade_date=str(payload.get("trade_date") or _row_date(row, "pipeline_runs")),
+            provider=_required_str(payload, "pipeline_runs", "provider"),
+            summary=_required_str(payload, "pipeline_runs", "summary"),
+            attribution=_required_str_list(payload, "pipeline_runs", "attribution"),
+            manual_status=_strategy_insight_status(
+                _required_str(payload, "pipeline_runs", "manual_status")
+            ),
+            report_path=_required_str(payload, "pipeline_runs", "report_path"),
+            hypotheses=_strategy_insight_hypotheses(
+                _required_list(payload, "pipeline_runs", "hypotheses")
+            ),
+            experiments=_strategy_insight_experiments(
+                _required_list(payload, "pipeline_runs", "experiments")
+            ),
+            evaluation_windows=_strategy_insight_windows(
+                _required_list(payload, "pipeline_runs", "evaluation_windows")
+            ),
+            recommended_variant_ids=_required_str_list(
+                gate_summary,
+                "pipeline_runs.gate_summary",
+                "recommended_variant_ids",
+            ),
         )
 
     def _backtest_win_rate(self, backtest_id: str) -> float:
@@ -1794,6 +1913,124 @@ def _float_mapping(
 
 def _decimal_text(value: Decimal) -> str:
     return str(value)
+
+
+def _strategy_insight_status(status: str) -> str:
+    if status not in {"pending_review", "accepted", "rejected"}:
+        raise ValueError(f"pipeline_runs 字段 manual_status 未知: {status}")
+    return status
+
+
+def _strategy_insight_hypotheses(
+    values: list[object],
+) -> list[DashboardStrategyInsightHypothesis]:
+    hypotheses: list[DashboardStrategyInsightHypothesis] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("pipeline_runs hypotheses item 必须是 object")
+        payload = cast(Mapping[str, object], value)
+        hypotheses.append(
+            DashboardStrategyInsightHypothesis(
+                area=_required_str(payload, "pipeline_runs.hypotheses", "area"),
+                direction=_required_str(payload, "pipeline_runs.hypotheses", "direction"),
+                reason=_required_str(payload, "pipeline_runs.hypotheses", "reason"),
+                risk=_required_str(payload, "pipeline_runs.hypotheses", "risk"),
+            )
+        )
+    return hypotheses
+
+
+def _strategy_insight_experiments(
+    values: list[object],
+) -> list[DashboardStrategyInsightExperiment]:
+    experiments: list[DashboardStrategyInsightExperiment] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("pipeline_runs experiments item 必须是 object")
+        payload = cast(Mapping[str, object], value)
+        status = _required_str(payload, "pipeline_runs.experiments", "policy_status")
+        if status not in {"approved", "rejected_by_policy"}:
+            raise ValueError(f"pipeline_runs experiments policy_status 未知: {status}")
+        overrides = _required_mapping(payload, "pipeline_runs.experiments", "overrides")
+        experiments.append(
+            DashboardStrategyInsightExperiment(
+                name=_required_str(payload, "pipeline_runs.experiments", "name"),
+                param=_required_str(payload, "pipeline_runs.experiments", "param"),
+                candidate_value=_required_str(
+                    payload,
+                    "pipeline_runs.experiments",
+                    "candidate_value",
+                ),
+                policy_status=status,
+                policy_reason=_optional_str(payload.get("policy_reason")),
+                variant_id=_optional_str(payload.get("variant_id")),
+                overrides=dict(overrides),
+            )
+        )
+    return experiments
+
+
+def _strategy_insight_windows(
+    values: list[object],
+) -> list[DashboardStrategyInsightWindow]:
+    windows: list[DashboardStrategyInsightWindow] = []
+    for value in values:
+        if not isinstance(value, Mapping):
+            raise ValueError("pipeline_runs evaluation_windows item 必须是 object")
+        payload = cast(Mapping[str, object], value)
+        failed_reasons_raw = _required_mapping(
+            payload,
+            "pipeline_runs.evaluation_windows",
+            "failed_variant_reasons",
+        )
+        failed_reasons: dict[str, list[str]] = {}
+        for key, reason_values in failed_reasons_raw.items():
+            if not isinstance(reason_values, list):
+                raise ValueError(
+                    "pipeline_runs.evaluation_windows.failed_variant_reasons "
+                    "必须是 string list mapping"
+                )
+            failed_reasons[str(key)] = _required_string_values(
+                cast(list[object], reason_values),
+                "pipeline_runs.evaluation_windows.failed_variant_reasons",
+            )
+        windows.append(
+            DashboardStrategyInsightWindow(
+                window_trade_days=_required_int(
+                    payload,
+                    "pipeline_runs.evaluation_windows",
+                    "window_trade_days",
+                ),
+                evaluation_id=_required_str(
+                    payload,
+                    "pipeline_runs.evaluation_windows",
+                    "evaluation_id",
+                ),
+                report_path=_required_str(
+                    payload,
+                    "pipeline_runs.evaluation_windows",
+                    "report_path",
+                ),
+                recommended_variant_ids=_required_str_list(
+                    payload,
+                    "pipeline_runs.evaluation_windows",
+                    "recommended_variant_ids",
+                ),
+                passed_variant_ids=_required_str_list(
+                    payload,
+                    "pipeline_runs.evaluation_windows",
+                    "passed_variant_ids",
+                ),
+                failed_variant_reasons=failed_reasons,
+            )
+        )
+    return windows
+
+
+def _required_string_values(values: list[object], table_name: str) -> list[str]:
+    if not all(isinstance(item, str) for item in values):
+        raise ValueError(f"{table_name} 必须是 string list")
+    return cast(list[str], values)
 
 
 def _strategy_evaluation_variants(

@@ -16,6 +16,7 @@ from ashare_agent.dashboard import (
     DashboardRun,
     DashboardStrategyComparison,
     DashboardStrategyEvaluation,
+    DashboardStrategyInsight,
     DashboardTrends,
 )
 from ashare_agent.repository import PostgresRepository
@@ -41,6 +42,10 @@ class DashboardService(Protocol):
         self,
         evaluation_id: str,
     ) -> DashboardStrategyEvaluation | None: ...
+
+    def list_strategy_insights(self, limit: int = 50) -> list[DashboardStrategyInsight]: ...
+
+    def strategy_insight(self, insight_id: str) -> DashboardStrategyInsight | None: ...
 
 
 DashboardServiceFactory = Callable[[], DashboardService]
@@ -114,6 +119,25 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
             )
         return _dto(evaluation)
 
+    @api.get("/api/dashboard/strategy-insights")
+    def dashboard_strategy_insights(limit: int = 50) -> dict[str, list[JsonObject]]:
+        safe_limit = min(max(limit, 1), 200)
+        return {
+            "strategy_insights": [
+                _dto(item) for item in service().list_strategy_insights(limit=safe_limit)
+            ]
+        }
+
+    @api.get("/api/dashboard/strategy-insights/{insight_id}")
+    def dashboard_strategy_insight(insight_id: str) -> JsonObject:
+        insight = service().strategy_insight(insight_id)
+        if insight is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"strategy insight 不存在: {insight_id}",
+            )
+        return _dto(insight)
+
     _registered_routes = (
         health,
         dashboard_runs,
@@ -123,6 +147,8 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
         dashboard_strategy_comparison,
         dashboard_strategy_evaluations,
         dashboard_strategy_evaluation,
+        dashboard_strategy_insights,
+        dashboard_strategy_insight,
     )
     return api
 

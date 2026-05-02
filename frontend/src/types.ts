@@ -312,6 +312,46 @@ export interface DashboardStrategyEvaluation {
   variants: DashboardStrategyEvaluationVariant[];
 }
 
+export interface DashboardStrategyInsightHypothesis {
+  area: string;
+  direction: string;
+  reason: string;
+  risk: string;
+}
+
+export interface DashboardStrategyInsightExperiment {
+  name: string;
+  param: string;
+  candidate_value: string;
+  policy_status: string;
+  policy_reason: string | null;
+  variant_id: string | null;
+  overrides: Record<string, unknown>;
+}
+
+export interface DashboardStrategyInsightWindow {
+  window_trade_days: number;
+  evaluation_id: string;
+  report_path: string;
+  recommended_variant_ids: string[];
+  passed_variant_ids: string[];
+  failed_variant_reasons: Record<string, string[]>;
+}
+
+export interface DashboardStrategyInsight {
+  insight_id: string;
+  trade_date: string;
+  provider: string;
+  summary: string;
+  attribution: string[];
+  manual_status: "pending_review" | "accepted" | "rejected";
+  report_path: string;
+  hypotheses: DashboardStrategyInsightHypothesis[];
+  experiments: DashboardStrategyInsightExperiment[];
+  evaluation_windows: DashboardStrategyInsightWindow[];
+  recommended_variant_ids: string[];
+}
+
 export interface DashboardDay {
   trade_date: string;
   runs: DashboardRun[];

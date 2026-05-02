@@ -21,6 +21,7 @@ from ashare_agent.strategy_evaluation import (
     StrategyEvaluationRunner,
     load_strategy_evaluation_config,
 )
+from ashare_agent.strategy_insights import StrategyInsightRunner
 
 app = typer.Typer(no_args_is_help=True)
 
@@ -227,5 +228,43 @@ def strategy_evaluate(
     typer.echo(
         "策略评估完成: "
         f"{result.payload['evaluation_id']}, "
+        f"报告 {result.payload['report_path']}"
+    )
+
+
+@app.command()
+def strategy_insight(
+    trade_date: Annotated[str, typer.Option(..., "--trade-date")],
+    insight_id: Annotated[str | None, typer.Option("--insight-id")] = None,
+) -> None:
+    parsed_date = _parse_trade_date(trade_date)
+    settings = load_settings()
+    if not settings.database_url:
+        raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
+    _require_sina_fallback_for_strategy_evaluation(settings)
+    provider, required_data_sources = _build_provider(settings)
+    strategy_params = _load_strategy_params(settings.strategy_params_config)
+    runner = StrategyInsightRunner(
+        provider=provider,
+        llm_client=create_llm_client(
+            provider=settings.llm_provider,
+            openai_api_key=settings.openai_api_key,
+            openai_model=settings.openai_model,
+            deepseek_api_key=settings.deepseek_api_key,
+            deepseek_model=settings.deepseek_model,
+        ),
+        report_root=Path(settings.report_root),
+        repository=PostgresRepository(settings.database_url),
+        strategy_params=strategy_params,
+        provider_name=settings.provider.lower(),
+        required_data_sources=required_data_sources,
+    )
+    try:
+        result = runner.run(trade_date=parsed_date, insight_id=insight_id)
+    except (DataProviderError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(
+        "策略假设复盘完成: "
+        f"{result.payload['insight_id']}, "
         f"报告 {result.payload['report_path']}"
     )

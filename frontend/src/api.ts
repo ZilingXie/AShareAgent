@@ -4,6 +4,7 @@ import type {
   DashboardRun,
   DashboardStrategyComparison,
   DashboardStrategyEvaluation,
+  DashboardStrategyInsight,
   DashboardTrends,
 } from "./types";
 
@@ -70,4 +71,19 @@ export async function fetchStrategyEvaluation(
     `/api/dashboard/strategy-evaluations/${encodeURIComponent(evaluationId)}`
   );
   return readJson<DashboardStrategyEvaluation>(response);
+}
+
+export async function fetchStrategyInsights(limit = 50): Promise<DashboardStrategyInsight[]> {
+  const response = await fetch(`/api/dashboard/strategy-insights?limit=${limit}`);
+  const body = await readJson<{ strategy_insights: DashboardStrategyInsight[] }>(response);
+  return body.strategy_insights;
+}
+
+export async function fetchStrategyInsight(
+  insightId: string
+): Promise<DashboardStrategyInsight> {
+  const response = await fetch(
+    `/api/dashboard/strategy-insights/${encodeURIComponent(insightId)}`
+  );
+  return readJson<DashboardStrategyInsight>(response);
 }

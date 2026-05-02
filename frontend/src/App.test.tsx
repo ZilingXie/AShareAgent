@@ -6,6 +6,7 @@ import type {
   DashboardDay,
   DashboardRun,
   DashboardStrategyEvaluation,
+  DashboardStrategyInsight,
   DashboardTrends,
 } from "./types";
 
@@ -509,6 +510,77 @@ const strategyEvaluationsFixture = {
   strategy_evaluations: [strategyEvaluationFixture],
 };
 
+const strategyInsightFixture: DashboardStrategyInsight = {
+  insight_id: "insight-real",
+  trade_date: "2026-04-30",
+  provider: "mock",
+  summary: "近期信号偏少，建议先小幅降低最低评分阈值做回测。",
+  attribution: ["信号数量偏少", "风控拒绝较多"],
+  manual_status: "pending_review",
+  report_path: "reports/insight-real/strategy-insights.md",
+  hypotheses: [
+    {
+      area: "signal.min_score",
+      direction: "lower",
+      reason: "近期信号偏少",
+      risk: "可能增加低质量交易",
+    },
+  ],
+  experiments: [
+    {
+      name: "降低最低评分阈值",
+      param: "signal.min_score",
+      candidate_value: "0.50",
+      policy_status: "approved",
+      policy_reason: null,
+      variant_id: "llm-signal-min-score-050",
+      overrides: { signal: { min_score: "0.50" } },
+    },
+    {
+      name: "关闭止损",
+      param: "risk.stop_loss_pct",
+      candidate_value: "0",
+      policy_status: "rejected_by_policy",
+      policy_reason: "risk.stop_loss_pct 不能低于 0.02",
+      variant_id: null,
+      overrides: {},
+    },
+  ],
+  evaluation_windows: [
+    {
+      window_trade_days: 20,
+      evaluation_id: "insight-real-20d",
+      report_path: "reports/insight-real-20d/strategy-evaluation.md",
+      recommended_variant_ids: ["llm-signal-min-score-050"],
+      passed_variant_ids: ["llm-signal-min-score-050"],
+      failed_variant_reasons: {},
+    },
+    {
+      window_trade_days: 40,
+      evaluation_id: "insight-real-40d",
+      report_path: "reports/insight-real-40d/strategy-evaluation.md",
+      recommended_variant_ids: ["llm-signal-min-score-050"],
+      passed_variant_ids: ["llm-signal-min-score-050"],
+      failed_variant_reasons: {},
+    },
+    {
+      window_trade_days: 60,
+      evaluation_id: "insight-real-60d",
+      report_path: "reports/insight-real-60d/strategy-evaluation.md",
+      recommended_variant_ids: [],
+      passed_variant_ids: [],
+      failed_variant_reasons: {
+        "llm-signal-min-score-050": ["收益未优于基准"],
+      },
+    },
+  ],
+  recommended_variant_ids: ["llm-signal-min-score-050"],
+};
+
+const strategyInsightsFixture = {
+  strategy_insights: [strategyInsightFixture],
+};
+
 const duplicateBacktestsFixture = {
   backtests: [
     ...backtestsFixture.backtests,
@@ -635,6 +707,28 @@ describe("dashboard", () => {
     expect(screen.queryByText("真实下单")).not.toBeInTheDocument();
   });
 
+  it("renders the read-only strategy hypothesis view", async () => {
+    mockFetch(dayFixture, trendsFixture, strategyComparisonFixture, backtestsFixture);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "策略假设" }));
+
+    expect((await screen.findAllByText("策略假设")).length).toBeGreaterThan(0);
+    expect(screen.getByText("insight-real")).toBeInTheDocument();
+    expect(screen.getAllByText("待复核").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("近期信号偏少").length).toBeGreaterThan(0);
+    expect(screen.getByText("降低最低评分阈值")).toBeInTheDocument();
+    expect(screen.getByText("rejected_by_policy")).toBeInTheDocument();
+    expect(screen.getByText("risk.stop_loss_pct 不能低于 0.02")).toBeInTheDocument();
+    expect(screen.getByText("20 日")).toBeInTheDocument();
+    expect(screen.getByText("40 日")).toBeInTheDocument();
+    expect(screen.getByText("60 日")).toBeInTheDocument();
+    expect(screen.getByText("reports/insight-real/strategy-insights.md")).toBeInTheDocument();
+    expect(screen.queryByText("自动调参")).not.toBeInTheDocument();
+    expect(screen.queryByText("真实下单")).not.toBeInTheDocument();
+  });
+
   it("renders an empty state when there are no strategy evaluations", async () => {
     mockFetch(
       dayFixture,
@@ -713,11 +807,17 @@ function mockFetch(
   strategyComparison = strategyComparisonFixture,
   backtests = backtestsFixture,
   strategyEvaluations = strategyEvaluationsFixture,
-  strategyEvaluation: DashboardStrategyEvaluation | null = strategyEvaluationFixture
+  strategyEvaluation: DashboardStrategyEvaluation | null = strategyEvaluationFixture,
+  strategyInsights = strategyInsightsFixture,
+  strategyInsight: DashboardStrategyInsight | null = strategyInsightFixture
 ): void {
   vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
     const url = String(input);
-    const body = url.includes("/api/dashboard/strategy-evaluations/")
+    const body = url.includes("/api/dashboard/strategy-insights/")
+      ? strategyInsight
+      : url.includes("/api/dashboard/strategy-insights")
+        ? strategyInsights
+      : url.includes("/api/dashboard/strategy-evaluations/")
       ? strategyEvaluation
       : url.includes("/api/dashboard/strategy-evaluations")
         ? strategyEvaluations

@@ -410,6 +410,87 @@ assets:
     assert "akshare_sina" in result.output
 
 
+def test_cli_strategy_insight_runs_with_configured_llm_and_mock_backtests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_repositories: list[InMemoryRepository] = []
+    strategy_config = tmp_path / "strategy_params.yml"
+    _write_strategy_params(strategy_config)
+
+    class FakePostgresRepository(InMemoryRepository):
+        def __init__(self, database_url: str) -> None:
+            super().__init__()
+            created_repositories.append(self)
+
+    monkeypatch.setenv("ASHARE_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("ASHARE_STRATEGY_PARAMS_CONFIG", str(strategy_config))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "strategy-insight",
+            "--trade-date",
+            "2026-04-30",
+            "--insight-id",
+            "cli-insight",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "策略假设复盘完成" in result.output
+    repository = created_repositories[0]
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "strategy_insight"
+    assert latest_run["insight_id"] == "cli-insight"
+    assert latest_run["manual_status"] == "pending_review"
+    assert (tmp_path / "reports" / "cli-insight" / "strategy-insights.md").exists()
+
+
+def test_cli_strategy_insight_requires_sina_fallback_for_akshare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    strategy_config = config_dir / "strategy_params.yml"
+    _write_strategy_params(strategy_config)
+    (config_dir / "universe.yml").write_text(
+        """
+assets:
+  - symbol: "510300"
+    name: "沪深300ETF"
+    asset_type: "ETF"
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ASHARE_PROVIDER", "akshare")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_INTRADAY_SOURCE", "akshare_em")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        app,
+        [
+            "strategy-insight",
+            "--trade-date",
+            "2026-04-30",
+            "--insight-id",
+            "cli-insight",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "akshare_sina" in result.output
+
+
 def test_cli_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ASHARE_PROVIDER", "unknown")
     monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")

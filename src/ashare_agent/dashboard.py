@@ -10,6 +10,10 @@ from ashare_agent.agents.dashboard_query_agent import (
     DashboardStrategyEvaluation,
     DashboardStrategyEvaluationRecommendation,
     DashboardStrategyEvaluationVariant,
+    DashboardStrategyInsight,
+    DashboardStrategyInsightExperiment,
+    DashboardStrategyInsightHypothesis,
+    DashboardStrategyInsightWindow,
     DashboardTrendSummary,
 )
 
@@ -22,6 +26,10 @@ DashboardStrategyComparisonRow = DashboardStrategyComparisonItem
 DashboardStrategyEvaluationResult = DashboardStrategyEvaluation
 DashboardStrategyEvaluationRecommendationResult = DashboardStrategyEvaluationRecommendation
 DashboardStrategyEvaluationVariantResult = DashboardStrategyEvaluationVariant
+DashboardStrategyInsightResult = DashboardStrategyInsight
+DashboardStrategyInsightHypothesisResult = DashboardStrategyInsightHypothesis
+DashboardStrategyInsightExperimentResult = DashboardStrategyInsightExperiment
+DashboardStrategyInsightWindowResult = DashboardStrategyInsightWindow
 
 
 class DashboardQueryService(DashboardQueryAgent):

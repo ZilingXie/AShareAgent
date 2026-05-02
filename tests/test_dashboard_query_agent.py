@@ -696,6 +696,86 @@ def test_dashboard_query_lists_strategy_evaluations_with_recommendation_reasons(
     ]
 
 
+def test_dashboard_query_lists_strategy_insights() -> None:
+    repository = InMemoryRepository()
+    older_context = PipelineRunContext(trade_date=date(2026, 4, 29), run_id="old-insight")
+    latest_context = PipelineRunContext(trade_date=date(2026, 4, 30), run_id="latest-insight")
+    for context, insight_id, status in [
+        (older_context, "insight-old", "pending_review"),
+        (latest_context, "insight-latest", "pending_review"),
+    ]:
+        repository.save_pipeline_run(
+            context,
+            "strategy_insight",
+            "success",
+            {
+                "insight_id": insight_id,
+                "provider": "mock",
+                "summary": "近期信号偏少。",
+                "attribution": ["风控拒绝较多"],
+                "manual_status": status,
+                "report_path": f"reports/{insight_id}/strategy-insights.md",
+                "hypotheses": [
+                    {
+                        "area": "signal.min_score",
+                        "direction": "lower",
+                        "reason": "近期信号偏少",
+                        "risk": "可能增加低质量交易",
+                    }
+                ],
+                "experiments": [
+                    {
+                        "name": "降低最低评分阈值",
+                        "param": "signal.min_score",
+                        "candidate_value": "0.50",
+                        "policy_status": "approved",
+                        "policy_reason": None,
+                        "variant_id": "llm-signal-min-score-050",
+                        "overrides": {"signal": {"min_score": "0.50"}},
+                    },
+                    {
+                        "name": "关闭止损",
+                        "param": "risk.stop_loss_pct",
+                        "candidate_value": "0",
+                        "policy_status": "rejected_by_policy",
+                        "policy_reason": "risk.stop_loss_pct 不能低于 0.02",
+                        "variant_id": None,
+                        "overrides": {},
+                    },
+                ],
+                "evaluation_windows": [
+                    {
+                        "window_trade_days": 20,
+                        "evaluation_id": f"{insight_id}-20d",
+                        "report_path": f"reports/{insight_id}-20d/strategy-evaluation.md",
+                        "recommended_variant_ids": ["llm-signal-min-score-050"],
+                        "passed_variant_ids": ["llm-signal-min-score-050"],
+                        "failed_variant_reasons": {},
+                    }
+                ],
+                "gate_summary": {
+                    "recommended_variant_ids": ["llm-signal-min-score-050"],
+                    "passed_window_count_by_variant": {"llm-signal-min-score-050": 1},
+                },
+            },
+        )
+
+    agent = DashboardQueryAgent(repository)
+    insights = agent.list_strategy_insights()
+    detail = agent.strategy_insight("insight-latest")
+
+    assert [item.insight_id for item in insights] == ["insight-latest", "insight-old"]
+    assert detail is not None
+    assert detail.manual_status == "pending_review"
+    assert detail.hypotheses[0].area == "signal.min_score"
+    assert [item.policy_status for item in detail.experiments] == [
+        "approved",
+        "rejected_by_policy",
+    ]
+    assert detail.evaluation_windows[0].window_trade_days == 20
+    assert detail.recommended_variant_ids == ["llm-signal-min-score-050"]
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [

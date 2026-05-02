@@ -17,6 +17,10 @@ from ashare_agent.dashboard import (
     DashboardStrategyEvaluation,
     DashboardStrategyEvaluationRecommendation,
     DashboardStrategyEvaluationVariant,
+    DashboardStrategyInsight,
+    DashboardStrategyInsightExperiment,
+    DashboardStrategyInsightHypothesis,
+    DashboardStrategyInsightWindow,
     DashboardTrends,
 )
 from ashare_agent.domain import PipelineRunContext
@@ -93,6 +97,55 @@ class FakeDashboardService:
         if evaluation_id != "eval-1":
             return None
         return self._strategy_evaluation()
+
+    def list_strategy_insights(self, limit: int = 50) -> list[DashboardStrategyInsight]:
+        return [self._strategy_insight()][:limit]
+
+    def strategy_insight(self, insight_id: str) -> DashboardStrategyInsight | None:
+        if insight_id != "insight-1":
+            return None
+        return self._strategy_insight()
+
+    def _strategy_insight(self) -> DashboardStrategyInsight:
+        return DashboardStrategyInsight(
+            insight_id="insight-1",
+            trade_date="2026-04-30",
+            provider="mock",
+            summary="近期信号偏少。",
+            attribution=["风控拒绝较多"],
+            manual_status="pending_review",
+            report_path="reports/insight-1/strategy-insights.md",
+            hypotheses=[
+                DashboardStrategyInsightHypothesis(
+                    area="signal.min_score",
+                    direction="lower",
+                    reason="近期信号偏少",
+                    risk="可能增加低质量交易",
+                )
+            ],
+            experiments=[
+                DashboardStrategyInsightExperiment(
+                    name="降低最低评分阈值",
+                    param="signal.min_score",
+                    candidate_value="0.50",
+                    policy_status="approved",
+                    policy_reason=None,
+                    variant_id="llm-signal-min-score-050",
+                    overrides={"signal": {"min_score": "0.50"}},
+                )
+            ],
+            evaluation_windows=[
+                DashboardStrategyInsightWindow(
+                    window_trade_days=20,
+                    evaluation_id="insight-1-20d",
+                    report_path="reports/insight-1-20d/strategy-evaluation.md",
+                    recommended_variant_ids=["llm-signal-min-score-050"],
+                    passed_variant_ids=["llm-signal-min-score-050"],
+                    failed_variant_reasons={},
+                )
+            ],
+            recommended_variant_ids=["llm-signal-min-score-050"],
+        )
 
     def _strategy_evaluation(self) -> DashboardStrategyEvaluation:
         return DashboardStrategyEvaluation(
@@ -189,6 +242,28 @@ def test_dashboard_api_returns_strategy_evaluations() -> None:
     assert detail_response.json()["variants"][0]["not_recommended_reasons"] == [
         "基准参数，不参与推荐比较"
     ]
+
+
+def test_dashboard_api_returns_strategy_insights() -> None:
+    client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
+
+    list_response = client.get("/api/dashboard/strategy-insights?limit=5")
+    detail_response = client.get("/api/dashboard/strategy-insights/insight-1")
+
+    assert list_response.status_code == 200
+    assert list_response.json()["strategy_insights"][0]["insight_id"] == "insight-1"
+    assert detail_response.status_code == 200
+    assert detail_response.json()["manual_status"] == "pending_review"
+    assert detail_response.json()["experiments"][0]["policy_status"] == "approved"
+
+
+def test_dashboard_api_returns_404_for_missing_strategy_insight() -> None:
+    client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
+
+    response = client.get("/api/dashboard/strategy-insights/missing")
+
+    assert response.status_code == 404
+    assert "strategy insight 不存在" in response.json()["detail"]
 
 
 def test_dashboard_api_returns_404_for_missing_strategy_evaluation() -> None:

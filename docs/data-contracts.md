@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、strategy-evaluate 聚合审计、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO、策略评估 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、strategy-evaluate 聚合审计、strategy-insight 假设审计、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO、策略评估 DTO、策略假设 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -55,6 +55,8 @@
 
 `configs/strategy_evaluation.yml` 是策略评估配置，必须包含 `base_config` 和非空 `variants`，可配置 `default_window_trade_days`，合法范围为 20 到 60，缺省为 60。每个 variant 必须有唯一 `id` 和 `version`，`label` 用于报告展示，`overrides` 只能覆盖基础策略配置中已存在的字段；未知字段、重复 id/version、非法百分比、非法持有期或非法窗口都必须显式失败。variant 的 `version` 会写入合并后的策略参数并进入对应 backtest 的策略快照。
 
+`strategy-insight` 的 LLM 假设只能由 `HypothesisVariantBuilder` 编译为受控 variants。白名单参数固定为 `signal.min_score`、`signal.weights.technical`、`signal.weights.market`、`risk.stop_loss_pct`、`risk.min_holding_trade_days`、`risk.max_holding_trade_days` 和 `risk.max_positions`；用户语义中的 `paper_trader.max_positions` 映射到 `risk.max_positions`。不在白名单、越界、关闭止损、突破最大持仓安全上限、跳过风控或触碰真实交易配置的建议必须标记为 `rejected_by_policy`，不能进入回测 variants。
+
 ## PostgreSQL schema
 
 本地开发复用现有 Podman PostgreSQL 的 `supportportal` 数据库，但所有 AShareAgent 对象都放在独立 `ashare_agent` schema。Alembic 版本表固定为 `ashare_agent.alembic_version`，避免污染共享数据库中其他项目的迁移状态。若 schema 已存在但缺少该版本表，迁移会停止，避免在状态不明的共享库里继续写入。
@@ -94,6 +96,7 @@ Alembic 迁移创建以下表分组：
 - `paper_positions` 中的 payload 可保存 `open` 和 `closed` 状态；repository 恢复开放持仓时只返回每个 symbol 的最新 `open` payload。
 - `backtest` 不新增表；每个交易日按 `pre_market -> intraday_watch -> post_market_review` 执行，每条回放 payload 使用 `run_mode=backtest` 和同一个 `backtest_id`。repository 恢复持仓、订单、现金和最新 snapshot 时按运行模式隔离，普通 `run_mode=normal` 不读取回放状态。
 - `strategy-evaluate` 不新增表或列；每个 variant 复用 `backtest` 写入的专表，并使用独立 `backtest_id=<evaluation_id>-<variant_id>` 隔离。聚合结果写一条 `pipeline_runs(stage=strategy_evaluation, run_mode=backtest, backtest_id=<evaluation_id>)` 和一条 `artifacts(artifact_type=strategy_evaluation)`，payload 至少包含 `evaluation_id`、provider、日期范围、variant 列表、每个 variant 的 backtest_id、尝试/成功/失败天数、source/data quality failure rate、信号数、日均信号数、无信号天数、风控通过/拒绝、拒绝原因分布、订单数、成交失败事件、买入后 2/5/10 个交易日表现、卖出触发原因、市场环境覆盖、closed/open position、信号命中率、持仓收益、总收益率、最大回撤、variant spread、调整建议和 Markdown 报告路径。
+- `strategy-insight` 不新增表或列；写一条 `pipeline_runs(stage=strategy_insight, run_mode=normal)` 和一条 `artifacts(artifact_type=strategy_insight)`。payload 至少包含 `insight_id`、`trade_date`、provider、`llm_model`、`summary`、`attribution`、`hypotheses`、`experiments`、`evaluation_windows`、`gate_summary`、`recommended_variant_ids`、`manual_status`、`report_path` 和 `real_trading=false`。`experiments` 中每项必须包含 `name`、`param`、`candidate_value`、`policy_status`、`policy_reason`、`variant_id` 和 `overrides`；`evaluation_windows` 必须记录 20/40/60 日窗口的 `evaluation_id`、`report_path`、通过/失败 variant 和失败原因。`manual_status` 第一版只允许展示 `pending_review`，预留 `accepted` 和 `rejected` DTO 枚举，当前没有写接口。
 
 策略评估中的“信号命中率”只统计已经 closed 的模拟持仓：`signal_hit_count` 为 closed position 盈利数量，`signal_hit_rate = signal_hit_count / closed_trade_count`；未关闭持仓不进分母，单独计入 `open_position_count` 和未实现收益。成交失败事件来自 `intraday_watch.pipeline_runs.payload.execution_events` 中的 rejected 事件，不把未写订单的失败静默忽略。
 
@@ -132,7 +135,7 @@ Alembic 迁移创建以下表分组：
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
-- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、execution events、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports、range trends 和 strategy comparison。
+- DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、execution events、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports、range trends、strategy comparison、strategy evaluation 和 strategy insight。
 - `DashboardDaySummary.llm_analysis` 使用所选交易日最新成功 `pre_market` run 对应的 `llm_analyses` 记录；没有成功盘前 run 或没有 LLM 记录时为 `null`，记录存在但 payload 缺字段或类型错误时显式失败。
 - `DashboardLLMAnalysis` 字段包括 `run_id`、`trade_date`、`model`、`summary`、`key_points`、`risk_notes` 和 `created_at`。DTO 只展示已落库 LLM 审计内容，不在查询时重新调用 LLM。
 - `list_backtests(limit)` 返回最近的 backtest summary run；`strategy_comparison(backtest_ids)` 只比较明确传入的 backtest 批次。
@@ -143,6 +146,9 @@ Alembic 迁移创建以下表分组：
 - `DashboardStrategyEvaluationVariant` 字段包括 id、label、version、backtest_id、success、尝试/成功/失败天数、source/data quality failure rate、信号数、风控通过/拒绝、订单数、成交失败数、closed/open position、signal hit rate、holding pnl、total return、max drawdown、`is_recommended` 和 `not_recommended_reasons`。
 - `not_recommended_reasons` 由查询层基于已落库 variant 指标和第一条 baseline 派生：baseline 固定为“基准参数，不参与推荐比较”；非 baseline 若收益未优于 baseline、命中率低于 baseline、最大回撤高于 baseline、失败天数多于 baseline 或 source 失败率高于 baseline，分别记录对应不可推荐原因。只有在落库推荐列表中且没有不可推荐原因的 variant 才标记 `is_recommended=true`。
 - 策略评估 payload 缺 `variants`、variant 不是 object、关键数字字段无法解析、recommendation 结构非法等情况必须显式失败，不能返回部分默认 DTO。
+- `list_strategy_insights(limit)` 返回最近的 `pipeline_runs(stage=strategy_insight, run_mode=normal)` 批次，按 `insight_id` 保留最新记录；`strategy_insight(insight_id)` 返回单个批次详情，找不到时返回 `null`，由 API 转为 404。
+- `DashboardStrategyInsight` 字段包括 `insight_id`、`trade_date`、provider、`llm_model`、`summary`、`attribution`、`hypotheses`、`experiments`、`evaluation_windows`、`recommended_variant_ids`、`manual_status`、`report_path` 和 `created_at`。`DashboardStrategyInsightExperiment` 必须保留 policy 状态、拒绝原因和 overrides；`DashboardStrategyInsightWindow` 必须保留各窗口通过/失败 variant 和失败原因。查询层不重新调用 LLM、不重新执行评估、不读取 Markdown 正文。
+- 策略假设 payload 缺 `insight_id`、`summary`、`hypotheses`、`experiments`、`evaluation_windows` 或未知 `manual_status` 时必须显式失败，不能自动补默认假设或伪造 gate 结果。
 - `trends(start_date, end_date)` 使用闭区间日期范围，输出 `DashboardTrendSummary`：
   - `points` 按日期升序排列，只包含范围内有 pipeline run、组合快照、数据质量报告或运行可靠性报告的日期。
   - 权益曲线使用范围内每个交易日最新一条 `portfolio_snapshots.total_value`；没有快照时为 `null`。

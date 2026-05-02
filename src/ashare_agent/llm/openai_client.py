@@ -49,3 +49,57 @@ class OpenAIClient:
             raw_response=response.model_dump(),
         )
 
+    def generate_strategy_insight(
+        self,
+        trade_date: date,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "你是 AShareAgent 的策略复盘助理。"
+                        "只能输出 JSON object，不得输出 Markdown。"
+                        "只提出策略优化假设，不得给出荐股、收益承诺、真实交易建议，"
+                        "不得要求绕过风控或修改真实交易相关配置。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "trade_date": trade_date.isoformat(),
+                            "context": context,
+                            "schema": {
+                                "summary": "string",
+                                "attribution": ["string"],
+                                "hypotheses": [
+                                    {
+                                        "area": "string",
+                                        "direction": "string",
+                                        "reason": "string",
+                                        "risk": "string",
+                                    }
+                                ],
+                                "recommended_experiments": [
+                                    {
+                                        "name": "string",
+                                        "param": "string",
+                                        "candidate_value": "number|string|int",
+                                    }
+                                ],
+                            },
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            stream=False,
+        )
+        return {
+            "model": self.model,
+            "content": response.choices[0].message.content or "",
+            "raw_response": response.model_dump(),
+        }

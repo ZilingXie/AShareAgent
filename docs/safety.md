@@ -1,6 +1,6 @@
 # AShareAgent 安全边界
 
-当前状态：已落地 Mock pipeline、真实数据入口、分钟线模拟成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run、完整 PaperTrader 模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
+当前状态：已落地 Mock pipeline、真实数据入口、分钟线模拟成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run、完整 PaperTrader 模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、策略假设闭环和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
 
 ## 交易边界
 
@@ -16,7 +16,9 @@
 - 当前默认退出规则由 `configs/strategy_params.yml` 驱动：T+1、止损 5%、趋势走弱、最多持有 10 个交易日；止损可在 T+1 后突破最少持有 2 个交易日限制。
 - `BacktestRunner` 只运行 `PaperTrader` 模拟交易闭环，使用 `backtest_id` 隔离状态，不提供真实交易或模拟交易手动操作入口。
 - `StrategyEvaluationRunner` 只批量运行 backtest 和聚合审计指标；评估报告只能给出“人工复核后可考虑”的参数建议，不允许自动修改 `configs/strategy_params.yml`，也不允许触发真实交易。
+- `StrategyInsightAgent` 只读取已有复盘事实并输出 LLM 假设；`HypothesisVariantBuilder` 只能把白名单参数编译为受控评估 variants。它不允许改生产策略配置、不允许跳过风控、不允许触碰真实交易配置，也不允许生成订单。
 - dashboard 的“策略评估”视图只读展示历史模拟评估结果、推荐结论和不可推荐原因；不提供参数写入、自动调参、模拟交易执行或真实交易入口，页面文案必须明确不构成投资建议。
+- dashboard 的“策略假设”视图只读展示 LLM 假设、policy reject 原因、三窗口评估结果和 `待复核` 状态；第一版不提供接受/拒绝写按钮，人工采纳必须另起配置变更。
 - `intraday-watch` 是唯一允许新增模拟订单的日内阶段，且必须依赖同日成功 `pre-market` 风控决策；缺失决策时必须显式失败并写 failed run。
 - 盘中模拟成交必须使用分钟线估价；不允许用日线 close 兜底成交。缺少分钟线、停牌、买入涨停或卖出跌停时不写失败订单，只写 rejected execution event。
 - `post-market-review` 不允许新增模拟订单，只能读取盘中订单，生成收盘持仓/组合快照、复盘和审计报告。
@@ -47,8 +49,9 @@
 
 ## LLM 边界
 
-- LLM 只做盘前结构化分析辅助。
-- backtest 和 strategy-evaluate 强制使用 mock LLM，避免多日回放消耗真实 API；LLM 不参与 SignalEngine 或 RiskManager 决策。
+- LLM 只做盘前结构化分析辅助和策略复盘解释，不直接生成交易指令。
+- backtest、strategy-evaluate 和 strategy-insight 内部触发的多窗口评估强制使用 mock LLM，避免多日回放消耗真实 API；LLM 不参与 SignalEngine 或 RiskManager 决策。
+- strategy-insight 的真实 LLM 只允许输出结构化 hypotheses JSON；JSON 解析失败、缺字段或建议越界必须显式失败或标记 `rejected_by_policy`，不能自动修改 `configs/strategy_params.yml`。
 - 买入信号只能由 `SignalEngine` 规则生成，并必须经过 `RiskManager`。
 - `.env` 中的 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 不进入 Git。
 - LLM 输出不得写收益承诺、荐股结论或真实交易建议。

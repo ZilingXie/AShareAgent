@@ -11,6 +11,24 @@ import type {
 
 const runsFixture: DashboardRun[] = [
   {
+    run_id: "run-pre",
+    trade_date: "2026-04-29",
+    stage: "pre_market",
+    status: "success",
+    report_path: "reports/2026-04-29/pre-market.md",
+    failure_reason: null,
+    created_at: "2026-04-29T07:30:00+00:00",
+  },
+  {
+    run_id: "run-intraday",
+    trade_date: "2026-04-29",
+    stage: "intraday_watch",
+    status: "success",
+    report_path: "reports/2026-04-29/intraday-watch.md",
+    failure_reason: null,
+    created_at: "2026-04-29T07:45:00+00:00",
+  },
+  {
     run_id: "run-review",
     trade_date: "2026-04-29",
     stage: "post_market_review",
@@ -72,7 +90,7 @@ const dayFixture: DashboardDay = {
   },
   paper_orders: [
     {
-      run_id: "run-review",
+      run_id: "run-intraday",
       order_id: "paper-2026-04-29-510300-buy",
       symbol: "510300",
       trade_date: "2026-04-29",
@@ -92,7 +110,7 @@ const dayFixture: DashboardDay = {
       created_at: "2026-04-29T08:00:00+00:00",
     },
     {
-      run_id: "run-review",
+      run_id: "run-intraday",
       order_id: "paper-2026-04-29-159915-sell",
       symbol: "159915",
       trade_date: "2026-04-29",
@@ -524,33 +542,25 @@ describe("dashboard", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders runs, watchlist, orders and positions", async () => {
+  it("renders the overview board by default", async () => {
     mockFetch(dayFixture);
 
     render(<App />);
 
     expect(await screen.findByText("只读观察台")).toBeInTheDocument();
-    expect((await screen.findAllByText("510300")).length).toBeGreaterThanOrEqual(5);
-    expect(screen.getByText("趋势改善")).toBeInTheDocument();
-    expect(screen.getByText("LLM 盘前分析")).toBeInTheDocument();
-    expect(screen.getByText("盘前关注指数趋势和量能。")).toBeInTheDocument();
-    expect(screen.getByText("观察名单由规则信号生成")).toBeInTheDocument();
-    expect(screen.getByText("仅用于模拟研究，不构成投资建议。")).toBeInTheDocument();
-    expect(screen.getByText("盘中模拟订单")).toBeInTheDocument();
-    expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
-    expect(screen.getByText("触发止损")).toBeInTheDocument();
-    expect(screen.getByText("成交失败")).toBeInTheDocument();
-    expect(screen.getByText("分钟线源健康")).toBeInTheDocument();
-    expect(screen.getByText("akshare_em")).toBeInTheDocument();
-    expect(screen.getByText("akshare_sina")).toBeInTheDocument();
-    expect(screen.getByText("RemoteDisconnected")).toBeInTheDocument();
-    expect(screen.getAllByText("mock_intraday").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("first_valid_1m_bar").length).toBeGreaterThan(0);
-    expect(screen.getByText("无分钟线，无法成交")).toBeInTheDocument();
-    expect(screen.getByText("收盘复盘")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "总览" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "交易执行" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "策略" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "质量" })).toBeInTheDocument();
+    expect(await screen.findByText("账户总览")).toBeInTheDocument();
+    expect(screen.getByText("区间盈亏")).toBeInTheDocument();
+    expect(screen.getByText("每日盈亏")).toBeInTheDocument();
+    expect(screen.getByText("今日交易摘要")).toBeInTheDocument();
+    expect(screen.getByText("当前持仓")).toBeInTheDocument();
+    expect(screen.getByText("收盘复盘摘要")).toBeInTheDocument();
     expect(screen.getByText("20.00 / 5.00%")).toBeInTheDocument();
     expect(screen.getByText("已实现盈亏")).toBeInTheDocument();
-    expect(screen.getByText("500.00")).toBeInTheDocument();
+    expect(screen.getAllByText("500.00").length).toBeGreaterThan(0);
     expect(screen.getByText("胜率")).toBeInTheDocument();
     expect(screen.getByText("50.00%")).toBeInTheDocument();
     expect(screen.getByText("2.00 天")).toBeInTheDocument();
@@ -558,23 +568,28 @@ describe("dashboard", () => {
     expect(screen.getByText("6.86%")).toBeInTheDocument();
   });
 
-  it("shows failure reasons and the real-trade false flag", async () => {
+  it("renders execution board and opens a stage detail drawer from a run card", async () => {
     mockFetch(dayFixture);
 
     render(<App />);
 
-    expect(await screen.findByText("必需数据源失败: market_bars")).toHaveAttribute(
-      "title",
-      "必需数据源失败: market_bars"
-    );
-    expect(await screen.findByText("EastMoney endpoint disconnected")).toBeInTheDocument();
-    expect(await screen.findByText("数据质量失败")).toBeInTheDocument();
-    expect(await screen.findByText("运行可靠性失败")).toBeInTheDocument();
-    expect(screen.getByText("510300 缺少 2026-04-29 当日行情")).toBeInTheDocument();
-    expect(screen.getByText("近 30 交易日缺口")).toBeInTheDocument();
-    expect(screen.getAllByText("2026-04-28").length).toBeGreaterThan(0);
-    expect(screen.getByText("policy endpoint failed")).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "交易执行" }));
+
+    expect(await screen.findByText("盘前计划")).toBeInTheDocument();
+    expect(screen.getByText("风控结果")).toBeInTheDocument();
+    expect(screen.getByText("盘中模拟订单")).toBeInTheDocument();
+    expect(screen.getByText("成交失败")).toBeInTheDocument();
+    expect(screen.getByText("收盘复盘")).toBeInTheDocument();
+    expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
     expect(screen.getAllByText("False").length).toBeGreaterThanOrEqual(4);
+
+    fireEvent.click(screen.getByRole("button", { name: /2026-04-29 盘前 成功/ }));
+
+    expect(await screen.findByRole("dialog", { name: "阶段详情" })).toBeInTheDocument();
+    expect(screen.getByText("盘前详情")).toBeInTheDocument();
+    expect(screen.getByText("LLM 盘前分析")).toBeInTheDocument();
+    expect(screen.getByText("盘前关注指数趋势和量能。")).toBeInTheDocument();
+    expect(screen.getByText("观察名单由规则信号生成")).toBeInTheDocument();
   });
 
   it("renders date range filters and trend panels", async () => {
@@ -586,10 +601,13 @@ describe("dashboard", () => {
     expect(screen.getByLabelText("结束日期")).toHaveValue("2026-04-29");
     expect(await screen.findByText("权益曲线")).toBeInTheDocument();
     expect(screen.getAllByText("100,500.00").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "策略" }));
     expect(screen.getByText("信号趋势")).toBeInTheDocument();
+    expect(screen.getByText("买入候选信号，不是实际买卖订单。")).toBeInTheDocument();
     expect(screen.getByText("最高评分 0.91")).toBeInTheDocument();
     expect(screen.getByText("风控拒绝原因")).toBeInTheDocument();
     expect(screen.getByText(/接近涨停，不买入: 2/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "质量" }));
     expect(screen.getByText("数据质量趋势")).toBeInTheDocument();
     expect(screen.getByText("阻断 1")).toBeInTheDocument();
     expect(screen.getByText("warning 2")).toBeInTheDocument();
@@ -597,27 +615,19 @@ describe("dashboard", () => {
     expect(screen.getByText("缺口 1")).toBeInTheDocument();
   });
 
-  it("renders strategy version comparison for backtests", async () => {
+  it("renders strategy board with comparisons and evaluations", async () => {
     mockFetch(dayFixture, trendsFixture, strategyComparisonFixture);
 
     render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "策略" }));
 
     expect(await screen.findByText("策略版本对比")).toBeInTheDocument();
     expect(screen.getByText("bt-signal-v1")).toBeInTheDocument();
     expect(screen.getByText("signal-v1")).toBeInTheDocument();
     expect(screen.getByText("收益 1.25%")).toBeInTheDocument();
     expect(screen.getByText("拒绝率 25.00%")).toBeInTheDocument();
-    expect(screen.getByText("质量失败率 33.33%")).toBeInTheDocument();
-  });
-
-  it("renders the strategy evaluation decision view", async () => {
-    mockFetch(dayFixture, trendsFixture, strategyComparisonFixture, backtestsFixture);
-
-    render(<App />);
-
-    fireEvent.click(await screen.findByRole("button", { name: "策略评估" }));
-
-    expect(await screen.findByText("策略评估")).toBeInTheDocument();
+    expect(screen.getAllByText("质量失败率 33.33%").length).toBeGreaterThan(0);
     expect(screen.getByText("eval-real")).toBeInTheDocument();
     expect(screen.getByText("可考虑人工复核后替换参数: stronger")).toBeInTheDocument();
     expect(screen.getByText("reports/eval-real/strategy-evaluation.md")).toBeInTheDocument();
@@ -647,9 +657,27 @@ describe("dashboard", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "策略评估" }));
+    fireEvent.click(await screen.findByRole("button", { name: "策略" }));
 
     expect(await screen.findByText("暂无策略评估")).toBeInTheDocument();
+  });
+
+  it("renders quality board with data and run diagnostics", async () => {
+    mockFetch(dayFixture, trendsFixture);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "质量" }));
+
+    expect(await screen.findByText("数据质量趋势")).toBeInTheDocument();
+    expect(await screen.findByText("数据质量")).toBeInTheDocument();
+    expect(await screen.findByText("运行可靠性")).toBeInTheDocument();
+    expect(await screen.findByText("分钟线源健康")).toBeInTheDocument();
+    expect(screen.getByText("数据源状态")).toBeInTheDocument();
+    expect(screen.getByText("运行详情")).toBeInTheDocument();
+    expect(screen.getByText("EastMoney endpoint disconnected")).toBeInTheDocument();
+    expect(screen.getByText("RemoteDisconnected")).toBeInTheDocument();
+    expect(screen.getByText("质量失败会影响策略可信度，但不会被静默兜底。")).toBeInTheDocument();
   });
 
   it("deduplicates strategy comparison rows and request ids", async () => {
@@ -662,6 +690,8 @@ describe("dashboard", () => {
     );
 
     render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "策略" }));
 
     expect(await screen.findByText("策略版本对比")).toBeInTheDocument();
     await waitFor(() => expect(screen.getAllByText("bt-signal-v1")).toHaveLength(1));
@@ -696,11 +726,16 @@ describe("dashboard", () => {
 
     render(<App />);
 
+    fireEvent.click(await screen.findByRole("button", { name: "交易执行" }));
+
     await waitFor(() => expect(screen.getByText("暂无观察名单")).toBeInTheDocument());
     expect(screen.getByText("暂无盘中模拟订单")).toBeInTheDocument();
     expect(screen.getByText("暂无成交失败")).toBeInTheDocument();
-    expect(screen.getByText("暂无分钟线源健康记录")).toBeInTheDocument();
     expect(screen.getByText("暂无持仓")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "质量" }));
+
+    expect(screen.getByText("暂无分钟线源健康记录")).toBeInTheDocument();
     expect(screen.getByText("暂无 source snapshot")).toBeInTheDocument();
     expect(screen.getByText("暂无数据质量报告")).toBeInTheDocument();
     expect(screen.getByText("暂无运行可靠性报告")).toBeInTheDocument();

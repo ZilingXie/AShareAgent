@@ -67,6 +67,7 @@ const stageLabels: Record<string, string> = {
   pre_market: "盘前",
   intraday_watch: "盘中",
   post_market_review: "复盘",
+  strategy_insight: "策略优化",
 };
 
 const statusLabels: Record<string, string> = {

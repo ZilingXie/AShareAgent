@@ -2,6 +2,8 @@ import type {
   DashboardBacktest,
   DashboardDay,
   DashboardRun,
+  DashboardStageRunGroup,
+  DashboardStageRunGroupDetail,
   DashboardStrategyComparison,
   DashboardStrategyEvaluation,
   DashboardStrategyInsight,
@@ -31,6 +33,22 @@ export async function fetchRuns(limit = 50): Promise<DashboardRun[]> {
 export async function fetchDashboardDay(tradeDate: string): Promise<DashboardDay> {
   const response = await fetch(`/api/dashboard/days/${tradeDate}`);
   return readJson<DashboardDay>(response);
+}
+
+export async function fetchStageRunGroups(limit = 200): Promise<DashboardStageRunGroup[]> {
+  const response = await fetch(`/api/dashboard/stage-run-groups?limit=${limit}`);
+  const body = await readJson<{ stage_run_groups: DashboardStageRunGroup[] }>(response);
+  return body.stage_run_groups;
+}
+
+export async function fetchStageRunGroupDetail(
+  tradeDate: string,
+  stage: string
+): Promise<DashboardStageRunGroupDetail> {
+  const response = await fetch(
+    `/api/dashboard/days/${tradeDate}/stage-groups/${encodeURIComponent(stage)}`
+  );
+  return readJson<DashboardStageRunGroupDetail>(response);
 }
 
 export async function fetchDashboardTrends(

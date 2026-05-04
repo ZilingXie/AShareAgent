@@ -53,7 +53,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`，成功订单必须记录成交来源、价格时间点、估价方法、参考价和 `used_daily_fallback=False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `daily-run` 先刷新交易日历；非交易日只写 skipped 审计和可靠性报告，不进入策略分析或模拟交易更新；交易日按盘前、盘中、复盘顺序运行，失败时先落库可靠性报告和 failed `daily_run`。
-- `DashboardQueryAgent` 只读封装 `pipeline_runs`、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、分钟线源健康、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势、策略版本对比、策略评估和策略优化查询，输出稳定 DTO。strategy evaluation 和 strategy insight 查询只读取已落库 payload，派生不可推荐原因或 gate 展示结构，不重新计算 backtest，也不读取 Markdown 文件内容。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
+- `DashboardQueryAgent` 只读封装 `pipeline_runs`、阶段运行组、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、分钟线源健康、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势、策略版本对比、策略评估和策略优化查询，输出稳定 DTO。阶段运行组只在读取层按 `trade_date + stage` 合并 normal runs；组详情保留全部成员 run 和每条业务数据的 `run_id`。strategy evaluation 和 strategy insight 查询只读取已落库 payload，派生不可推荐原因或 gate 展示结构，不重新计算 backtest，也不读取 Markdown 文件内容。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 模块边界发生变化时，同步更新本文件。
@@ -84,4 +84,4 @@ configs/
 
 `src/ashare_agent/agents/dashboard_query_agent.py` 属于只读查询适配层，不参与 pipeline 写入、不执行交易、不修改策略状态。`src/ashare_agent/dashboard.py` 是 API 使用的薄兼容层，避免前端/API 依赖内部 agent 文件路径。
 
-前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，提供 `总览 / 交易执行 / 策略 / 质量` 四大看板。`总览` 从账户视角展示总资产、区间盈亏、每日盈亏、权益曲线、交易摘要、当前持仓和收盘复盘摘要；`交易执行` 展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘，并支持点击左侧 `盘前 / 盘中 / 复盘` run 打开只读阶段详情抽屉；`策略` 展示买入候选信号趋势、观察名单评分、风控拒绝原因、策略版本对比、evaluation 批次、variant 排名、推荐结论、不可推荐原因和策略优化，策略优化内容包括 LLM 假设、参数变更、policy reject 原因、20/40/60 日评估结果、gate 结论和人工复核状态；`质量` 展示数据质量趋势、DataQuality 报告、运行可靠性、分钟线源健康、数据源状态和运行详情。前端不新增写接口，不直接读 PostgreSQL，不提供交易操作或自动调参入口。
+前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，提供 `总览 / 交易执行 / 策略 / 质量` 四大看板。`总览` 从账户视角展示总资产、区间盈亏、每日盈亏、权益曲线、交易摘要、当前持仓和收盘复盘摘要；左侧导航按阶段运行组展示，同一天同一阶段只显示一张卡片，成功和失败混合时显示“部分失败”。`交易执行` 展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘，并支持点击左侧 `盘前 / 盘中 / 复盘` 阶段组打开只读详情抽屉，详情展示全部成员 run 及其尝试数据；`策略` 展示买入候选信号趋势、观察名单评分、风控拒绝原因、策略版本对比、evaluation 批次、variant 排名、推荐结论、不可推荐原因和策略优化，策略优化内容包括 LLM 假设、参数变更、policy reject 原因、20/40/60 日评估结果、gate 结论和人工复核状态；`质量` 展示数据质量趋势、DataQuality 报告、运行可靠性、分钟线源健康、数据源状态和运行详情。前端不新增写接口，不直接读 PostgreSQL，不提供交易操作或自动调参入口。

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Protocol, cast
+from typing import Protocol, TypeVar, cast
 
 from ashare_agent.agents.review_metrics_agent import ReviewMetricsAgent
 from ashare_agent.domain import TradingCalendarDay
 from ashare_agent.repository import PayloadRecord
+
+DashboardRowDto = TypeVar("DashboardRowDto")
 
 
 class DashboardQueryRepository(Protocol):
@@ -35,6 +37,23 @@ class DashboardPipelineRun:
     status: str
     report_path: str | None
     failure_reason: str | None
+    created_at: str | None
+
+
+@dataclass(frozen=True)
+class DashboardStageRunGroup:
+    group_id: str
+    trade_date: str
+    stage: str
+    status: str
+    total_run_count: int
+    success_count: int
+    failed_count: int
+    skipped_count: int
+    latest_run_id: str
+    latest_success_run_id: str | None
+    member_run_ids: list[str]
+    failure_reasons: list[str]
     created_at: str | None
 
 
@@ -105,6 +124,7 @@ class DashboardPaperOrder:
 
 @dataclass(frozen=True)
 class DashboardExecutionEvent:
+    run_id: str
     symbol: str
     trade_date: str
     side: str
@@ -434,6 +454,22 @@ class DashboardStrategyInsight:
     recommended_variant_ids: list[str]
 
 
+def _empty_stage_group_runs() -> list[DashboardPipelineRun]:
+    return []
+
+
+def _empty_llm_analyses() -> list[DashboardLLMAnalysis]:
+    return []
+
+
+def _empty_portfolio_snapshots() -> list[DashboardPortfolioSnapshot]:
+    return []
+
+
+def _empty_review_reports() -> list[DashboardReviewReport]:
+    return []
+
+
 def _empty_runs() -> list[DashboardPipelineRun]:
     return []
 
@@ -491,6 +527,37 @@ def _empty_data_reliability_reports() -> list[DashboardDataReliabilityReport]:
 
 
 @dataclass(frozen=True)
+class DashboardStageRunGroupDetail:
+    group: DashboardStageRunGroup
+    runs: list[DashboardPipelineRun] = field(default_factory=_empty_stage_group_runs)
+    watchlist: list[DashboardWatchlistItem] = field(default_factory=_empty_watchlist)
+    signals: list[DashboardSignalItem] = field(default_factory=_empty_signals)
+    llm_analyses: list[DashboardLLMAnalysis] = field(default_factory=_empty_llm_analyses)
+    risk_decisions: list[DashboardRiskDecision] = field(default_factory=_empty_risk_decisions)
+    paper_orders: list[DashboardPaperOrder] = field(default_factory=_empty_paper_orders)
+    execution_events: list[DashboardExecutionEvent] = field(
+        default_factory=_empty_execution_events
+    )
+    positions: list[DashboardPosition] = field(default_factory=_empty_positions)
+    portfolio_snapshots: list[DashboardPortfolioSnapshot] = field(
+        default_factory=_empty_portfolio_snapshots
+    )
+    review_reports: list[DashboardReviewReport] = field(default_factory=_empty_review_reports)
+    source_snapshots: list[DashboardSourceSnapshot] = field(
+        default_factory=_empty_source_snapshots
+    )
+    intraday_source_health: list[DashboardIntradaySourceHealth] = field(
+        default_factory=_empty_intraday_source_health
+    )
+    data_quality_reports: list[DashboardDataQualityReport] = field(
+        default_factory=_empty_data_quality_reports
+    )
+    data_reliability_reports: list[DashboardDataReliabilityReport] = field(
+        default_factory=_empty_data_reliability_reports
+    )
+
+
+@dataclass(frozen=True)
 class DashboardDaySummary:
     trade_date: str
     runs: list[DashboardPipelineRun] = field(default_factory=_empty_runs)
@@ -536,6 +603,124 @@ class DashboardQueryAgent:
             reverse=True,
         )
         return [self._pipeline_run(row) for row in rows[:limit]]
+
+    def list_stage_run_groups(self, limit: int = 50) -> list[DashboardStageRunGroup]:
+        rows = sorted(
+            [
+                row
+                for row in self.repository.payload_rows("pipeline_runs")
+                if _is_normal_row(row, "pipeline_runs")
+            ],
+            key=lambda row: _row_id(row, "pipeline_runs"),
+            reverse=True,
+        )
+        grouped: dict[tuple[date, str], list[PayloadRecord]] = {}
+        for row in rows:
+            payload = _payload(row, "pipeline_runs")
+            stage = _required_str(payload, "pipeline_runs", "stage")
+            grouped.setdefault((_row_date(row, "pipeline_runs"), stage), []).append(row)
+
+        groups = [
+            self._stage_run_group(trade_day, stage, group_rows)
+            for (trade_day, stage), group_rows in grouped.items()
+        ]
+        return sorted(
+            groups,
+            key=lambda group: self._latest_group_row_id(group.member_run_ids),
+            reverse=True,
+        )[:limit]
+
+    def stage_run_group_detail(
+        self,
+        trade_date: date,
+        stage: str,
+    ) -> DashboardStageRunGroupDetail | None:
+        rows = self._stage_run_rows(trade_date, stage)
+        if not rows:
+            return None
+        group = self._stage_run_group(trade_date, stage, rows)
+        member_run_ids = set(group.member_run_ids)
+        run_stage_by_id = {run_id: stage for run_id in member_run_ids}
+
+        return DashboardStageRunGroupDetail(
+            group=group,
+            runs=[self._pipeline_run(row) for row in rows],
+            watchlist=self._rows_by_member_run(
+                "watchlist_candidates",
+                trade_date,
+                member_run_ids,
+                self._watchlist_item,
+            ),
+            signals=self._rows_by_member_run(
+                "signals",
+                trade_date,
+                member_run_ids,
+                self._signal_item,
+            ),
+            llm_analyses=self._rows_by_member_run(
+                "llm_analyses",
+                trade_date,
+                member_run_ids,
+                self._llm_analysis,
+            ),
+            risk_decisions=self._rows_by_member_run(
+                "risk_decisions",
+                trade_date,
+                member_run_ids,
+                self._risk_decision,
+            ),
+            paper_orders=(
+                self._rows_by_member_run(
+                    "paper_orders",
+                    trade_date,
+                    member_run_ids,
+                    self._paper_order,
+                )
+                if stage == "intraday_watch"
+                else []
+            ),
+            execution_events=self._execution_events_for_rows(rows),
+            positions=self._rows_by_member_run(
+                "paper_positions",
+                trade_date,
+                member_run_ids,
+                lambda row: self._position(row, trade_date),
+            ),
+            portfolio_snapshots=self._rows_by_member_run(
+                "portfolio_snapshots",
+                trade_date,
+                member_run_ids,
+                self._portfolio_snapshot,
+            ),
+            review_reports=self._rows_by_member_run(
+                "review_reports",
+                trade_date,
+                member_run_ids,
+                self._review_report,
+            ),
+            source_snapshots=self._source_snapshots_for_member_runs(
+                trade_date,
+                member_run_ids,
+                run_stage_by_id,
+            ),
+            intraday_source_health=self._intraday_source_health_for_member_runs(
+                trade_date,
+                member_run_ids,
+                run_stage_by_id,
+            ),
+            data_quality_reports=self._rows_by_member_run(
+                "data_quality_reports",
+                trade_date,
+                member_run_ids,
+                self._data_quality_report,
+            ),
+            data_reliability_reports=self._rows_by_member_run(
+                "data_reliability_reports",
+                trade_date,
+                member_run_ids,
+                self._data_reliability_report,
+            ),
+        )
 
     def list_backtests(self, limit: int = 50) -> list[DashboardBacktest]:
         rows: list[PayloadRecord] = []
@@ -800,7 +985,10 @@ class DashboardQueryAgent:
         raw_events = payload.get("execution_events", [])
         if not isinstance(raw_events, list):
             raise ValueError("pipeline_runs 字段 execution_events 必须是 list")
-        return [self._execution_event(item) for item in cast(list[object], raw_events)]
+        return [
+            self._execution_event(item, intraday_run_id)
+            for item in cast(list[object], raw_events)
+        ]
 
     def positions_as_of(self, trade_date: date) -> list[DashboardPosition]:
         latest_by_symbol: dict[str, PayloadRecord] = {}
@@ -867,46 +1055,7 @@ class DashboardQueryAgent:
         for row in self.repository.payload_rows("raw_source_snapshots", trade_date=trade_date):
             if not _is_normal_row(row, "raw_source_snapshots"):
                 continue
-            payload = _payload(row, "raw_source_snapshots")
-            if payload.get("source") != "intraday_bars":
-                continue
-            metadata = _required_mapping(payload, "raw_source_snapshots", "metadata")
-            raw_attempts = metadata.get("source_attempts", [])
-            if raw_attempts is None:
-                continue
-            if not isinstance(raw_attempts, list):
-                raise ValueError("raw_source_snapshots.metadata.source_attempts 必须是 list")
-            run_id = _row_run_id(row, "raw_source_snapshots")
-            for raw_attempt in cast(list[object], raw_attempts):
-                if not isinstance(raw_attempt, Mapping):
-                    raise ValueError(
-                        "raw_source_snapshots.metadata.source_attempts item 必须是 object"
-                    )
-                attempt = cast(Mapping[str, object], raw_attempt)
-                status = _required_str(attempt, "source_attempts", "status")
-                if status not in {"success", "failed", "empty"}:
-                    raise ValueError(f"source_attempts 字段 status 未知: {status}")
-                items.append(
-                    DashboardIntradaySourceHealth(
-                        run_id=run_id,
-                        stage=stages.get(run_id),
-                        source=_required_str(attempt, "source_attempts", "source"),
-                        symbol=_required_str(attempt, "source_attempts", "symbol"),
-                        status=status,
-                        returned_rows=_required_int(attempt, "source_attempts", "returned_rows"),
-                        retry_attempts=_optional_int(
-                            attempt.get("retry_attempts"),
-                            "source_attempts",
-                            "retry_attempts",
-                        ),
-                        timeout_seconds=_optional_float(
-                            attempt.get("timeout_seconds"),
-                            "source_attempts",
-                            "timeout_seconds",
-                        ),
-                        last_error=_optional_str(attempt.get("last_error")),
-                    )
-                )
+            items.extend(self._intraday_source_health_items(row, stages))
         return items
 
     def data_quality_reports(self, trade_date: date) -> list[DashboardDataQualityReport]:
@@ -948,6 +1097,148 @@ class DashboardQueryAgent:
             reverse=True,
         )
         return [self._pipeline_run(row) for row in rows]
+
+    def _stage_run_rows(self, trade_date: date, stage: str) -> list[PayloadRecord]:
+        return sorted(
+            [
+                row
+                for row in self.repository.payload_rows("pipeline_runs", trade_date=trade_date)
+                if _is_normal_row(row, "pipeline_runs")
+                and _payload(row, "pipeline_runs").get("stage") == stage
+            ],
+            key=lambda row: _row_id(row, "pipeline_runs"),
+            reverse=True,
+        )
+
+    def _stage_run_group(
+        self,
+        trade_date: date,
+        stage: str,
+        rows: list[PayloadRecord],
+    ) -> DashboardStageRunGroup:
+        if not rows:
+            raise ValueError("阶段组必须至少包含一个 pipeline run")
+        runs = [self._pipeline_run(row) for row in rows]
+        success_count = len([run for run in runs if run.status == "success"])
+        failed_count = len([run for run in runs if run.status == "failed"])
+        skipped_count = len([run for run in runs if run.status == "skipped"])
+        warning_count = len([run for run in runs if run.status == "warning"])
+        latest_success = next((run for run in runs if run.status == "success"), None)
+        failure_reasons = _unique_nonempty_strings(
+            [run.failure_reason or "" for run in runs if run.status == "failed"]
+        )
+        return DashboardStageRunGroup(
+            group_id=f"{trade_date.isoformat()}:{stage}",
+            trade_date=trade_date.isoformat(),
+            stage=stage,
+            status=_stage_group_status(
+                total_count=len(runs),
+                success_count=success_count,
+                failed_count=failed_count,
+                skipped_count=skipped_count,
+                warning_count=warning_count,
+            ),
+            total_run_count=len(runs),
+            success_count=success_count,
+            failed_count=failed_count,
+            skipped_count=skipped_count,
+            latest_run_id=runs[0].run_id,
+            latest_success_run_id=latest_success.run_id if latest_success is not None else None,
+            member_run_ids=[run.run_id for run in runs],
+            failure_reasons=failure_reasons,
+            created_at=runs[0].created_at,
+        )
+
+    def _latest_group_row_id(self, run_ids: list[str]) -> int:
+        member_run_ids = set(run_ids)
+        return max(
+            (
+                _row_id(row, "pipeline_runs")
+                for row in self.repository.payload_rows("pipeline_runs")
+                if _row_run_id(row, "pipeline_runs") in member_run_ids
+            ),
+            default=0,
+        )
+
+    def _rows_by_member_run(
+        self,
+        table_name: str,
+        trade_date: date,
+        member_run_ids: set[str],
+        convert: Callable[[PayloadRecord], DashboardRowDto],
+    ) -> list[DashboardRowDto]:
+        rows = sorted(
+            [
+                row
+                for row in self.repository.payload_rows(table_name, trade_date=trade_date)
+                if _is_normal_row(row, table_name)
+                and _row_run_id(row, table_name) in member_run_ids
+            ],
+            key=lambda row: _row_id(row, table_name),
+            reverse=True,
+        )
+        return [convert(row) for row in rows]
+
+    def _execution_events_for_rows(
+        self,
+        rows: list[PayloadRecord],
+    ) -> list[DashboardExecutionEvent]:
+        events: list[DashboardExecutionEvent] = []
+        for row in rows:
+            payload = _payload(row, "pipeline_runs")
+            raw_events = payload.get("execution_events", [])
+            if not isinstance(raw_events, list):
+                raise ValueError("pipeline_runs 字段 execution_events 必须是 list")
+            run_id = _row_run_id(row, "pipeline_runs")
+            events.extend(
+                self._execution_event(item, run_id) for item in cast(list[object], raw_events)
+            )
+        return events
+
+    def _source_snapshots_for_member_runs(
+        self,
+        trade_date: date,
+        member_run_ids: set[str],
+        run_stage_by_id: Mapping[str, str],
+    ) -> list[DashboardSourceSnapshot]:
+        rows = sorted(
+            [
+                row
+                for row in self.repository.payload_rows(
+                    "raw_source_snapshots",
+                    trade_date=trade_date,
+                )
+                if _is_normal_row(row, "raw_source_snapshots")
+                and _row_run_id(row, "raw_source_snapshots") in member_run_ids
+            ],
+            key=lambda row: _row_id(row, "raw_source_snapshots"),
+            reverse=True,
+        )
+        return [self._source_snapshot(row, run_stage_by_id) for row in rows]
+
+    def _intraday_source_health_for_member_runs(
+        self,
+        trade_date: date,
+        member_run_ids: set[str],
+        run_stage_by_id: Mapping[str, str],
+    ) -> list[DashboardIntradaySourceHealth]:
+        items: list[DashboardIntradaySourceHealth] = []
+        rows = sorted(
+            [
+                row
+                for row in self.repository.payload_rows(
+                    "raw_source_snapshots",
+                    trade_date=trade_date,
+                )
+                if _is_normal_row(row, "raw_source_snapshots")
+                and _row_run_id(row, "raw_source_snapshots") in member_run_ids
+            ],
+            key=lambda row: _row_id(row, "raw_source_snapshots"),
+            reverse=True,
+        )
+        for row in rows:
+            items.extend(self._intraday_source_health_items(row, run_stage_by_id))
+        return items
 
     def _is_backtest_summary(self, row: PayloadRecord) -> bool:
         payload = _payload(row, "pipeline_runs")
@@ -1477,7 +1768,7 @@ class DashboardQueryAgent:
             created_at=_optional_str(payload.get("created_at")),
         )
 
-    def _execution_event(self, value: object) -> DashboardExecutionEvent:
+    def _execution_event(self, value: object, run_id: str) -> DashboardExecutionEvent:
         if not isinstance(value, Mapping):
             raise ValueError("pipeline_runs execution_events item 必须是 object")
         payload = cast(Mapping[str, object], value)
@@ -1488,6 +1779,7 @@ class DashboardQueryAgent:
         if side not in {"buy", "sell"}:
             raise ValueError(f"execution_events 字段 side 未知: {side}")
         return DashboardExecutionEvent(
+            run_id=run_id,
             symbol=_required_str(payload, "execution_events", "symbol"),
             trade_date=_required_date(payload, "execution_events", "trade_date").isoformat(),
             side=side,
@@ -1604,6 +1896,52 @@ class DashboardQueryAgent:
             collected_at=_optional_str(payload.get("collected_at")),
         )
 
+    def _intraday_source_health_items(
+        self,
+        row: PayloadRecord,
+        run_stage_by_id: Mapping[str, str],
+    ) -> list[DashboardIntradaySourceHealth]:
+        payload = _payload(row, "raw_source_snapshots")
+        if payload.get("source") != "intraday_bars":
+            return []
+        metadata = _required_mapping(payload, "raw_source_snapshots", "metadata")
+        raw_attempts = metadata.get("source_attempts", [])
+        if raw_attempts is None:
+            return []
+        if not isinstance(raw_attempts, list):
+            raise ValueError("raw_source_snapshots.metadata.source_attempts 必须是 list")
+        run_id = _row_run_id(row, "raw_source_snapshots")
+        items: list[DashboardIntradaySourceHealth] = []
+        for raw_attempt in cast(list[object], raw_attempts):
+            if not isinstance(raw_attempt, Mapping):
+                raise ValueError("raw_source_snapshots.metadata.source_attempts item 必须是 object")
+            attempt = cast(Mapping[str, object], raw_attempt)
+            status = _required_str(attempt, "source_attempts", "status")
+            if status not in {"success", "failed", "empty"}:
+                raise ValueError(f"source_attempts 字段 status 未知: {status}")
+            items.append(
+                DashboardIntradaySourceHealth(
+                    run_id=run_id,
+                    stage=run_stage_by_id.get(run_id),
+                    source=_required_str(attempt, "source_attempts", "source"),
+                    symbol=_required_str(attempt, "source_attempts", "symbol"),
+                    status=status,
+                    returned_rows=_required_int(attempt, "source_attempts", "returned_rows"),
+                    retry_attempts=_optional_int(
+                        attempt.get("retry_attempts"),
+                        "source_attempts",
+                        "retry_attempts",
+                    ),
+                    timeout_seconds=_optional_float(
+                        attempt.get("timeout_seconds"),
+                        "source_attempts",
+                        "timeout_seconds",
+                    ),
+                    last_error=_optional_str(attempt.get("last_error")),
+                )
+            )
+        return items
+
     def _data_quality_report(self, row: PayloadRecord) -> DashboardDataQualityReport:
         payload = _payload(row, "data_quality_reports")
         status = _required_str(payload, "data_quality_reports", "status")
@@ -1705,6 +2043,25 @@ def _payload(row: PayloadRecord, table_name: str) -> Mapping[str, object]:
     if not isinstance(raw, Mapping):
         raise ValueError(f"{table_name} payload 必须是 JSON object")
     return cast(Mapping[str, object], raw)
+
+
+def _stage_group_status(
+    *,
+    total_count: int,
+    success_count: int,
+    failed_count: int,
+    skipped_count: int,
+    warning_count: int,
+) -> str:
+    if success_count > 0 and failed_count > 0:
+        return "partial_failure"
+    if failed_count > 0:
+        return "failed"
+    if skipped_count == total_count:
+        return "skipped"
+    if warning_count > 0:
+        return "warning"
+    return "success"
 
 
 def _is_normal_row(row: PayloadRecord, table_name: str) -> bool:

@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-策略优化闭环第一版和 dashboard 四大看板重组已完成：`StrategyInsightAgent` 只读复盘事实生成优化假设，dashboard 前端改为 `总览 / 交易执行 / 策略 / 质量`，并复用现有 DTO 打开 `盘前 / 盘中 / 复盘` 阶段详情抽屉。
+dashboard 阶段运行合并已完成：左侧列表按 `trade_date + stage` 合并 normal pipeline runs，同一天同一阶段只显示一个阶段组；阶段详情展示该阶段所有尝试数据，历史数据不删除、不迁移。
 
 ## 上次停在哪
 
@@ -68,6 +68,8 @@
 - 为支撑长窗口验收，`PostgresRepository` 已增加按 `backtest_id` 过滤 payload 的读取接口，并将结构化交易日历保存改为分批 bulk upsert，避免策略评估汇总和多日回放在真实 PostgreSQL 上反复全表扫描或单行 upsert。
 - 本轮新增 `StrategyInsightAgent`、`HypothesisVariantBuilder`、`StrategyInsightGate` 和 `ashare strategy-insight`：LLM 只生成 hypotheses JSON，白名单编译后复用 20/40/60 日评估窗口，结果写入 `pipeline_runs(stage=strategy_insight)`、`artifacts(artifact_type=strategy_insight)` 和 `reports/<insight_id>/strategy-insights.md`。
 - dashboard/API/frontend 已新增“策略优化”只读视图，展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果、gate 结论和 `待复核` 状态；不提供接受/拒绝按钮，不自动修改生产策略配置。
+- 本轮新增 dashboard 阶段运行组：`DashboardQueryAgent.list_stage_run_groups()` 和 `stage_run_group_detail()` 按 `trade_date + stage` 聚合 normal runs，混合成功/失败显示 `partial_failure`，详情保留全部成员 run 和每条业务数据的 `run_id`。
+- 前端左侧列表已改为阶段组卡片；点击 `盘前 / 盘中 / 复盘` 阶段组打开只读详情抽屉，盘前展示观察名单/信号/LLM/风控，盘中展示订单/成交失败/分钟线源健康/持仓/资金快照，复盘展示复盘报告和报告路径。
 
 ## 近期关键决定和原因
 
@@ -95,6 +97,7 @@
 - 策略评估 dashboard 只解释历史模拟结果，不读取 Markdown 正文，不重新计算 backtest，不自动修改策略参数，也不把评估结论包装成实盘建议；本轮不改 dashboard 前端。
 - 策略优化闭环采用“LLM 提假设、代码验证、人来批准”：LLM 只能输出解释和候选假设，`HypothesisVariantBuilder` 只允许白名单参数进入 variants，采纳参数必须后续人工另起变更修改 `configs/strategy_params.yml`。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
+- dashboard 阶段组只是读取层聚合，不改变 pipeline 写入，不删除旧 `pipeline_runs`、订单或报告；日常总览仍用最新成功 run 作为 canonical 数据，阶段详情才展示全部尝试。
 - 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
 - `daily-run` 遇到非交易日默认写 skipped 审计和可靠性报告，不进入策略分析，也不更新模拟订单或持仓。
 - 公告分析继续使用可解释规则，不引入 LLM 判断；误判追踪先落在固定样本 `case_id` 层，不改变运行时模型或落库边界。
@@ -111,6 +114,6 @@
 
 ## 下一步
 
-- 当前 `codex/strategy-insight-loop` 已通过后端、前端、静态检查和 mock CLI smoke 验证；合并回 `main` 后可作为后续策略优化复盘和人工参数采纳的基线。
-- 下一步用真实 provider 跑 `ashare strategy-insight`，在 dashboard 观察 hypotheses、policy reject、20/40/60 日 gate 结果；如果人工决定采纳，另起分支修改 `configs/strategy_params.yml`。
+- 当前 `codex/dashboard-run-groups` 已通过后端、前端和静态检查验证；合并后 dashboard 左侧不会再把同日同阶段多次 run 展示成重复卡片。
+- 下一步用真实 provider 观察 2026-04-29 等历史日期的阶段组展示，确认“部分失败”和阶段详情里的全部尝试数据符合人工排查习惯。
 - 继续保持 v1 只做模拟交易：不接真实券商、不自动实盘下单、不自动修改生产策略参数。

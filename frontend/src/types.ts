@@ -16,6 +16,32 @@ export interface DashboardWatchlistItem {
   reasons: string[];
 }
 
+export interface DashboardSignalItem {
+  run_id: string;
+  symbol: string;
+  trade_date: string;
+  action: string;
+  score: number;
+  score_breakdown: Record<string, number>;
+  reasons: string[];
+}
+
+export interface DashboardStageRunGroup {
+  group_id: string;
+  trade_date: string;
+  stage: string;
+  status: string;
+  total_run_count: number;
+  success_count: number;
+  failed_count: number;
+  skipped_count: number;
+  latest_run_id: string;
+  latest_success_run_id: string | null;
+  member_run_ids: string[];
+  failure_reasons: string[];
+  created_at: string | null;
+}
+
 export interface DashboardRiskDecision {
   run_id: string;
   symbol: string;
@@ -57,6 +83,7 @@ export interface DashboardPaperOrder {
 }
 
 export interface DashboardExecutionEvent {
+  run_id: string;
   symbol: string;
   trade_date: string;
   side: string;
@@ -352,10 +379,29 @@ export interface DashboardStrategyInsight {
   recommended_variant_ids: string[];
 }
 
+export interface DashboardStageRunGroupDetail {
+  group: DashboardStageRunGroup;
+  runs: DashboardRun[];
+  watchlist: DashboardWatchlistItem[];
+  signals: DashboardSignalItem[];
+  llm_analyses: DashboardLLMAnalysis[];
+  risk_decisions: DashboardRiskDecision[];
+  paper_orders: DashboardPaperOrder[];
+  execution_events: DashboardExecutionEvent[];
+  positions: DashboardPosition[];
+  portfolio_snapshots: DashboardPortfolioSnapshot[];
+  review_reports: DashboardReviewReport[];
+  source_snapshots: DashboardSourceSnapshot[];
+  intraday_source_health: DashboardIntradaySourceHealth[];
+  data_quality_reports: DashboardDataQualityReport[];
+  data_reliability_reports: DashboardDataReliabilityReport[];
+}
+
 export interface DashboardDay {
   trade_date: string;
   runs: DashboardRun[];
   watchlist: DashboardWatchlistItem[];
+  signals: DashboardSignalItem[];
   risk_decisions: DashboardRiskDecision[];
   llm_analysis: DashboardLLMAnalysis | null;
   paper_orders: DashboardPaperOrder[];

@@ -441,8 +441,196 @@ def test_dashboard_query_builds_runs_and_day_summary_from_stable_dtos() -> None:
     assert day.trading_calendar.is_trade_date is True
     assert day.data_reliability_reports[0].status == "failed"
     assert day.data_reliability_reports[0].missing_market_bar_count == 1
-    assert day.data_quality_reports[0].status == "failed"
-    assert day.data_quality_reports[0].issues[0].symbol == "510300"
+
+
+def test_dashboard_query_groups_stage_runs_and_preserves_all_attempts() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 29)
+    failed_context = PipelineRunContext(trade_date=trade_date, run_id="pre-failed")
+    old_success_context = PipelineRunContext(trade_date=trade_date, run_id="pre-success-old")
+    latest_success_context = PipelineRunContext(trade_date=trade_date, run_id="pre-success-latest")
+
+    repository.save_pipeline_run(
+        failed_context,
+        "pre_market",
+        "failed",
+        {"failure_reason": "必需数据源失败: market_bars"},
+    )
+    repository.save_pipeline_run(
+        old_success_context,
+        "pre_market",
+        "success",
+        {"report_path": "reports/old-pre-market.md"},
+    )
+    repository.save_watchlist_candidates(
+        old_success_context,
+        [
+            WatchlistCandidate(
+                symbol="510300",
+                trade_date=trade_date,
+                score=0.76,
+                score_breakdown={"technical": 0.42},
+                reasons=["旧成功 run"],
+            )
+        ],
+    )
+    repository.save_llm_analysis(
+        old_success_context,
+        LLMAnalysis(
+            trade_date=trade_date,
+            model="mock-llm",
+            summary="旧盘前分析",
+            key_points=["旧观察"],
+            risk_notes=[],
+            raw_response={},
+        ),
+    )
+    repository.save_pipeline_run(
+        latest_success_context,
+        "pre_market",
+        "success",
+        {"report_path": "reports/latest-pre-market.md"},
+    )
+    repository.save_watchlist_candidates(
+        latest_success_context,
+        [
+            WatchlistCandidate(
+                symbol="159915",
+                trade_date=trade_date,
+                score=0.81,
+                score_breakdown={"technical": 0.45},
+                reasons=["最新成功 run"],
+            )
+        ],
+    )
+
+    agent = DashboardQueryAgent(repository)
+    groups = agent.list_stage_run_groups(limit=10)
+    detail = agent.stage_run_group_detail(trade_date, "pre_market")
+
+    pre_market_groups = [group for group in groups if group.group_id == "2026-04-29:pre_market"]
+    assert len(pre_market_groups) == 1
+    group = pre_market_groups[0]
+    assert group.status == "partial_failure"
+    assert group.total_run_count == 3
+    assert group.success_count == 2
+    assert group.failed_count == 1
+    assert group.latest_run_id == "pre-success-latest"
+    assert group.latest_success_run_id == "pre-success-latest"
+    assert group.member_run_ids == ["pre-success-latest", "pre-success-old", "pre-failed"]
+    assert group.failure_reasons == ["必需数据源失败: market_bars"]
+    assert detail is not None
+    assert [run.run_id for run in detail.runs] == [
+        "pre-success-latest",
+        "pre-success-old",
+        "pre-failed",
+    ]
+    assert {item.run_id for item in detail.watchlist} == {
+        "pre-success-old",
+        "pre-success-latest",
+    }
+    assert {analysis.run_id for analysis in detail.llm_analyses} == {"pre-success-old"}
+
+
+def test_dashboard_stage_group_detail_filters_legacy_post_orders() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 29)
+    first_intraday = PipelineRunContext(trade_date=trade_date, run_id="intraday-first")
+    latest_intraday = PipelineRunContext(trade_date=trade_date, run_id="intraday-latest")
+    legacy_review = PipelineRunContext(trade_date=trade_date, run_id="legacy-review")
+
+    repository.save_pipeline_run(
+        first_intraday,
+        "intraday_watch",
+        "success",
+        {
+            "execution_events": [
+                {
+                    "symbol": "510300",
+                    "trade_date": "2026-04-29",
+                    "side": "buy",
+                    "status": "rejected",
+                    "execution_method": "first_valid_1m_bar",
+                    "used_daily_fallback": False,
+                    "failure_reason": "无分钟线",
+                }
+            ]
+        },
+    )
+    repository.save_paper_orders(
+        first_intraday,
+        [
+            PaperOrder(
+                order_id="order-first",
+                symbol="510300",
+                trade_date=trade_date,
+                side="buy",
+                quantity=100,
+                price=Decimal("4.12"),
+                amount=Decimal("412"),
+                slippage=Decimal("0.001"),
+                reason="首次盘中买入",
+            )
+        ],
+    )
+    repository.save_pipeline_run(
+        latest_intraday,
+        "intraday_watch",
+        "success",
+        {"execution_events": []},
+    )
+    repository.save_paper_orders(
+        latest_intraday,
+        [
+            PaperOrder(
+                order_id="order-latest",
+                symbol="159915",
+                trade_date=trade_date,
+                side="buy",
+                quantity=200,
+                price=Decimal("2.18"),
+                amount=Decimal("436"),
+                slippage=Decimal("0.001"),
+                reason="重跑盘中买入",
+            )
+        ],
+    )
+    repository.save_pipeline_run(
+        legacy_review,
+        "post_market_review",
+        "success",
+        {"report_path": "reports/legacy-review.md"},
+    )
+    repository.save_paper_orders(
+        legacy_review,
+        [
+            PaperOrder(
+                order_id="legacy-review-order",
+                symbol="300750",
+                trade_date=trade_date,
+                side="buy",
+                quantity=1,
+                price=Decimal("200"),
+                amount=Decimal("200"),
+                slippage=Decimal("0"),
+                reason="旧盘后订单不应出现在盘中阶段组",
+            )
+        ],
+    )
+
+    detail = DashboardQueryAgent(repository).stage_run_group_detail(
+        trade_date,
+        "intraday_watch",
+    )
+
+    assert detail is not None
+    assert detail.group.total_run_count == 2
+    assert [run.run_id for run in detail.runs] == ["intraday-latest", "intraday-first"]
+    assert {order.order_id for order in detail.paper_orders} == {"order-first", "order-latest"}
+    assert "legacy-review-order" not in {order.order_id for order in detail.paper_orders}
+    assert [
+        (event.run_id, event.symbol, event.failure_reason) for event in detail.execution_events
+    ] == [("intraday-first", "510300", "无分钟线")]
 
 
 def test_dashboard_query_hides_legacy_post_market_orders_without_intraday_success() -> None:

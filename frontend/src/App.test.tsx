@@ -1,10 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
 import type {
   DashboardDay,
   DashboardRun,
+  DashboardStageRunGroup,
+  DashboardStageRunGroupDetail,
   DashboardStrategyEvaluation,
   DashboardStrategyInsight,
   DashboardTrends,
@@ -28,6 +30,15 @@ const runsFixture: DashboardRun[] = [
     report_path: "reports/2026-04-29/intraday-watch.md",
     failure_reason: null,
     created_at: "2026-04-29T07:45:00+00:00",
+  },
+  {
+    run_id: "run-intraday-retry",
+    trade_date: "2026-04-29",
+    stage: "intraday_watch",
+    status: "success",
+    report_path: "reports/2026-04-29/intraday-watch-retry.md",
+    failure_reason: null,
+    created_at: "2026-04-29T07:55:00+00:00",
   },
   {
     run_id: "run-review",
@@ -68,6 +79,17 @@ const dayFixture: DashboardDay = {
       score: 0.82,
       score_breakdown: { technical: 0.45, market: 0.2 },
       reasons: ["趋势改善"],
+    },
+  ],
+  signals: [
+    {
+      run_id: "run-pre",
+      symbol: "510300",
+      trade_date: "2026-04-29",
+      action: "paper_buy",
+      score: 0.82,
+      score_breakdown: { technical: 0.45, market: 0.2 },
+      reasons: ["进入模拟买入候选"],
     },
   ],
   risk_decisions: [
@@ -133,6 +155,7 @@ const dayFixture: DashboardDay = {
   ],
   execution_events: [
     {
+      run_id: "run-intraday",
       symbol: "159915",
       trade_date: "2026-04-29",
       side: "buy",
@@ -311,6 +334,111 @@ const dayFixture: DashboardDay = {
       created_at: "2026-04-29T07:00:00+00:00",
     },
   ],
+};
+
+const stageRunGroupsFixture: DashboardStageRunGroup[] = [
+  {
+    group_id: "2026-04-29:pre_market",
+    trade_date: "2026-04-29",
+    stage: "pre_market",
+    status: "partial_failure",
+    total_run_count: 2,
+    success_count: 1,
+    failed_count: 1,
+    skipped_count: 0,
+    latest_run_id: "run-pre",
+    latest_success_run_id: "run-pre",
+    member_run_ids: ["run-pre", "run-failed"],
+    failure_reasons: ["必需数据源失败: market_bars"],
+    created_at: "2026-04-29T07:30:00+00:00",
+  },
+  {
+    group_id: "2026-04-29:intraday_watch",
+    trade_date: "2026-04-29",
+    stage: "intraday_watch",
+    status: "success",
+    total_run_count: 2,
+    success_count: 2,
+    failed_count: 0,
+    skipped_count: 0,
+    latest_run_id: "run-intraday-retry",
+    latest_success_run_id: "run-intraday-retry",
+    member_run_ids: ["run-intraday-retry", "run-intraday"],
+    failure_reasons: [],
+    created_at: "2026-04-29T07:55:00+00:00",
+  },
+  {
+    group_id: "2026-04-29:post_market_review",
+    trade_date: "2026-04-29",
+    stage: "post_market_review",
+    status: "success",
+    total_run_count: 1,
+    success_count: 1,
+    failed_count: 0,
+    skipped_count: 0,
+    latest_run_id: "run-review",
+    latest_success_run_id: "run-review",
+    member_run_ids: ["run-review"],
+    failure_reasons: [],
+    created_at: "2026-04-29T08:00:00+00:00",
+  },
+  {
+    group_id: "2026-04-28:post_market_review",
+    trade_date: "2026-04-28",
+    stage: "post_market_review",
+    status: "success",
+    total_run_count: 1,
+    success_count: 1,
+    failed_count: 0,
+    skipped_count: 0,
+    latest_run_id: "run-previous",
+    latest_success_run_id: "run-previous",
+    member_run_ids: ["run-previous"],
+    failure_reasons: [],
+    created_at: "2026-04-28T08:00:00+00:00",
+  },
+];
+
+const intradayStageDetailFixture: DashboardStageRunGroupDetail = {
+  group: stageRunGroupsFixture[1],
+  runs: runsFixture.filter((run) =>
+    ["run-intraday-retry", "run-intraday"].includes(run.run_id)
+  ),
+  watchlist: [],
+  signals: [],
+  llm_analyses: [],
+  risk_decisions: [],
+  paper_orders: [
+    ...dayFixture.paper_orders,
+    {
+      run_id: "run-intraday-retry",
+      order_id: "paper-2026-04-29-510300-buy-retry",
+      symbol: "510300",
+      trade_date: "2026-04-29",
+      side: "buy",
+      quantity: 100,
+      price: "4.1050",
+      amount: "410.50",
+      slippage: "0.001",
+      reason: "重跑盘中买入",
+      is_real_trade: false,
+      execution_source: "mock_intraday",
+      execution_timestamp: "2026-04-29T09:32:00",
+      execution_method: "first_valid_1m_bar",
+      reference_price: "4.10",
+      used_daily_fallback: false,
+      execution_failure_reason: null,
+      created_at: "2026-04-29T08:03:00+00:00",
+    },
+  ],
+  execution_events: dayFixture.execution_events,
+  positions: dayFixture.positions,
+  portfolio_snapshots: dayFixture.portfolio_snapshot ? [dayFixture.portfolio_snapshot] : [],
+  review_reports: [],
+  source_snapshots: dayFixture.source_snapshots,
+  intraday_source_health: dayFixture.intraday_source_health,
+  data_quality_reports: [],
+  data_reliability_reports: [],
 };
 
 const trendsFixture: DashboardTrends = {
@@ -640,13 +768,20 @@ describe("dashboard", () => {
     expect(screen.getByText("6.86%")).toBeInTheDocument();
   });
 
-  it("renders execution board and opens a stage detail drawer from a run card", async () => {
+  it("renders merged stage groups and opens an aggregated stage detail drawer", async () => {
     mockFetch(dayFixture);
 
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "交易执行" }));
 
+    expect(
+      await screen.findByRole("button", { name: /2026-04-29 盘前 部分失败/ })
+    ).toBeInTheDocument();
+    const preMarketGroup = screen.getByRole("button", { name: /2026-04-29 盘前/ });
+    expect(screen.getAllByRole("button", { name: /2026-04-29 盘前/ })).toHaveLength(1);
+    expect(within(preMarketGroup).getByText("2 次尝试")).toBeInTheDocument();
+    expect(within(preMarketGroup).getByText("失败 1")).toBeInTheDocument();
     expect(await screen.findByText("盘前计划")).toBeInTheDocument();
     expect(screen.getByText("风控结果")).toBeInTheDocument();
     expect(screen.getByText("盘中模拟订单")).toBeInTheDocument();
@@ -655,13 +790,15 @@ describe("dashboard", () => {
     expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
     expect(screen.getAllByText("False").length).toBeGreaterThanOrEqual(4);
 
-    fireEvent.click(screen.getByRole("button", { name: /2026-04-29 盘前 成功/ }));
+    fireEvent.click(screen.getByRole("button", { name: /2026-04-29 盘中 成功/ }));
 
     expect(await screen.findByRole("dialog", { name: "阶段详情" })).toBeInTheDocument();
-    expect(screen.getByText("盘前详情")).toBeInTheDocument();
-    expect(screen.getByText("LLM 盘前分析")).toBeInTheDocument();
-    expect(screen.getByText("盘前关注指数趋势和量能。")).toBeInTheDocument();
-    expect(screen.getByText("观察名单由规则信号生成")).toBeInTheDocument();
+    expect(screen.getByText("盘中详情")).toBeInTheDocument();
+    expect(screen.getByText("成员 run")).toBeInTheDocument();
+    expect(screen.getAllByText("run-intraday").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("run-intraday-retry").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("重跑盘中买入")).toBeInTheDocument();
+    expect(screen.getByText("分钟线成交依据")).toBeInTheDocument();
   });
 
   it("renders date range filters and trend panels", async () => {
@@ -846,7 +983,9 @@ function mockFetch(
   strategyEvaluations = strategyEvaluationsFixture,
   strategyEvaluation: DashboardStrategyEvaluation | null = strategyEvaluationFixture,
   strategyInsights = strategyInsightsFixture,
-  strategyInsight: DashboardStrategyInsight | null = strategyInsightFixture
+  strategyInsight: DashboardStrategyInsight | null = strategyInsightFixture,
+  stageRunGroups = { stage_run_groups: stageRunGroupsFixture },
+  stageRunGroupDetail: DashboardStageRunGroupDetail | null = intradayStageDetailFixture
 ): void {
   vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL) => {
     const url = String(input);
@@ -858,6 +997,10 @@ function mockFetch(
       ? strategyEvaluation
       : url.includes("/api/dashboard/strategy-evaluations")
         ? strategyEvaluations
+      : url.includes("/api/dashboard/days/") && url.includes("/stage-groups/")
+        ? stageRunGroupDetail
+      : url.includes("/api/dashboard/stage-run-groups")
+        ? stageRunGroups
         : url.includes("/api/dashboard/runs")
       ? { runs: runsFixture }
       : url.includes("/api/dashboard/backtests")

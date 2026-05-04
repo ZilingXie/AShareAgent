@@ -14,6 +14,8 @@ from ashare_agent.dashboard import (
     DashboardDay,
     DashboardQueryService,
     DashboardRun,
+    DashboardStageRunGroup,
+    DashboardStageRunGroupDetail,
     DashboardStrategyComparison,
     DashboardStrategyEvaluation,
     DashboardStrategyInsight,
@@ -26,6 +28,14 @@ class DashboardService(Protocol):
     def list_runs(self, limit: int = 50) -> list[DashboardRun]: ...
 
     def day_summary(self, trade_date: date) -> DashboardDay: ...
+
+    def list_stage_run_groups(self, limit: int = 50) -> list[DashboardStageRunGroup]: ...
+
+    def stage_run_group_detail(
+        self,
+        trade_date: date,
+        stage: str,
+    ) -> DashboardStageRunGroupDetail | None: ...
 
     def trends(self, start_date: date, end_date: date) -> DashboardTrends: ...
 
@@ -82,6 +92,25 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
     @api.get("/api/dashboard/days/{trade_date}")
     def dashboard_day(trade_date: date) -> JsonObject:
         return _dto(service().day_summary(trade_date))
+
+    @api.get("/api/dashboard/stage-run-groups")
+    def dashboard_stage_run_groups(limit: int = 50) -> dict[str, list[JsonObject]]:
+        safe_limit = min(max(limit, 1), 200)
+        return {
+            "stage_run_groups": [
+                _dto(group) for group in service().list_stage_run_groups(limit=safe_limit)
+            ]
+        }
+
+    @api.get("/api/dashboard/days/{trade_date}/stage-groups/{stage}")
+    def dashboard_stage_run_group_detail(trade_date: date, stage: str) -> JsonObject:
+        detail = service().stage_run_group_detail(trade_date, stage)
+        if detail is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"stage run group 不存在: {trade_date.isoformat()} {stage}",
+            )
+        return _dto(detail)
 
     @api.get("/api/dashboard/trends")
     def dashboard_trends(start_date: date, end_date: date) -> JsonObject:
@@ -142,6 +171,8 @@ def create_app(service_factory: DashboardServiceFactory | None = None) -> FastAP
         health,
         dashboard_runs,
         dashboard_day,
+        dashboard_stage_run_groups,
+        dashboard_stage_run_group_detail,
         dashboard_trends,
         dashboard_backtests,
         dashboard_strategy_comparison,

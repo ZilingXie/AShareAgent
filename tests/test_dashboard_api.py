@@ -12,6 +12,8 @@ from ashare_agent.dashboard import (
     DashboardDay,
     DashboardQueryService,
     DashboardRun,
+    DashboardStageRunGroup,
+    DashboardStageRunGroupDetail,
     DashboardStrategyComparison,
     DashboardStrategyComparisonItem,
     DashboardStrategyEvaluation,
@@ -43,6 +45,21 @@ class FakeDashboardService:
 
     def day_summary(self, trade_date: date) -> DashboardDay:
         return DashboardDay(trade_date=trade_date.isoformat(), runs=self.list_runs())
+
+    def list_stage_run_groups(self, limit: int = 50) -> list[DashboardStageRunGroup]:
+        return [self._stage_run_group()][:limit]
+
+    def stage_run_group_detail(
+        self,
+        trade_date: date,
+        stage: str,
+    ) -> DashboardStageRunGroupDetail | None:
+        if trade_date != date(2026, 4, 29) or stage != "pre_market":
+            return None
+        return DashboardStageRunGroupDetail(
+            group=self._stage_run_group(),
+            runs=self.list_runs(),
+        )
 
     def trends(self, start_date: date, end_date: date) -> DashboardTrends:
         return DashboardTrends(
@@ -105,6 +122,23 @@ class FakeDashboardService:
         if insight_id != "insight-1":
             return None
         return self._strategy_insight()
+
+    def _stage_run_group(self) -> DashboardStageRunGroup:
+        return DashboardStageRunGroup(
+            group_id="2026-04-29:pre_market",
+            trade_date="2026-04-29",
+            stage="pre_market",
+            status="partial_failure",
+            total_run_count=2,
+            success_count=1,
+            failed_count=1,
+            skipped_count=0,
+            latest_run_id="run-1",
+            latest_success_run_id="run-1",
+            member_run_ids=["run-1", "failed-run"],
+            failure_reasons=["必需数据源失败: market_bars"],
+            created_at="2026-04-29T00:00:00+00:00",
+        )
 
     def _strategy_insight(self) -> DashboardStrategyInsight:
         return DashboardStrategyInsight(
@@ -203,6 +237,31 @@ def test_dashboard_api_returns_runs_and_day_summary() -> None:
     assert day_response.json()["data_quality_reports"] == []
     assert day_response.json()["data_reliability_reports"] == []
     assert day_response.json()["trading_calendar"] is None
+
+
+def test_dashboard_api_returns_stage_run_groups_and_detail() -> None:
+    client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
+
+    list_response = client.get("/api/dashboard/stage-run-groups?limit=5")
+    detail_response = client.get("/api/dashboard/days/2026-04-29/stage-groups/pre_market")
+
+    assert list_response.status_code == 200
+    groups = list_response.json()["stage_run_groups"]
+    assert groups[0]["group_id"] == "2026-04-29:pre_market"
+    assert groups[0]["status"] == "partial_failure"
+    assert groups[0]["total_run_count"] == 2
+    assert detail_response.status_code == 200
+    assert detail_response.json()["group"]["member_run_ids"] == ["run-1", "failed-run"]
+    assert detail_response.json()["runs"][0]["run_id"] == "run-1"
+
+
+def test_dashboard_api_returns_404_for_missing_stage_run_group() -> None:
+    client = TestClient(create_app(service_factory=lambda: FakeDashboardService()))
+
+    response = client.get("/api/dashboard/days/2026-04-29/stage-groups/intraday_watch")
+
+    assert response.status_code == 404
+    assert "stage run group 不存在" in response.json()["detail"]
 
 
 def test_dashboard_api_returns_range_trends() -> None:

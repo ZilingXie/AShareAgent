@@ -21,6 +21,8 @@ import {
   fetchDashboardDay,
   fetchDashboardTrends,
   fetchRuns,
+  fetchStageRunGroupDetail,
+  fetchStageRunGroups,
   fetchStrategyComparison,
   fetchStrategyEvaluation,
   fetchStrategyEvaluations,
@@ -49,6 +51,8 @@ import type {
   DashboardPaperOrder,
   DashboardPosition,
   DashboardRun,
+  DashboardStageRunGroup,
+  DashboardStageRunGroupDetail,
   DashboardStrategyEvaluation,
   DashboardStrategyEvaluationVariant,
   DashboardStrategyInsight,
@@ -70,6 +74,7 @@ const statusLabels: Record<string, string> = {
   failed: "失败",
   passed: "通过",
   warning: "警告",
+  partial_failure: "部分失败",
   skipped: "跳过",
   rejected: "拒绝",
   filled: "成交",
@@ -86,9 +91,12 @@ const viewLabels: Record<ActiveView, string> = {
 export default function App(): JSX.Element {
   const [activeView, setActiveView] = useState<ActiveView>("overview");
   const [runs, setRuns] = useState<DashboardRun[]>([]);
+  const [stageRunGroups, setStageRunGroups] = useState<DashboardStageRunGroup[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [isRunDetailOpen, setIsRunDetailOpen] = useState(false);
+  const [selectedStageGroupId, setSelectedStageGroupId] = useState<string | null>(null);
+  const [isStageGroupDetailOpen, setIsStageGroupDetailOpen] = useState(false);
+  const [stageGroupDetail, setStageGroupDetail] =
+    useState<DashboardStageRunGroupDetail | null>(null);
   const [rangeStart, setRangeStart] = useState<string | null>(null);
   const [rangeEnd, setRangeEnd] = useState<string | null>(null);
   const [day, setDay] = useState<DashboardDay | null>(null);
@@ -106,10 +114,12 @@ export default function App(): JSX.Element {
   const [strategyInsight, setStrategyInsight] = useState<DashboardStrategyInsight | null>(null);
   const [loading, setLoading] = useState(true);
   const [trendLoading, setTrendLoading] = useState(false);
+  const [stageGroupDetailLoading, setStageGroupDetailLoading] = useState(false);
   const [strategyEvaluationLoading, setStrategyEvaluationLoading] = useState(false);
   const [strategyInsightLoading, setStrategyInsightLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const [stageGroupDetailError, setStageGroupDetailError] = useState<string | null>(null);
   const [strategyEvaluationError, setStrategyEvaluationError] = useState<string | null>(null);
   const [strategyInsightError, setStrategyInsightError] = useState<string | null>(null);
 
@@ -118,16 +128,18 @@ export default function App(): JSX.Element {
     setError(null);
     try {
       const loadedRuns = await fetchRuns(200);
+      const loadedStageRunGroups = await fetchStageRunGroups(200);
       const loadedBacktests = await fetchBacktests(20);
       const loadedEvaluations = await fetchStrategyEvaluations(50);
       const loadedInsights = await fetchStrategyInsights(50);
-      const tradeDates = [...new Set(loadedRuns.map((run) => run.trade_date))].sort();
+      const tradeDates = [...new Set(loadedStageRunGroups.map((group) => group.trade_date))].sort();
       setRuns(loadedRuns);
-      setSelectedDate((current) => current ?? loadedRuns[0]?.trade_date ?? null);
-      setSelectedRunId((current) =>
-        current && loadedRuns.some((run) => run.run_id === current)
+      setStageRunGroups(loadedStageRunGroups);
+      setSelectedDate((current) => current ?? loadedStageRunGroups[0]?.trade_date ?? null);
+      setSelectedStageGroupId((current) =>
+        current && loadedStageRunGroups.some((group) => group.group_id === current)
           ? current
-          : loadedRuns[0]?.run_id ?? null
+          : loadedStageRunGroups[0]?.group_id ?? null
       );
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
@@ -301,6 +313,20 @@ export default function App(): JSX.Element {
     [rangeEnd, rangeStart, runs]
   );
 
+  const visibleStageRunGroups = useMemo(
+    () =>
+      stageRunGroups.filter((group) => {
+        if (rangeStart && group.trade_date < rangeStart) {
+          return false;
+        }
+        if (rangeEnd && group.trade_date > rangeEnd) {
+          return false;
+        }
+        return true;
+      }),
+    [rangeEnd, rangeStart, stageRunGroups]
+  );
+
   useEffect(() => {
     if (!rangeStart || !rangeEnd || !selectedDate) {
       return;
@@ -308,31 +334,72 @@ export default function App(): JSX.Element {
     if (selectedDate >= rangeStart && selectedDate <= rangeEnd) {
       return;
     }
-    setSelectedDate(visibleRuns[0]?.trade_date ?? rangeEnd);
-  }, [rangeEnd, rangeStart, selectedDate, visibleRuns]);
+    setSelectedDate(visibleStageRunGroups[0]?.trade_date ?? rangeEnd);
+  }, [rangeEnd, rangeStart, selectedDate, visibleStageRunGroups]);
 
   const selectedRuns = useMemo(
     () => visibleRuns.filter((run) => run.trade_date === selectedDate),
     [selectedDate, visibleRuns]
   );
 
-  useEffect(() => {
-    if (selectedRunId && visibleRuns.some((run) => run.run_id === selectedRunId)) {
-      return;
-    }
-    setSelectedRunId(visibleRuns[0]?.run_id ?? null);
-    setIsRunDetailOpen(false);
-  }, [selectedRunId, visibleRuns]);
-
-  const selectedRun = useMemo(
-    () => selectedRuns.find((run) => run.run_id === selectedRunId) ?? null,
-    [selectedRunId, selectedRuns]
+  const selectedStageGroups = useMemo(
+    () => visibleStageRunGroups.filter((group) => group.trade_date === selectedDate),
+    [selectedDate, visibleStageRunGroups]
   );
 
-  function selectRun(run: DashboardRun): void {
-    setSelectedDate(run.trade_date);
-    setSelectedRunId(run.run_id);
-    setIsRunDetailOpen(true);
+  useEffect(() => {
+    if (
+      selectedStageGroupId &&
+      visibleStageRunGroups.some((group) => group.group_id === selectedStageGroupId)
+    ) {
+      return;
+    }
+    setSelectedStageGroupId(visibleStageRunGroups[0]?.group_id ?? null);
+    setIsStageGroupDetailOpen(false);
+  }, [selectedStageGroupId, visibleStageRunGroups]);
+
+  const selectedStageGroup = useMemo(
+    () =>
+      visibleStageRunGroups.find((group) => group.group_id === selectedStageGroupId) ?? null,
+    [selectedStageGroupId, visibleStageRunGroups]
+  );
+
+  useEffect(() => {
+    if (!isStageGroupDetailOpen || !selectedStageGroup) {
+      setStageGroupDetail(null);
+      return;
+    }
+    let active = true;
+    setStageGroupDetailLoading(true);
+    setStageGroupDetailError(null);
+    fetchStageRunGroupDetail(selectedStageGroup.trade_date, selectedStageGroup.stage)
+      .then((detail) => {
+        if (active) {
+          setStageGroupDetail(detail);
+        }
+      })
+      .catch((caught: unknown) => {
+        if (active) {
+          setStageGroupDetailError(
+            caught instanceof Error ? caught.message : "Dashboard API 请求失败"
+          );
+          setStageGroupDetail(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setStageGroupDetailLoading(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isStageGroupDetailOpen, selectedStageGroup]);
+
+  function selectStageGroup(group: DashboardStageRunGroup): void {
+    setSelectedDate(group.trade_date);
+    setSelectedStageGroupId(group.group_id);
+    setIsStageGroupDetailOpen(true);
   }
 
   return (
@@ -361,22 +428,28 @@ export default function App(): JSX.Element {
           ))}
         </div>
         <div className="run-list">
-          {visibleRuns.length === 0 && !loading ? <EmptyState text="暂无 pipeline run" /> : null}
-          {visibleRuns.map((run) => (
+          {visibleStageRunGroups.length === 0 && !loading ? (
+            <EmptyState text="暂无 pipeline run" />
+          ) : null}
+          {visibleStageRunGroups.map((group) => (
             <button
-              className={`run-item ${run.run_id === selectedRunId ? "selected" : ""}`}
-              key={`${run.run_id}-${run.stage}`}
-              onClick={() => selectRun(run)}
+              className={`run-item ${group.group_id === selectedStageGroupId ? "selected" : ""}`}
+              key={group.group_id}
+              onClick={() => selectStageGroup(group)}
               type="button"
             >
-              <span className="run-date">{run.trade_date}</span>
+              <span className="run-date">{group.trade_date}</span>
               <span className="run-meta">
-                {stageLabels[run.stage] ?? run.stage}
-                <StatusBadge status={run.status} />
+                {stageLabels[group.stage] ?? group.stage}
+                <StatusBadge status={group.status} />
               </span>
-              {run.failure_reason ? (
-                <span className="failure" title={run.failure_reason}>
-                  {summarizeFailure(run.failure_reason)}
+              <span className="run-meta">
+                <span>{group.total_run_count} 次尝试</span>
+                {group.failed_count > 0 ? <span>失败 {group.failed_count}</span> : null}
+              </span>
+              {group.failure_reasons.length > 0 ? (
+                <span className="failure" title={group.failure_reasons.join("; ")}>
+                  {summarizeFailure(group.failure_reasons.join("; "))}
                 </span>
               ) : null}
             </button>
@@ -411,6 +484,7 @@ export default function App(): JSX.Element {
             </label>
           </div>
           <div className="status-strip">
+            <span>{selectedStageGroups.length} 个阶段</span>
             <span>{selectedRuns.length} 次运行</span>
             <span>{day?.paper_orders.length ?? 0} 笔模拟订单</span>
             <span>{day?.positions.length ?? 0} 个持仓状态</span>
@@ -427,8 +501,10 @@ export default function App(): JSX.Element {
         {activeView === "strategy" && strategyInsightError ? (
           <div className="alert">{strategyInsightError}</div>
         ) : null}
+        {stageGroupDetailError ? <div className="alert">{stageGroupDetailError}</div> : null}
         {loading ? <div className="loading">加载中</div> : null}
         {trendLoading ? <div className="loading">趋势加载中</div> : null}
+        {stageGroupDetailLoading ? <div className="loading">阶段详情加载中</div> : null}
         {activeView === "strategy" && strategyEvaluationLoading ? (
           <div className="loading">策略评估加载中</div>
         ) : null}
@@ -458,8 +534,11 @@ export default function App(): JSX.Element {
           <QualityBoard day={day} trends={trends} />
         ) : null}
 
-        {isRunDetailOpen && selectedRun && day ? (
-          <RunDetailDrawer day={day} onClose={() => setIsRunDetailOpen(false)} run={selectedRun} />
+        {isStageGroupDetailOpen && stageGroupDetail ? (
+          <StageGroupDetailDrawer
+            detail={stageGroupDetail}
+            onClose={() => setIsStageGroupDetailOpen(false)}
+          />
         ) : null}
       </section>
     </main>
@@ -699,24 +778,15 @@ function QualityBoard({
   );
 }
 
-function RunDetailDrawer({
-  day,
+function StageGroupDetailDrawer({
+  detail,
   onClose,
-  run,
 }: {
-  day: DashboardDay;
+  detail: DashboardStageRunGroupDetail;
   onClose: () => void;
-  run: DashboardRun;
 }): JSX.Element {
-  const stage = stageLabels[run.stage] ?? run.stage;
-  const watchlist = day.watchlist.filter((item) => item.run_id === run.run_id);
-  const riskDecisions = day.risk_decisions.filter((decision) => decision.run_id === run.run_id);
-  const orders = day.paper_orders.filter((order) => order.run_id === run.run_id);
-  const sourceHealth = day.intraday_source_health.filter((item) => item.run_id === run.run_id);
-  const sourceSnapshots = day.source_snapshots.filter((snapshot) => snapshot.run_id === run.run_id);
-  const analysis = day.llm_analysis?.run_id === run.run_id ? day.llm_analysis : null;
-  const portfolioSnapshot =
-    day.portfolio_snapshot?.run_id === run.run_id ? day.portfolio_snapshot : null;
+  const { group } = detail;
+  const stage = stageLabels[group.stage] ?? group.stage;
 
   return (
     <aside aria-label="阶段详情" className="detail-drawer" role="dialog">
@@ -734,77 +804,106 @@ function RunDetailDrawer({
       <dl className="metrics compact-metrics">
         <div>
           <dt>日期</dt>
-          <dd>{run.trade_date}</dd>
+          <dd>{group.trade_date}</dd>
         </div>
         <div>
           <dt>状态</dt>
           <dd>
-            <StatusBadge status={run.status} />
+            <StatusBadge status={group.status} />
           </dd>
         </div>
         <div>
-          <dt>报告</dt>
-          <dd className="small-value">{run.report_path ?? "-"}</dd>
+          <dt>尝试</dt>
+          <dd>{group.total_run_count}</dd>
         </div>
         <div>
-          <dt>失败原因</dt>
-          <dd className="small-value" title={run.failure_reason ?? undefined}>
-            {run.failure_reason ? summarizeFailure(run.failure_reason) : "-"}
-          </dd>
+          <dt>失败</dt>
+          <dd>{group.failed_count}</dd>
+        </div>
+        <div>
+          <dt>最新 run</dt>
+          <dd className="small-value">{group.latest_run_id}</dd>
+        </div>
+        <div>
+          <dt>最新成功 run</dt>
+          <dd className="small-value">{group.latest_success_run_id ?? "-"}</dd>
         </div>
       </dl>
 
-      {run.stage === "pre_market" ? (
-        <div className="drawer-sections">
-          <Section icon={ListChecks} title="观察名单">
-            <WatchlistTable items={watchlist} />
-          </Section>
-          <Section icon={FileText} title="LLM 盘前分析">
-            <LLMAnalysisPanel analysis={analysis} />
-          </Section>
-          <Section icon={ShieldCheck} title="风控预检查">
-            <RiskDecisionsTable decisions={riskDecisions} />
-          </Section>
-        </div>
-      ) : null}
+      <Section icon={ClipboardList} title="成员 run">
+        <RunDetailsTable runs={detail.runs} />
+      </Section>
 
-      {run.stage === "intraday_watch" ? (
-        <div className="drawer-sections">
-          <Section icon={Activity} title="模拟订单">
-            <OrdersTable orders={orders} />
-          </Section>
-          <Section icon={AlertTriangle} title="成交失败">
-            <ExecutionEventsTable events={day.execution_events} />
-          </Section>
-          <Section icon={Activity} title="分钟线成交依据">
-            <IntradaySourceHealthTable items={sourceHealth} />
-          </Section>
-        </div>
-      ) : null}
-
-      {run.stage === "post_market_review" ? (
-        <div className="drawer-sections">
-          <Section icon={BriefcaseBusiness} title="组合快照">
-            {portfolioSnapshot ? (
-              <PortfolioSnapshotMetrics snapshot={portfolioSnapshot} />
-            ) : (
-              <EmptyState text="暂无组合快照" />
-            )}
-          </Section>
-          <Section icon={FileText} title="复盘指标">
-            <ReviewSummary day={day} />
-          </Section>
-          <Section icon={ClipboardList} title="报告路径">
-            <p className="report-path">{run.report_path ?? "-"}</p>
-          </Section>
-        </div>
-      ) : null}
-
-      {sourceSnapshots.length > 0 ? (
-        <Section icon={Database} title="本次数据源状态">
-          <SourceSnapshotsTable snapshots={sourceSnapshots} />
+      {group.failure_reasons.length > 0 ? (
+        <Section icon={AlertTriangle} title="失败原因">
+          <ul className="issue-list compact-list">
+            {group.failure_reasons.map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+          </ul>
         </Section>
       ) : null}
+
+      {group.stage === "pre_market" ? (
+        <div className="drawer-sections">
+          <Section icon={ListChecks} title="观察名单">
+            <WatchlistTable items={detail.watchlist} />
+          </Section>
+          <Section icon={Gauge} title="信号">
+            <SignalsTable signals={detail.signals} />
+          </Section>
+          <Section icon={FileText} title="LLM 盘前分析">
+            <LLMAnalysesPanel analyses={detail.llm_analyses} />
+          </Section>
+          <Section icon={ShieldCheck} title="风控预检查">
+            <RiskDecisionsTable decisions={detail.risk_decisions} />
+          </Section>
+        </div>
+      ) : null}
+
+      {group.stage === "intraday_watch" ? (
+        <div className="drawer-sections">
+          <Section icon={Activity} title="模拟订单">
+            <OrdersTable orders={detail.paper_orders} />
+          </Section>
+          <Section icon={AlertTriangle} title="成交失败">
+            <ExecutionEventsTable events={detail.execution_events} />
+          </Section>
+          <Section icon={Activity} title="分钟线成交依据">
+            <IntradaySourceHealthTable items={detail.intraday_source_health} />
+          </Section>
+          <Section icon={BriefcaseBusiness} title="持仓状态">
+            <PositionsTable positions={detail.positions} />
+          </Section>
+          <Section icon={BriefcaseBusiness} title="资金快照">
+            <PortfolioSnapshotsTable snapshots={detail.portfolio_snapshots} />
+          </Section>
+        </div>
+      ) : null}
+
+      {group.stage === "post_market_review" ? (
+        <div className="drawer-sections">
+          <Section icon={BriefcaseBusiness} title="组合快照">
+            <PortfolioSnapshotsTable snapshots={detail.portfolio_snapshots} />
+          </Section>
+          <Section icon={FileText} title="复盘报告">
+            <ReviewReportsTable reports={detail.review_reports} />
+          </Section>
+          <Section icon={ClipboardList} title="报告路径">
+            <ReportPathList runs={detail.runs} />
+          </Section>
+        </div>
+      ) : null}
+
+      <Section icon={Database} title="数据源状态">
+        <SourceSnapshotsTable snapshots={detail.source_snapshots} />
+      </Section>
+      <Section icon={Gauge} title="数据质量">
+        <DataQualityTable reports={detail.data_quality_reports} />
+      </Section>
+      <Section icon={Database} title="运行可靠性">
+        <DataReliabilityTable reports={detail.data_reliability_reports} />
+      </Section>
     </aside>
   );
 }
@@ -830,6 +929,36 @@ function WatchlistTable({ items }: { items: DashboardDay["watchlist"] }): JSX.El
             <td>{score(item.score)}</td>
             <td>{breakdown(item.score_breakdown)}</td>
             <td>{listText(item.reasons)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function SignalsTable({ signals }: { signals: DashboardStageRunGroupDetail["signals"] }): JSX.Element {
+  if (signals.length === 0) {
+    return <EmptyState text="暂无信号" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>run</th>
+          <th>symbol</th>
+          <th>action</th>
+          <th>score</th>
+          <th>原因</th>
+        </tr>
+      </thead>
+      <tbody>
+        {signals.map((signal) => (
+          <tr key={`${signal.run_id}-${signal.symbol}-${signal.action}`}>
+            <td>{signal.run_id}</td>
+            <td>{signal.symbol}</td>
+            <td>{signal.action}</td>
+            <td>{score(signal.score)}</td>
+            <td>{listText(signal.reasons)}</td>
           </tr>
         ))}
       </tbody>
@@ -870,6 +999,91 @@ function RiskDecisionsTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+function PortfolioSnapshotsTable({
+  snapshots,
+}: {
+  snapshots: DashboardStageRunGroupDetail["portfolio_snapshots"];
+}): JSX.Element {
+  if (snapshots.length === 0) {
+    return <EmptyState text="暂无资金快照" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>run</th>
+          <th>总资产</th>
+          <th>现金</th>
+          <th>市值</th>
+          <th>open</th>
+        </tr>
+      </thead>
+      <tbody>
+        {snapshots.map((snapshot) => (
+          <tr key={`${snapshot.run_id}-${snapshot.trade_date}`}>
+            <td>{snapshot.run_id}</td>
+            <td>{money(snapshot.total_value)}</td>
+            <td>{money(snapshot.cash)}</td>
+            <td>{money(snapshot.market_value)}</td>
+            <td>{snapshot.open_positions}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ReviewReportsTable({
+  reports,
+}: {
+  reports: DashboardStageRunGroupDetail["review_reports"];
+}): JSX.Element {
+  if (reports.length === 0) {
+    return <EmptyState text="暂无复盘报告" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>run</th>
+          <th>summary</th>
+          <th>胜率</th>
+          <th>已实现盈亏</th>
+          <th>建议</th>
+        </tr>
+      </thead>
+      <tbody>
+        {reports.map((report) => (
+          <tr key={`${report.run_id}-${report.trade_date}`}>
+            <td>{report.run_id}</td>
+            <td>{report.summary}</td>
+            <td>{percent(report.metrics.win_rate)}</td>
+            <td>{money(report.metrics.realized_pnl)}</td>
+            <td>{listText(report.parameter_suggestions)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ReportPathList({ runs }: { runs: DashboardRun[] }): JSX.Element {
+  const rows = runs.filter((run) => run.report_path);
+  if (rows.length === 0) {
+    return <EmptyState text="暂无报告路径" />;
+  }
+  return (
+    <div className="issue-list">
+      {rows.map((run) => (
+        <div className="issue-row" key={`${run.run_id}-report`}>
+          <span>{run.run_id}</span>
+          <strong>{run.report_path}</strong>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1103,6 +1317,7 @@ function RunDetailsTable({ runs }: { runs: DashboardRun[] }): JSX.Element {
     <table>
       <thead>
         <tr>
+          <th>run</th>
           <th>stage</th>
           <th>status</th>
           <th>report</th>
@@ -1112,6 +1327,7 @@ function RunDetailsTable({ runs }: { runs: DashboardRun[] }): JSX.Element {
       <tbody>
         {runs.map((run) => (
           <tr key={run.run_id}>
+            <td>{run.run_id}</td>
             <td>{stageLabels[run.stage] ?? run.stage}</td>
             <td>
               <StatusBadge status={run.status} />
@@ -1707,11 +1923,11 @@ function StatusBadge({ status }: { status: string }): JSX.Element {
       ? "safe"
       : status === "failed" || status === "rejected"
         ? "danger"
-        : status === "warning" || status === "skipped"
+        : status === "warning" || status === "skipped" || status === "partial_failure"
           ? "warning"
           : "neutral";
   const icon =
-    status === "failed" || status === "warning" ? (
+    status === "failed" || status === "warning" || status === "partial_failure" ? (
       <AlertTriangle size={13} aria-hidden="true" />
     ) : null;
   return (
@@ -1893,6 +2109,42 @@ function ReliabilityPanel({
   );
 }
 
+function DataReliabilityTable({
+  reports,
+}: {
+  reports: DashboardDataReliabilityReport[];
+}): JSX.Element {
+  if (reports.length === 0) {
+    return <EmptyState text="暂无运行可靠性报告" />;
+  }
+  return (
+    <table>
+      <thead>
+        <tr>
+          <th>run</th>
+          <th>status</th>
+          <th>失败率</th>
+          <th>失败源</th>
+          <th>缺口</th>
+        </tr>
+      </thead>
+      <tbody>
+        {reports.map((report) => (
+          <tr key={`${report.run_id}-${report.trade_date}`}>
+            <td>{report.run_id}</td>
+            <td>
+              <StatusBadge status={report.status} />
+            </td>
+            <td>{percent(report.source_failure_rate)}</td>
+            <td>{report.failed_source_count}</td>
+            <td>{report.missing_market_bar_count}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function LLMAnalysisPanel({ analysis }: { analysis: DashboardLLMAnalysis | null }): JSX.Element {
   if (!analysis) {
     return <EmptyState text="暂无 LLM 盘前分析" />;
@@ -1917,6 +2169,42 @@ function LLMAnalysisPanel({ analysis }: { analysis: DashboardLLMAnalysis | null 
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function LLMAnalysesPanel({
+  analyses,
+}: {
+  analyses: DashboardStageRunGroupDetail["llm_analyses"];
+}): JSX.Element {
+  if (analyses.length === 0) {
+    return <EmptyState text="暂无 LLM 盘前分析" />;
+  }
+  return (
+    <div className="drawer-sections">
+      {analyses.map((analysis) => (
+        <div className="report" key={analysis.run_id}>
+          <p>
+            <strong>{analysis.run_id}</strong> · {analysis.model}
+          </p>
+          <p>{analysis.summary}</p>
+          <div className="llm-list">
+            {analysis.key_points.map((point) => (
+              <div className="llm-row" key={`${analysis.run_id}-point-${point}`}>
+                <span>重点</span>
+                <strong>{point}</strong>
+              </div>
+            ))}
+            {analysis.risk_notes.map((note) => (
+              <div className="llm-row" key={`${analysis.run_id}-risk-${note}`}>
+                <span>风险</span>
+                <strong>{note}</strong>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

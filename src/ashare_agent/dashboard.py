@@ -5,6 +5,8 @@ from ashare_agent.agents.dashboard_query_agent import (
     DashboardDaySummary,
     DashboardPipelineRun,
     DashboardQueryAgent,
+    DashboardStageRunGroup,
+    DashboardStageRunGroupDetail,
     DashboardStrategyComparison,
     DashboardStrategyComparisonItem,
     DashboardStrategyEvaluation,
@@ -20,6 +22,8 @@ from ashare_agent.agents.dashboard_query_agent import (
 DashboardDay = DashboardDaySummary
 DashboardRun = DashboardPipelineRun
 DashboardTrends = DashboardTrendSummary
+DashboardStageGroup = DashboardStageRunGroup
+DashboardStageGroupDetail = DashboardStageRunGroupDetail
 DashboardBacktestRun = DashboardBacktest
 DashboardStrategyComparisonResult = DashboardStrategyComparison
 DashboardStrategyComparisonRow = DashboardStrategyComparisonItem

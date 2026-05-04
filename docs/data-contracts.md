@@ -131,11 +131,13 @@ Alembic 迁移创建以下表分组：
 ## Dashboard 查询契约
 
 - `DashboardQueryAgent` 是 dashboard 读取 pipeline 数据的稳定入口。
-- `src/ashare_agent/dashboard.py` 只提供 API 兼容封装：`DashboardQueryService.list_runs()` 委托 `DashboardQueryAgent.list_pipeline_runs()`，趋势查询沿用 `DashboardQueryAgent.trends()`，避免出现两套查询逻辑。
+- `src/ashare_agent/dashboard.py` 只提供 API 兼容封装：`DashboardQueryService.list_runs()` 委托 `DashboardQueryAgent.list_pipeline_runs()`，趋势和阶段组查询沿用 `DashboardQueryAgent`，避免出现两套查询逻辑。
 - dashboard/API/frontend 不直接解析 `payload`；只能消费查询层返回的 DTO。
 - DTO 中日期使用 ISO 字符串，金额和 Decimal 使用字符串，评分使用 `float`，列表字段保持列表。
 - `day_summary(trade_date)` 使用当日最新成功 `pre_market` run 的 watchlist、signals 和 risk decisions；orders、review reports 和 source snapshots 按当日查询；positions 和 portfolio snapshots 使用截至当日的最新状态。
 - DTO 覆盖 pipeline runs、watchlist、signals、LLM pre-market analysis、risk decisions、paper orders、execution events、positions、portfolio snapshot、review report、review metrics、source snapshots、trading calendar、data quality reports、data reliability reports、range trends、strategy comparison、strategy evaluation 和 strategy insight。
+- `list_stage_run_groups(limit)` 只聚合 `run_mode=normal` 的 `pipeline_runs`，分组 key 固定为 `trade_date + stage`；组内按数据库写入顺序倒序排列，返回 `latest_run_id`、`latest_success_run_id`、`member_run_ids`、成功/失败/skipped 次数和失败原因。状态规则为：成功和失败混合显示 `partial_failure`，全部失败显示 `failed`，全部 skipped 显示 `skipped`，有 warning 且无失败显示 `warning`，只有成功显示 `success`。
+- `stage_run_group_detail(trade_date, stage)` 返回该阶段组全部成员 run 及其业务数据；每条 watchlist、signal、LLM analysis、risk decision、paper order、execution event、position、portfolio snapshot、review report、source snapshot、data quality report 和 data reliability report 都保留 `run_id`。盘中阶段组的 `paper_orders` 只读取同组 `intraday_watch` 成员 run，旧 `post_market_review` 订单不进入盘中订单语义。
 - `DashboardDaySummary.llm_analysis` 使用所选交易日最新成功 `pre_market` run 对应的 `llm_analyses` 记录；没有成功盘前 run 或没有 LLM 记录时为 `null`，记录存在但 payload 缺字段或类型错误时显式失败。
 - `DashboardLLMAnalysis` 字段包括 `run_id`、`trade_date`、`model`、`summary`、`key_points`、`risk_notes` 和 `created_at`。DTO 只展示已落库 LLM 审计内容，不在查询时重新调用 LLM。
 - `list_backtests(limit)` 返回最近的 backtest summary run；`strategy_comparison(backtest_ids)` 只比较明确传入的 backtest 批次。

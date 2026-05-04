@@ -4,6 +4,8 @@
 
 dashboard 阶段运行合并已完成：左侧列表按 `trade_date + stage` 合并 normal pipeline runs，同一天同一阶段只显示一个阶段组；阶段详情展示该阶段所有尝试数据，历史数据不删除、不迁移。
 
+本轮修复 dashboard 左侧阶段组展示：`strategy_insight` stage 现在显示为“策略优化”，内部 API 和落库枚举仍保持 `strategy_insight` 不变。
+
 ## 上次停在哪
 
 本轮已完成：

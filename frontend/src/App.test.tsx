@@ -801,6 +801,45 @@ describe("dashboard", () => {
     expect(screen.getByText("分钟线成交依据")).toBeInTheDocument();
   });
 
+  it("renders strategy insight stage groups as strategy optimization", async () => {
+    mockFetch(
+      dayFixture,
+      trendsFixture,
+      strategyComparisonFixture,
+      backtestsFixture,
+      strategyEvaluationsFixture,
+      strategyEvaluationFixture,
+      strategyInsightsFixture,
+      strategyInsightFixture,
+      {
+        stage_run_groups: [
+          {
+            group_id: "2026-04-30:strategy_insight",
+            trade_date: "2026-04-30",
+            stage: "strategy_insight",
+            status: "success",
+            total_run_count: 2,
+            success_count: 2,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "run-strategy-insight",
+            latest_success_run_id: "run-strategy-insight",
+            member_run_ids: ["run-strategy-insight", "run-strategy-insight-old"],
+            failure_reasons: [],
+            created_at: "2026-04-30T08:00:00+00:00",
+          },
+        ],
+      }
+    );
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole("button", { name: /2026-04-30 策略优化 成功/ })
+    ).toBeInTheDocument();
+    expect(screen.queryByText("strategy_insight")).not.toBeInTheDocument();
+  });
+
   it("renders date range filters and trend panels", async () => {
     mockFetch(dayFixture, trendsFixture);
 

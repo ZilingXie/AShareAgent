@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / PostgreSQL Persistence / Paper Trading Lifecycle / Intraday Price Realism / Strategy Params Audit / Strategy Backtest / Strategy Evaluation / Strategy Insight Loop / Read-only Dashboard`
+当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / PostgreSQL Persistence / Paper Trading Lifecycle / Intraday Price Realism / Strategy Params Audit / Strategy Backtest / Strategy Evaluation / Strategy Optimization Loop / Read-only Dashboard`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -30,8 +30,8 @@
 - 模拟成交使用分钟线估价，不使用日线 close 兜底；无法成交时记录可审计失败原因。
 - 用 mock 或真实公开源做多日历史回放，并按策略版本比较胜率、回撤、收益、拒绝率和数据质量失败率。
 - 用显式策略参数 variants 做连续多日评估，统计信号、风控、成交失败、收益和回撤，只输出报告和建议，不自动改生产参数。
-- 用 LLM 做只读复盘解释和策略假设生成，再由确定性代码编译白名单 variants、执行 20/40/60 日评估和 gate 判断，人工再决定是否另起配置变更。
-- 通过只读观察台查看四大看板：总览、交易执行、策略、质量；覆盖资产走势、每日盈亏、pipeline run、观察名单、风控、盘中模拟订单、持仓、复盘、数据源状态、运行可靠性报告、策略评估决策视图和策略假设视图。
+- 用 LLM 做只读复盘解释和策略优化假设生成，再由确定性代码编译白名单 variants、执行 20/40/60 日评估和 gate 判断，人工再决定是否另起配置变更。
+- 通过只读观察台查看四大看板：总览、交易执行、策略、质量；覆盖资产走势、每日盈亏、pipeline run、观察名单、风控、盘中模拟订单、持仓、复盘、数据源状态、运行可靠性报告、策略评估决策视图和策略优化视图。
 
 ## 模块设计
 
@@ -114,7 +114,7 @@ StrategyEvaluationRunner
     └── Markdown 报告和 strategy_evaluation 审计
 
 StrategyInsightAgent
-└── 策略假设闭环
+└── 策略优化闭环
     ├── 读取已落库复盘事实
     ├── LLM 生成结构化假设 JSON
     ├── 白名单参数编译为 variants
@@ -319,7 +319,7 @@ ASHARE_INTRADAY_SOURCE=akshare_em,akshare_sina \
 
 `strategy-evaluate` 读取 `configs/strategy_evaluation.yml`，按 `base_config + variants[].overrides` 生成多组策略参数。默认窗口由 `default_window_trade_days` 控制，当前示例为最近 60 个交易日；也可用 `--start-date` 和 `--end-date` 覆盖。每个 variant 会生成独立 `backtest_id=<evaluation_id>-<variant_id>`，失败日计入失败率并继续后续日期/variant；聚合结果写入 `pipeline_runs(stage=strategy_evaluation)`、`artifacts(artifact_type=strategy_evaluation)` 和 `reports/<evaluation_id>/strategy-evaluation.md`。报告会汇总信号充足度、买入后 2/5/10 个交易日表现、卖出触发原因、数据源失败率、市场环境覆盖和参数差异。该入口强制使用 mock LLM，不接真实交易，不自动修改 `configs/strategy_params.yml`。当 `ASHARE_PROVIDER=akshare` 时，`ASHARE_INTRADAY_SOURCE` 必须包含 `akshare_sina`，用于验收 Sina 分钟线 fallback 链路。
 
-运行策略假设复盘：
+运行策略优化复盘：
 
 ```bash
 ASHARE_PROVIDER=akshare ASHARE_LLM_PROVIDER=openai \
@@ -362,7 +362,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 当前 CLI 会把 DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 写入 `ashare_agent` schema 下的专表，并继续写 `artifacts` 审计表。`pipeline_runs.payload` 会记录策略参数版本和完整参数快照。
 
-策略评估和策略假设复盘都不新增数据库迁移；聚合结果复用 `pipeline_runs` 和 `artifacts`，单个 variant 的明细复用 backtest 已有专表和 `backtest_id` 隔离。`configs/strategy_evaluation.yml` 的 `default_window_trade_days` 必须在 20 到 60 之间，显式 CLI 日期范围优先于该默认窗口。策略假设复盘 payload 会保留 LLM 假设、policy reject 原因、20/40/60 日评估窗口、gate 结果、报告路径和 `manual_status=pending_review`。
+策略评估和策略优化复盘都不新增数据库迁移；聚合结果复用 `pipeline_runs` 和 `artifacts`，单个 variant 的明细复用 backtest 已有专表和 `backtest_id` 隔离。`configs/strategy_evaluation.yml` 的 `default_window_trade_days` 必须在 20 到 60 之间，显式 CLI 日期范围优先于该默认窗口。策略优化复盘 payload 会保留 LLM 假设、policy reject 原因、20/40/60 日评估窗口、gate 结果、报告路径和 `manual_status=pending_review`。
 
 `intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录 `intraday_source`、请求/返回/缺失 symbol、period、timeout、retry 配置和 `source_attempts`。成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。显式链路中的所有分钟线源都不可用时写 failed snapshot 和 failed run；至少一个源正常响应但单个 symbol 无分钟线时 run 可成功，不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
 
@@ -375,7 +375,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`、`/api/dashboard/strategy-insights?limit=50`、`/api/dashboard/strategy-insights/{insight_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径；策略假设 DTO 展示 LLM 假设、白名单编译结果、20/40/60 日 gate 结果和人工复核状态。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`、`/api/dashboard/strategy-insights?limit=50`、`/api/dashboard/strategy-insights/{insight_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径；策略优化 DTO 展示 LLM 假设、白名单编译结果、20/40/60 日 gate 结果和人工复核状态。
 
 前端观察台：
 
@@ -388,7 +388,7 @@ pnpm --dir frontend dev --host 127.0.0.1 --port 5173
 
 - `总览`：账户视角，展示总资产、区间盈亏、每日盈亏、权益曲线、今日交易摘要、当前持仓和收盘复盘摘要。
 - `交易执行`：交易链路视角，展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘。点击左侧任一 `盘前 / 盘中 / 复盘` run 会打开只读阶段详情抽屉；盘前详情包含观察名单、LLM 盘前分析和风控预检查，盘中详情包含模拟订单、成交失败和分钟线成交依据，复盘详情包含组合快照、复盘指标和报告路径。
-- `策略`：策略视角，展示信号趋势、观察名单评分、风控拒绝原因、策略版本对比、策略评估批次、variant 排名、不可推荐原因和策略假设。这里的“信号趋势”表示买入候选信号和风控通过/拒绝，不等于实际买卖订单；策略评估只展示历史模拟指标，不构成投资建议，不自动修改策略参数；策略假设只读展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果和 `待复核` 状态，不提供接受/拒绝按钮。
+- `策略`：策略视角，展示信号趋势、观察名单评分、风控拒绝原因、策略版本对比、策略评估批次、variant 排名、不可推荐原因和策略优化。这里的“信号趋势”表示买入候选信号和风控通过/拒绝，不等于实际买卖订单；策略评估只展示历史模拟指标，不构成投资建议，不自动修改策略参数；策略优化只读展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果和 `待复核` 状态，不提供接受/拒绝按钮。
 - `质量`：数据与运行视角，展示数据质量趋势、DataQuality 报告、运行可靠性、分钟线源健康、数据源状态和运行详情。质量失败会影响策略可信度，但不会被静默兜底；失败原因默认摘要展示，完整错误保留在 hover/title 或阶段详情中。
 
 所选单日的“盘中模拟订单”只展示同日成功 `intraday_watch` run 的订单，历史盘后订单不会展示到该区域。订单表会显示成交依据、价格时间点、估价方法、是否使用日线兜底和真实交易标记；“成交失败”区域展示分钟线缺失、停牌或涨跌停导致的 rejected execution events；“分钟线源健康”区域展示每个 source/symbol 的尝试结果、retry、timeout 和最后错误。`PaperOrder.is_real_trade` 会在页面中显式展示；正常模拟订单必须是 `False`，任何当前盘中订单出现 `True` 都视为安全异常。

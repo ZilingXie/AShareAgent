@@ -717,14 +717,16 @@ describe("dashboard", () => {
     expect(screen.queryByText("真实下单")).not.toBeInTheDocument();
   });
 
-  it("renders the read-only strategy hypothesis view", async () => {
+  it("renders the read-only strategy optimization view", async () => {
     mockFetch(dayFixture, trendsFixture, strategyComparisonFixture, backtestsFixture);
 
     render(<App />);
 
     fireEvent.click(await screen.findByRole("button", { name: "策略" }));
 
-    expect((await screen.findAllByText("策略假设")).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("策略优化")).length).toBeGreaterThan(0);
+    expect(screen.getByText("策略优化批次")).toBeInTheDocument();
+    expect(screen.queryByText("策略假设")).not.toBeInTheDocument();
     expect(screen.getByText("insight-real")).toBeInTheDocument();
     expect(screen.getAllByText("待复核").length).toBeGreaterThan(0);
     expect(screen.getAllByText("近期信号偏少").length).toBeGreaterThan(0);

@@ -235,7 +235,7 @@ class HypothesisVariantBuilder:
         if param == "risk.max_positions":
             candidate = _int_between(value, param, minimum=1, maximum=5)
             return param, {"risk": {"max_positions": candidate}}
-        raise ValueError(f"参数不在策略假设白名单: {param}")
+        raise ValueError(f"参数不在策略优化白名单: {param}")
 
 
 class StrategyInsightGate:

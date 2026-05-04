@@ -2,7 +2,7 @@
 
 ## 当前正在做什么
 
-策略假设闭环第一版和 dashboard 四大看板重组已完成：`StrategyInsightAgent` 只读复盘事实生成策略假设，dashboard 前端改为 `总览 / 交易执行 / 策略 / 质量`，并复用现有 DTO 打开 `盘前 / 盘中 / 复盘` 阶段详情抽屉。
+策略优化闭环第一版和 dashboard 四大看板重组已完成：`StrategyInsightAgent` 只读复盘事实生成优化假设，dashboard 前端改为 `总览 / 交易执行 / 策略 / 质量`，并复用现有 DTO 打开 `盘前 / 盘中 / 复盘` 阶段详情抽屉。
 
 ## 上次停在哪
 
@@ -67,7 +67,7 @@
 - 已用真实 AKShare provider + mock LLM 跑通 `eval-real-60d-20260501-r4`：窗口为 2026-01-28 到 2026-04-30，共 60 个交易日、3 个 variant，全部 succeeded_days=60、failed_days=0；报告已生成到 `reports/eval-real-60d-20260501-r4/strategy-evaluation.md`。
 - 为支撑长窗口验收，`PostgresRepository` 已增加按 `backtest_id` 过滤 payload 的读取接口，并将结构化交易日历保存改为分批 bulk upsert，避免策略评估汇总和多日回放在真实 PostgreSQL 上反复全表扫描或单行 upsert。
 - 本轮新增 `StrategyInsightAgent`、`HypothesisVariantBuilder`、`StrategyInsightGate` 和 `ashare strategy-insight`：LLM 只生成 hypotheses JSON，白名单编译后复用 20/40/60 日评估窗口，结果写入 `pipeline_runs(stage=strategy_insight)`、`artifacts(artifact_type=strategy_insight)` 和 `reports/<insight_id>/strategy-insights.md`。
-- dashboard/API/frontend 已新增“策略假设”只读视图，展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果、gate 结论和 `待复核` 状态；不提供接受/拒绝按钮，不自动修改生产策略配置。
+- dashboard/API/frontend 已新增“策略优化”只读视图，展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果、gate 结论和 `待复核` 状态；不提供接受/拒绝按钮，不自动修改生产策略配置。
 
 ## 近期关键决定和原因
 
@@ -93,7 +93,7 @@
 - strategy-evaluate 同样强制使用 mock LLM，不修改 `configs/strategy_params.yml`；当 `ASHARE_PROVIDER=akshare` 时要求 `ASHARE_INTRADAY_SOURCE` 包含 `akshare_sina`，确保真实分钟线 fallback 链路被纳入评估。
 - 策略评估运行入口只输出历史模拟指标和人工复核建议，不做自动参数搜索，不接真实交易；默认窗口用最近 60 个交易日，CLI 显式日期范围优先。
 - 策略评估 dashboard 只解释历史模拟结果，不读取 Markdown 正文，不重新计算 backtest，不自动修改策略参数，也不把评估结论包装成实盘建议；本轮不改 dashboard 前端。
-- 策略假设闭环采用“LLM 提假设、代码验证、人来批准”：LLM 只能输出解释和候选假设，`HypothesisVariantBuilder` 只允许白名单参数进入 variants，采纳参数必须后续人工另起变更修改 `configs/strategy_params.yml`。
+- 策略优化闭环采用“LLM 提假设、代码验证、人来批准”：LLM 只能输出解释和候选假设，`HypothesisVariantBuilder` 只允许白名单参数进入 variants，采纳参数必须后续人工另起变更修改 `configs/strategy_params.yml`。
 - dashboard/API/frontend 后续只能依赖 DashboardQueryAgent DTO；查询层内部可读 payload，但遇到坏数据或真实交易标记必须显式失败。
 - 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
 - `daily-run` 遇到非交易日默认写 skipped 审计和可靠性报告，不进入策略分析，也不更新模拟订单或持仓。
@@ -111,6 +111,6 @@
 
 ## 下一步
 
-- 当前 `codex/strategy-insight-loop` 已通过后端、前端、静态检查和 mock CLI smoke 验证；合并回 `main` 后可作为后续策略假设复盘和人工参数采纳的基线。
+- 当前 `codex/strategy-insight-loop` 已通过后端、前端、静态检查和 mock CLI smoke 验证；合并回 `main` 后可作为后续策略优化复盘和人工参数采纳的基线。
 - 下一步用真实 provider 跑 `ashare strategy-insight`，在 dashboard 观察 hypotheses、policy reject、20/40/60 日 gate 结果；如果人工决定采纳，另起分支修改 `configs/strategy_params.yml`。
 - 继续保持 v1 只做模拟交易：不接真实券商、不自动实盘下单、不自动修改生产策略参数。

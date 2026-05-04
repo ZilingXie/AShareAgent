@@ -433,7 +433,7 @@ export default function App(): JSX.Element {
           <div className="loading">策略评估加载中</div>
         ) : null}
         {activeView === "strategy" && strategyInsightLoading ? (
-          <div className="loading">策略假设加载中</div>
+          <div className="loading">策略优化加载中</div>
         ) : null}
 
         {activeView === "overview" ? (
@@ -632,7 +632,7 @@ function StrategyBoard({
         />
       </Section>
 
-      <Section icon={BarChart3} title="策略假设批次">
+      <Section icon={BarChart3} title="策略优化批次">
         <StrategyInsightBatchList
           insights={insights}
           onSelect={onSelectInsight}
@@ -1031,7 +1031,7 @@ function StrategyInsightBatchList({
   selectedInsightId: string | null;
 }): JSX.Element {
   if (insights.length === 0) {
-    return <EmptyState text="暂无策略假设" />;
+    return <EmptyState text="暂无策略优化" />;
   }
   return (
     <div className="batch-list">
@@ -1193,14 +1193,14 @@ function StrategyInsightDecisionView({
   insights: DashboardStrategyInsight[];
 }): JSX.Element {
   if (insights.length === 0) {
-    return <EmptyState text="暂无策略假设" />;
+    return <EmptyState text="暂无策略优化" />;
   }
   if (!insight) {
-    return <EmptyState text="暂无策略假设详情" />;
+    return <EmptyState text="暂无策略优化详情" />;
   }
   return (
     <div className="strategy-evaluation-grid">
-      <Section icon={BarChart3} title="策略假设">
+      <Section icon={BarChart3} title="策略优化">
         <div className="strategy-summary">
           <p className="summary-text">{insight.summary}</p>
           <dl className="metrics strategy-metrics">

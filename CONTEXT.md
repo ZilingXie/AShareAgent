@@ -2,9 +2,9 @@
 
 ## 当前正在做什么
 
-dashboard 阶段运行合并已完成：左侧列表按 `trade_date + stage` 合并 normal pipeline runs，同一天同一阶段只显示一个阶段组；阶段详情展示该阶段所有尝试数据，历史数据不删除、不迁移。
+dashboard 左侧阶段组展示正在收尾：阶段组继续按 `trade_date + stage` 合并 normal pipeline runs，同时改为按日期由近到远分段展示；每个日期内固定为 `盘前 -> 盘中 -> 复盘 -> 策略优化`。
 
-本轮修复 dashboard 左侧阶段组展示：`strategy_insight` stage 现在显示为“策略优化”，内部 API 和落库枚举仍保持 `strategy_insight` 不变。
+`strategy_insight` stage 在 UI 中显示为“策略优化”，内部 API 和落库枚举仍保持 `strategy_insight` 不变。
 
 ## 上次停在哪
 
@@ -71,7 +71,8 @@ dashboard 阶段运行合并已完成：左侧列表按 `trade_date + stage` 合
 - 本轮新增 `StrategyInsightAgent`、`HypothesisVariantBuilder`、`StrategyInsightGate` 和 `ashare strategy-insight`：LLM 只生成 hypotheses JSON，白名单编译后复用 20/40/60 日评估窗口，结果写入 `pipeline_runs(stage=strategy_insight)`、`artifacts(artifact_type=strategy_insight)` 和 `reports/<insight_id>/strategy-insights.md`。
 - dashboard/API/frontend 已新增“策略优化”只读视图，展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果、gate 结论和 `待复核` 状态；不提供接受/拒绝按钮，不自动修改生产策略配置。
 - 本轮新增 dashboard 阶段运行组：`DashboardQueryAgent.list_stage_run_groups()` 和 `stage_run_group_detail()` 按 `trade_date + stage` 聚合 normal runs，混合成功/失败显示 `partial_failure`，详情保留全部成员 run 和每条业务数据的 `run_id`。
-- 前端左侧列表已改为阶段组卡片；点击 `盘前 / 盘中 / 复盘` 阶段组打开只读详情抽屉，盘前展示观察名单/信号/LLM/风控，盘中展示订单/成交失败/分钟线源健康/持仓/资金快照，复盘展示复盘报告和报告路径。
+- 前端左侧列表已改为阶段组卡片；点击 `盘前 / 盘中 / 复盘 / 策略优化` 阶段组打开只读详情抽屉，盘前展示观察名单/信号/LLM/风控，盘中展示订单/成交失败/分钟线源健康/持仓/资金快照，复盘展示复盘报告和报告路径。
+- 本轮正在修复左侧阶段组排序：日期由近到远，每个日期内固定为 `盘前 -> 盘中 -> 复盘 -> 策略优化`，未知 stage 保留在已知 stage 之后。
 
 ## 近期关键决定和原因
 
@@ -116,6 +117,6 @@ dashboard 阶段运行合并已完成：左侧列表按 `trade_date + stage` 合
 
 ## 下一步
 
-- 当前 `codex/dashboard-run-groups` 已通过后端、前端和静态检查验证；合并后 dashboard 左侧不会再把同日同阶段多次 run 展示成重复卡片。
-- 下一步用真实 provider 观察 2026-04-29 等历史日期的阶段组展示，确认“部分失败”和阶段详情里的全部尝试数据符合人工排查习惯。
+- 当前 `codex/dashboard-sidebar-stage-order` 正在修复 dashboard 左侧阶段组顺序；目标是 2026-04-30 先于 2026-04-29，并在每个日期下按 `盘前 / 盘中 / 复盘 / 策略优化` 展示。
+- 下一步用真实 provider 观察 2026-04-29、2026-04-30 等历史日期的阶段组展示，确认日期分段、部分失败和阶段详情里的全部尝试数据符合人工排查习惯。
 - 继续保持 v1 只做模拟交易：不接真实券商、不自动实盘下单、不自动修改生产策略参数。

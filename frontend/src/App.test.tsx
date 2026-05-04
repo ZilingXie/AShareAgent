@@ -775,11 +775,9 @@ describe("dashboard", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "交易执行" }));
 
-    expect(
-      await screen.findByRole("button", { name: /2026-04-29 盘前 部分失败/ })
-    ).toBeInTheDocument();
-    const preMarketGroup = screen.getByRole("button", { name: /2026-04-29 盘前/ });
-    expect(screen.getAllByRole("button", { name: /2026-04-29 盘前/ })).toHaveLength(1);
+    expect(await screen.findByRole("button", { name: /盘前 部分失败/ })).toBeInTheDocument();
+    const preMarketGroup = screen.getByRole("button", { name: /盘前 部分失败/ });
+    expect(screen.getAllByRole("button", { name: /盘前 部分失败/ })).toHaveLength(1);
     expect(within(preMarketGroup).getByText("2 次尝试")).toBeInTheDocument();
     expect(within(preMarketGroup).getByText("失败 1")).toBeInTheDocument();
     expect(await screen.findByText("盘前计划")).toBeInTheDocument();
@@ -790,7 +788,7 @@ describe("dashboard", () => {
     expect(screen.getByText("风控通过后买入")).toBeInTheDocument();
     expect(screen.getAllByText("False").length).toBeGreaterThanOrEqual(4);
 
-    fireEvent.click(screen.getByRole("button", { name: /2026-04-29 盘中 成功/ }));
+    fireEvent.click(screen.getByRole("button", { name: /盘中 成功/ }));
 
     expect(await screen.findByRole("dialog", { name: "阶段详情" })).toBeInTheDocument();
     expect(screen.getByText("盘中详情")).toBeInTheDocument();
@@ -834,10 +832,175 @@ describe("dashboard", () => {
 
     render(<App />);
 
-    expect(
-      await screen.findByRole("button", { name: /2026-04-30 策略优化 成功/ })
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /策略优化 成功/ })).toBeInTheDocument();
     expect(screen.queryByText("strategy_insight")).not.toBeInTheDocument();
+  });
+
+  it("groups sidebar stage runs by descending date and fixed stage order", async () => {
+    mockFetch(
+      dayFixture,
+      trendsFixture,
+      strategyComparisonFixture,
+      backtestsFixture,
+      strategyEvaluationsFixture,
+      strategyEvaluationFixture,
+      strategyInsightsFixture,
+      strategyInsightFixture,
+      {
+        stage_run_groups: [
+          {
+            group_id: "2026-04-29:post_market_review",
+            trade_date: "2026-04-29",
+            stage: "post_market_review",
+            status: "success",
+            total_run_count: 5,
+            success_count: 5,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "review-0429",
+            latest_success_run_id: "review-0429",
+            member_run_ids: ["review-0429"],
+            failure_reasons: [],
+            created_at: "2026-04-29T18:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-30:strategy_insight",
+            trade_date: "2026-04-30",
+            stage: "strategy_insight",
+            status: "success",
+            total_run_count: 2,
+            success_count: 2,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "strategy-0430",
+            latest_success_run_id: "strategy-0430",
+            member_run_ids: ["strategy-0430"],
+            failure_reasons: [],
+            created_at: "2026-04-30T20:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-29:pre_market",
+            trade_date: "2026-04-29",
+            stage: "pre_market",
+            status: "partial_failure",
+            total_run_count: 15,
+            success_count: 13,
+            failed_count: 2,
+            skipped_count: 0,
+            latest_run_id: "pre-0429",
+            latest_success_run_id: "pre-0429",
+            member_run_ids: ["pre-0429"],
+            failure_reasons: ["必需数据源失败: market_bars"],
+            created_at: "2026-04-29T08:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-30:post_market_review",
+            trade_date: "2026-04-30",
+            stage: "post_market_review",
+            status: "success",
+            total_run_count: 1,
+            success_count: 1,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "review-0430",
+            latest_success_run_id: "review-0430",
+            member_run_ids: ["review-0430"],
+            failure_reasons: [],
+            created_at: "2026-04-30T18:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-30:pre_market",
+            trade_date: "2026-04-30",
+            stage: "pre_market",
+            status: "success",
+            total_run_count: 1,
+            success_count: 1,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "pre-0430",
+            latest_success_run_id: "pre-0430",
+            member_run_ids: ["pre-0430"],
+            failure_reasons: [],
+            created_at: "2026-04-30T08:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-29:strategy_insight",
+            trade_date: "2026-04-29",
+            stage: "strategy_insight",
+            status: "success",
+            total_run_count: 1,
+            success_count: 1,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "strategy-0429",
+            latest_success_run_id: "strategy-0429",
+            member_run_ids: ["strategy-0429"],
+            failure_reasons: [],
+            created_at: "2026-04-29T20:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-30:intraday_watch",
+            trade_date: "2026-04-30",
+            stage: "intraday_watch",
+            status: "success",
+            total_run_count: 1,
+            success_count: 1,
+            failed_count: 0,
+            skipped_count: 0,
+            latest_run_id: "intraday-0430",
+            latest_success_run_id: "intraday-0430",
+            member_run_ids: ["intraday-0430"],
+            failure_reasons: [],
+            created_at: "2026-04-30T10:00:00+08:00",
+          },
+          {
+            group_id: "2026-04-29:intraday_watch",
+            trade_date: "2026-04-29",
+            stage: "intraday_watch",
+            status: "partial_failure",
+            total_run_count: 8,
+            success_count: 5,
+            failed_count: 3,
+            skipped_count: 0,
+            latest_run_id: "intraday-0429",
+            latest_success_run_id: "intraday-0429",
+            member_run_ids: ["intraday-0429"],
+            failure_reasons: ["数据质量检查失败"],
+            created_at: "2026-04-29T10:00:00+08:00",
+          },
+        ],
+      }
+    );
+
+    render(<App />);
+
+    const sidebar = screen.getByLabelText("Dashboard navigation");
+    await within(sidebar).findByRole("heading", { name: "2026-04-30" });
+
+    const dateSections = within(sidebar).getAllByRole("group");
+    expect(
+      dateSections.map((section) => within(section).getByRole("heading").textContent)
+    ).toEqual(["2026-04-30", "2026-04-29"]);
+    expect(
+      within(dateSections[0])
+        .getAllByRole("button")
+        .map((button) => button.textContent)
+    ).toEqual([
+      expect.stringContaining("盘前"),
+      expect.stringContaining("盘中"),
+      expect.stringContaining("复盘"),
+      expect.stringContaining("策略优化"),
+    ]);
+    expect(
+      within(dateSections[1])
+        .getAllByRole("button")
+        .map((button) => button.textContent)
+    ).toEqual([
+      expect.stringContaining("盘前"),
+      expect.stringContaining("盘中"),
+      expect.stringContaining("复盘"),
+      expect.stringContaining("策略优化"),
+    ]);
   });
 
   it("renders date range filters and trend panels", async () => {

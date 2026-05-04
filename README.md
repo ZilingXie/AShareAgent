@@ -375,7 +375,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/stage-run-groups?limit=200`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/days/{trade_date}/stage-groups/{stage}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`、`/api/dashboard/strategy-insights?limit=50`、`/api/dashboard/strategy-insights/{insight_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。阶段组 DTO 按 `trade_date + stage` 合并 normal pipeline runs，左侧概览同一天最多展示一个盘前、一个盘中、一个复盘；详情 DTO 保留所有成员 run 和每条业务数据的 `run_id`，用于追溯多次尝试。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径；策略优化 DTO 展示 LLM 假设、白名单编译结果、20/40/60 日 gate 结果和人工复核状态。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/stage-run-groups?limit=200`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/days/{trade_date}/stage-groups/{stage}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`、`/api/dashboard/strategy-insights?limit=50`、`/api/dashboard/strategy-insights/{insight_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。阶段组 DTO 按 `trade_date + stage` 合并 normal pipeline runs，列表按日期由近到远排序，同一天固定为盘前、盘中、复盘、策略优化；详情 DTO 保留所有成员 run 和每条业务数据的 `run_id`，用于追溯多次尝试。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径；策略优化 DTO 展示 LLM 假设、白名单编译结果、20/40/60 日 gate 结果和人工复核状态。
 
 前端观察台：
 
@@ -387,7 +387,7 @@ pnpm --dir frontend dev --host 127.0.0.1 --port 5173
 前端只通过 API 读取 dashboard DTO，不直接连接 PostgreSQL，不提供任何真实交易、模拟交易执行或自动调参按钮。页面支持四大只读看板和日期范围筛选：
 
 - `总览`：账户视角，展示总资产、区间盈亏、每日盈亏、权益曲线、今日交易摘要、当前持仓和收盘复盘摘要。
-- `交易执行`：交易链路视角，展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘。左侧列表按 `trade_date + stage` 合并同阶段多次尝试；成功和失败混合时显示“部分失败”。点击任一 `盘前 / 盘中 / 复盘` 阶段组会打开只读阶段详情抽屉，展示该组全部成员 run 和全部尝试数据；盘前详情包含观察名单、信号、LLM 盘前分析和风控预检查，盘中详情包含模拟订单、成交失败、分钟线成交依据、持仓和资金快照，复盘详情包含组合快照、复盘报告和报告路径。
+- `交易执行`：交易链路视角，展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘。左侧列表按 `trade_date + stage` 合并同阶段多次尝试，日期由近到远分段展示，每个日期内固定为 `盘前 / 盘中 / 复盘 / 策略优化`；成功和失败混合时显示“部分失败”。点击任一阶段组会打开只读阶段详情抽屉，展示该组全部成员 run 和全部尝试数据；盘前详情包含观察名单、信号、LLM 盘前分析和风控预检查，盘中详情包含模拟订单、成交失败、分钟线成交依据、持仓和资金快照，复盘详情包含组合快照、复盘报告和报告路径。
 - `策略`：策略视角，展示信号趋势、观察名单评分、风控拒绝原因、策略版本对比、策略评估批次、variant 排名、不可推荐原因和策略优化。这里的“信号趋势”表示买入候选信号和风控通过/拒绝，不等于实际买卖订单；策略评估只展示历史模拟指标，不构成投资建议，不自动修改策略参数；策略优化只读展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果和 `待复核` 状态，不提供接受/拒绝按钮。
 - `质量`：数据与运行视角，展示数据质量趋势、DataQuality 报告、运行可靠性、分钟线源健康、数据源状态和运行详情。质量失败会影响策略可信度，但不会被静默兜底；失败原因默认摘要展示，完整错误保留在 hover/title 或阶段详情中。
 

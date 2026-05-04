@@ -113,10 +113,28 @@ h3 {
 .run-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 14px;
+}
+
+.run-date-section {
+  display: grid;
+  gap: 8px;
+}
+
+.run-date-heading {
+  color: #dbe6ed;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0;
+  margin: 2px 0 0;
+}
+
+.run-date-items {
+  display: grid;
+  gap: 8px;
 }
 
 .view-toggle {
@@ -176,6 +194,12 @@ h3 {
   display: flex;
   font-size: 12px;
   gap: 8px;
+}
+
+.run-meta.primary {
+  color: #eef3f5;
+  font-size: 14px;
+  font-weight: 750;
 }
 
 .failure,
@@ -833,9 +857,12 @@ td {
   }
 
   .run-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    display: flex;
     max-height: 260px;
+  }
+
+  .run-date-items {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
 
   .dashboard-grid,

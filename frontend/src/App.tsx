@@ -70,6 +70,13 @@ const stageLabels: Record<string, string> = {
   strategy_insight: "策略优化",
 };
 
+const stageOrder: Record<string, number> = {
+  pre_market: 0,
+  intraday_watch: 1,
+  post_market_review: 2,
+  strategy_insight: 3,
+};
+
 const statusLabels: Record<string, string> = {
   success: "成功",
   failed: "失败",
@@ -133,14 +140,15 @@ export default function App(): JSX.Element {
       const loadedBacktests = await fetchBacktests(20);
       const loadedEvaluations = await fetchStrategyEvaluations(50);
       const loadedInsights = await fetchStrategyInsights(50);
-      const tradeDates = [...new Set(loadedStageRunGroups.map((group) => group.trade_date))].sort();
+      const sortedStageRunGroups = sortStageRunGroups(loadedStageRunGroups);
+      const tradeDates = [...new Set(sortedStageRunGroups.map((group) => group.trade_date))].sort();
       setRuns(loadedRuns);
-      setStageRunGroups(loadedStageRunGroups);
-      setSelectedDate((current) => current ?? loadedStageRunGroups[0]?.trade_date ?? null);
+      setStageRunGroups(sortedStageRunGroups);
+      setSelectedDate((current) => current ?? sortedStageRunGroups[0]?.trade_date ?? null);
       setSelectedStageGroupId((current) =>
-        current && loadedStageRunGroups.some((group) => group.group_id === current)
+        current && sortedStageRunGroups.some((group) => group.group_id === current)
           ? current
-          : loadedStageRunGroups[0]?.group_id ?? null
+          : sortedStageRunGroups[0]?.group_id ?? null
       );
       setRangeStart((current) => current ?? tradeDates[0] ?? null);
       setRangeEnd((current) => current ?? tradeDates[tradeDates.length - 1] ?? null);
@@ -316,16 +324,23 @@ export default function App(): JSX.Element {
 
   const visibleStageRunGroups = useMemo(
     () =>
-      stageRunGroups.filter((group) => {
-        if (rangeStart && group.trade_date < rangeStart) {
-          return false;
-        }
-        if (rangeEnd && group.trade_date > rangeEnd) {
-          return false;
-        }
-        return true;
-      }),
+      sortStageRunGroups(
+        stageRunGroups.filter((group) => {
+          if (rangeStart && group.trade_date < rangeStart) {
+            return false;
+          }
+          if (rangeEnd && group.trade_date > rangeEnd) {
+            return false;
+          }
+          return true;
+        })
+      ),
     [rangeEnd, rangeStart, stageRunGroups]
+  );
+
+  const visibleStageRunSections = useMemo(
+    () => groupStageRunGroupsByDate(visibleStageRunGroups),
+    [visibleStageRunGroups]
   );
 
   useEffect(() => {
@@ -432,28 +447,43 @@ export default function App(): JSX.Element {
           {visibleStageRunGroups.length === 0 && !loading ? (
             <EmptyState text="暂无 pipeline run" />
           ) : null}
-          {visibleStageRunGroups.map((group) => (
-            <button
-              className={`run-item ${group.group_id === selectedStageGroupId ? "selected" : ""}`}
-              key={group.group_id}
-              onClick={() => selectStageGroup(group)}
-              type="button"
+          {visibleStageRunSections.map((section) => (
+            <section
+              aria-labelledby={`run-date-${section.tradeDate}`}
+              className="run-date-section"
+              key={section.tradeDate}
+              role="group"
             >
-              <span className="run-date">{group.trade_date}</span>
-              <span className="run-meta">
-                {stageLabels[group.stage] ?? group.stage}
-                <StatusBadge status={group.status} />
-              </span>
-              <span className="run-meta">
-                <span>{group.total_run_count} 次尝试</span>
-                {group.failed_count > 0 ? <span>失败 {group.failed_count}</span> : null}
-              </span>
-              {group.failure_reasons.length > 0 ? (
-                <span className="failure" title={group.failure_reasons.join("; ")}>
-                  {summarizeFailure(group.failure_reasons.join("; "))}
-                </span>
-              ) : null}
-            </button>
+              <h2 className="run-date-heading" id={`run-date-${section.tradeDate}`}>
+                {section.tradeDate}
+              </h2>
+              <div className="run-date-items">
+                {section.groups.map((group) => (
+                  <button
+                    className={`run-item ${
+                      group.group_id === selectedStageGroupId ? "selected" : ""
+                    }`}
+                    key={group.group_id}
+                    onClick={() => selectStageGroup(group)}
+                    type="button"
+                  >
+                    <span className="run-meta primary">
+                      {stageLabels[group.stage] ?? group.stage}
+                      <StatusBadge status={group.status} />
+                    </span>
+                    <span className="run-meta">
+                      <span>{group.total_run_count} 次尝试</span>
+                      {group.failed_count > 0 ? <span>失败 {group.failed_count}</span> : null}
+                    </span>
+                    {group.failure_reasons.length > 0 ? (
+                      <span className="failure" title={group.failure_reasons.join("; ")}>
+                        {summarizeFailure(group.failure_reasons.join("; "))}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       </aside>
@@ -1643,6 +1673,51 @@ function StrategyComparisonPanel({
       </Section>
     </div>
   );
+}
+
+type StageRunGroupSection = {
+  tradeDate: string;
+  groups: DashboardStageRunGroup[];
+};
+
+function sortStageRunGroups(groups: DashboardStageRunGroup[]): DashboardStageRunGroup[] {
+  return [...groups].sort(compareStageRunGroups);
+}
+
+function compareStageRunGroups(
+  left: DashboardStageRunGroup,
+  right: DashboardStageRunGroup
+): number {
+  const tradeDateOrder = right.trade_date.localeCompare(left.trade_date);
+  if (tradeDateOrder !== 0) {
+    return tradeDateOrder;
+  }
+  const stageOrderDelta = stageRank(left.stage) - stageRank(right.stage);
+  if (stageOrderDelta !== 0) {
+    return stageOrderDelta;
+  }
+  const createdOrder = (right.created_at ?? "").localeCompare(left.created_at ?? "");
+  if (createdOrder !== 0) {
+    return createdOrder;
+  }
+  return left.group_id.localeCompare(right.group_id);
+}
+
+function stageRank(stage: string): number {
+  return stageOrder[stage] ?? Object.keys(stageOrder).length;
+}
+
+function groupStageRunGroupsByDate(groups: DashboardStageRunGroup[]): StageRunGroupSection[] {
+  const sections: StageRunGroupSection[] = [];
+  for (const group of groups) {
+    const lastSection = sections[sections.length - 1];
+    if (lastSection?.tradeDate === group.trade_date) {
+      lastSection.groups.push(group);
+      continue;
+    }
+    sections.push({ tradeDate: group.trade_date, groups: [group] });
+  }
+  return sections;
 }
 
 function uniqueStrings(values: string[]): string[] {

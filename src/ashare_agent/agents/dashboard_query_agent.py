@@ -13,6 +13,13 @@ from ashare_agent.repository import PayloadRecord
 
 DashboardRowDto = TypeVar("DashboardRowDto")
 
+_STAGE_RUN_GROUP_ORDER = {
+    "pre_market": 0,
+    "intraday_watch": 1,
+    "post_market_review": 2,
+    "strategy_insight": 3,
+}
+
 
 class DashboardQueryRepository(Protocol):
     def payload_rows(
@@ -624,11 +631,7 @@ class DashboardQueryAgent:
             self._stage_run_group(trade_day, stage, group_rows)
             for (trade_day, stage), group_rows in grouped.items()
         ]
-        return sorted(
-            groups,
-            key=lambda group: self._latest_group_row_id(group.member_run_ids),
-            reverse=True,
-        )[:limit]
+        return sorted(groups, key=self._stage_run_group_sort_key)[:limit]
 
     def stage_run_group_detail(
         self,
@@ -1158,6 +1161,18 @@ class DashboardQueryAgent:
                 if _row_run_id(row, "pipeline_runs") in member_run_ids
             ),
             default=0,
+        )
+
+    def _stage_run_group_sort_key(self, group: DashboardStageRunGroup) -> tuple[int, int, int]:
+        trade_day = date.fromisoformat(group.trade_date)
+        stage_order = _STAGE_RUN_GROUP_ORDER.get(
+            group.stage,
+            len(_STAGE_RUN_GROUP_ORDER),
+        )
+        return (
+            -trade_day.toordinal(),
+            stage_order,
+            -self._latest_group_row_id(group.member_run_ids),
         )
 
     def _rows_by_member_run(

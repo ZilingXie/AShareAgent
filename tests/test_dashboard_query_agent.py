@@ -532,6 +532,82 @@ def test_dashboard_query_groups_stage_runs_and_preserves_all_attempts() -> None:
     assert {analysis.run_id for analysis in detail.llm_analyses} == {"pre-success-old"}
 
 
+def test_dashboard_stage_groups_are_sorted_by_trade_date_and_stage_order() -> None:
+    repository = InMemoryRepository()
+    trade_date = date(2026, 4, 29)
+    next_trade_date = date(2026, 4, 30)
+
+    # Save in a deliberately noisy order. The dashboard must not inherit row-id order.
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=trade_date, run_id="review-0429"),
+        "post_market_review",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=next_trade_date, run_id="review-0430"),
+        "post_market_review",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=trade_date, run_id="strategy-0429"),
+        "strategy_insight",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=trade_date, run_id="intraday-0429"),
+        "intraday_watch",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=trade_date, run_id="pre-0429"),
+        "pre_market",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=next_trade_date, run_id="strategy-0430"),
+        "strategy_insight",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=next_trade_date, run_id="pre-0430"),
+        "pre_market",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=next_trade_date, run_id="unknown-0430"),
+        "custom_stage",
+        "success",
+        {},
+    )
+    repository.save_pipeline_run(
+        PipelineRunContext(trade_date=next_trade_date, run_id="intraday-0430"),
+        "intraday_watch",
+        "success",
+        {},
+    )
+
+    groups = DashboardQueryAgent(repository).list_stage_run_groups(limit=20)
+
+    assert [(group.trade_date, group.stage) for group in groups] == [
+        ("2026-04-30", "pre_market"),
+        ("2026-04-30", "intraday_watch"),
+        ("2026-04-30", "post_market_review"),
+        ("2026-04-30", "strategy_insight"),
+        ("2026-04-30", "custom_stage"),
+        ("2026-04-29", "pre_market"),
+        ("2026-04-29", "intraday_watch"),
+        ("2026-04-29", "post_market_review"),
+        ("2026-04-29", "strategy_insight"),
+    ]
+
+
 def test_dashboard_stage_group_detail_filters_legacy_post_orders() -> None:
     repository = InMemoryRepository()
     trade_date = date(2026, 4, 29)

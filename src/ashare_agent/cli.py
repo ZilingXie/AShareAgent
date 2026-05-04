@@ -264,7 +264,7 @@ def strategy_insight(
     except (DataProviderError, ValueError) as exc:
         raise typer.BadParameter(str(exc)) from exc
     typer.echo(
-        "策略假设复盘完成: "
+        "策略优化复盘完成: "
         f"{result.payload['insight_id']}, "
         f"报告 {result.payload['report_path']}"
     )

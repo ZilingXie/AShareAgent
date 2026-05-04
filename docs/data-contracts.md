@@ -1,6 +1,6 @@
 # AShareAgent 数据契约
 
-当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、strategy-evaluate 聚合审计、strategy-insight 假设审计、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO、策略评估 DTO、策略假设 DTO 和 dashboard API DTO。
+当前状态：已落地第一版 domain models、provider 契约、真实 DataCollector 入口、分钟线成交估价审计、DataQualityAgent 质量报告、DataReliabilityAgent 运行可靠性报告、结构化交易日历、PostgreSQL schema、核心 pipeline 持久化、策略参数版本审计、策略实验 Markdown 报告、backtest 状态隔离、strategy-evaluate 聚合审计、strategy-insight 假设审计、DashboardQueryAgent 只读 DTO 契约、LLM 盘前分析 DTO、复盘指标 DTO、日期范围趋势 DTO、策略对比 DTO、策略评估 DTO、策略优化 DTO 和 dashboard API DTO。
 
 ## DataProvider 原则
 
@@ -148,7 +148,7 @@ Alembic 迁移创建以下表分组：
 - 策略评估 payload 缺 `variants`、variant 不是 object、关键数字字段无法解析、recommendation 结构非法等情况必须显式失败，不能返回部分默认 DTO。
 - `list_strategy_insights(limit)` 返回最近的 `pipeline_runs(stage=strategy_insight, run_mode=normal)` 批次，按 `insight_id` 保留最新记录；`strategy_insight(insight_id)` 返回单个批次详情，找不到时返回 `null`，由 API 转为 404。
 - `DashboardStrategyInsight` 字段包括 `insight_id`、`trade_date`、provider、`llm_model`、`summary`、`attribution`、`hypotheses`、`experiments`、`evaluation_windows`、`recommended_variant_ids`、`manual_status`、`report_path` 和 `created_at`。`DashboardStrategyInsightExperiment` 必须保留 policy 状态、拒绝原因和 overrides；`DashboardStrategyInsightWindow` 必须保留各窗口通过/失败 variant 和失败原因。查询层不重新调用 LLM、不重新执行评估、不读取 Markdown 正文。
-- 策略假设 payload 缺 `insight_id`、`summary`、`hypotheses`、`experiments`、`evaluation_windows` 或未知 `manual_status` 时必须显式失败，不能自动补默认假设或伪造 gate 结果。
+- 策略优化 payload 缺 `insight_id`、`summary`、`hypotheses`、`experiments`、`evaluation_windows` 或未知 `manual_status` 时必须显式失败，不能自动补默认假设或伪造 gate 结果。
 - `trends(start_date, end_date)` 使用闭区间日期范围，输出 `DashboardTrendSummary`：
   - `points` 按日期升序排列，只包含范围内有 pipeline run、组合快照、数据质量报告或运行可靠性报告的日期。
   - 权益曲线使用范围内每个交易日最新一条 `portfolio_snapshots.total_value`；没有快照时为 `null`。

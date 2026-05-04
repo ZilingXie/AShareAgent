@@ -443,7 +443,7 @@ def test_cli_strategy_insight_runs_with_configured_llm_and_mock_backtests(
     )
 
     assert result.exit_code == 0
-    assert "策略假设复盘完成" in result.output
+    assert "策略优化复盘完成" in result.output
     repository = created_repositories[0]
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert latest_run["stage"] == "strategy_insight"

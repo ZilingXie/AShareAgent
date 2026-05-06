@@ -2,7 +2,7 @@
 
 面向 A 股研究与模拟交易的 Agent 工程框架。
 
-当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / PostgreSQL Persistence / Paper Trading Lifecycle / Intraday Price Realism / Strategy Params Audit / Strategy Backtest / Strategy Evaluation / Strategy Optimization Loop / Read-only Dashboard`
+当前状态：`Foundation MVP / Real DataCollector / Data Quality Gate / Data Reliability / Structured Trading Calendar / Daily Run / Scheduled Run / PostgreSQL Persistence / Paper Trading Lifecycle / Intraday Price Realism / Strategy Params Audit / Strategy Backtest / Strategy Evaluation / Strategy Optimization Loop / Read-only Dashboard`
 
 本项目现阶段的重点不是追求策略复杂度，而是先建立一套可复现、可测试、可审计的工程底座。所有模块、接口和运行入口都应服务于一个目标：让后续策略开发可以在清晰边界和质量门禁下持续演进。
 
@@ -27,6 +27,7 @@
 - 用规则基线完成公告分类、利好/利空、重大性判断。
 - 对候选股票进行评分，并经过风控过滤后进入模拟交易。
 - 在盘中完成模拟买卖和持仓/组合更新，收盘后完成盯市、复盘结果和错误归因。
+- 用 `scheduled-run` 支持工作日分时运行：早间采集、盘前简报、盘中模拟决策、收盘采集和收盘复盘简报。
 - 模拟成交使用分钟线估价，不使用日线 close 兜底；无法成交时记录可审计失败原因。
 - 用 mock 或真实公开源做多日历史回放，并按策略版本比较胜率、回撤、收益、拒绝率和数据质量失败率。
 - 用显式策略参数 variants 做连续多日评估，统计信号、风控、成交失败、收益和回撤，只输出报告和建议，不自动改生产参数。
@@ -120,6 +121,14 @@ StrategyInsightAgent
     ├── 白名单参数编译为 variants
     ├── 20/40/60 日 strategy-evaluate
     └── dashboard 只读展示和人工复核状态
+
+ScheduledRunAgent
+└── 工作日分时运行入口
+    ├── 08:30 早间采集
+    ├── 09:00 盘前简报
+    ├── 10:00 盘中模拟决策
+    ├── 15:15 收盘采集
+    └── 16:00 收盘复盘简报
 ```
 
 ### 模块职责边界
@@ -137,6 +146,7 @@ StrategyInsightAgent
 - `BacktestRunner`：负责多日策略回放，只复用 `PaperTrader` 模拟交易闭环，不接真实券商。
 - `StrategyEvaluationRunner`：负责按多个策略参数 variant 调用 backtest，聚合命中率、拒绝率、成交失败、收益和回撤，并输出人工复核建议，不自动修改 `configs/strategy_params.yml`。
 - `StrategyInsightAgent`：负责把当天复盘事实交给 LLM 生成结构化假设；`HypothesisVariantBuilder` 只编译白名单参数，非法建议标记为 `rejected_by_policy`，不修改生产配置。
+- `ScheduledRunAgent`：负责按 slot 检查交易日历、调用既有阶段、生成分时简报和写入调度审计，不绕过数据质量、风控或模拟交易边界。
 
 当前默认策略参数位于 `configs/strategy_params.yml`：单日最大亏损 2%、止损 5%、涨跌停阈值 9.8%、最少持有 2 个交易日、最多持有 10 个交易日，以及 SignalEngine 权重、最低分阈值和每日最大信号数。止损在 T+1 后可优先触发；趋势走弱和到期卖出必须满足最少持有期。每次 pipeline run、watchlist 和 signal 都会记录 `strategy_params_version` 和 `strategy_params_snapshot`，用于复盘追溯当时使用的参数。
 
@@ -228,6 +238,7 @@ StrategyInsightAgent
 - [x] 增加数据质量检查。
 - [x] 增加结构化交易日历、数据源健康和缺口报告。
 - [x] 增加每日运行 CLI 和脚本。
+- [x] 增加定时运行 CLI 和分时简报。
 - [ ] 增加 pipeline run 审计日志。
 - [x] 增加策略参数版本记录。
 - [x] 增加策略参数驱动 SignalEngine 和多日 backtest 对比。
@@ -276,7 +287,7 @@ ASHARE_INTRADAY_RETRY_ATTEMPTS=3
 ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS=0.5
 ```
 
-`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败或必需源空数据时，CLI 会明确失败。日线完整性按阶段检查：`pre-market` 和 `intraday-watch` 只要求覆盖到上一交易日，`post-market-review` 才要求覆盖到当前交易日完整日线；对应窗口内缺失行情或行情价格异常时，失败原因会写入 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`。公告、新闻和政策为空会作为质量警告记录，接口异常仍会记录失败快照。
+`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败或必需源空数据时，CLI 会明确失败。日线完整性按阶段检查：早间采集、盘前、盘前简报、盘中和盘中决策只要求覆盖到上一交易日，收盘采集和收盘复盘才要求覆盖到当前交易日完整日线；对应窗口内缺失行情或行情价格异常时，失败原因会写入 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`。公告、新闻和政策为空会作为质量警告记录，接口异常仍会记录失败快照。
 
 策略参数默认从 `configs/strategy_params.yml` 读取，也可用 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向另一份配置。配置包含 `risk`、`paper_trader` 和 `signal` 三组参数；`signal` 控制 SignalEngine 权重、最低分阈值和每日最大信号数。策略参数配置缺字段、百分比非法、持有期范围非法或每日最大信号数小于 1 时，CLI 会明确失败，不会使用代码里的静默默认值。
 
@@ -295,6 +306,19 @@ scripts/daily_run.sh 2026-04-29
 ```
 
 `daily-run` 会先刷新结构化交易日历。若所选日期不是交易日，只写入 `daily_run` skipped 审计、交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；若是交易日，则按盘前、盘中、复盘顺序运行，模拟买卖只发生在盘中阶段，任一阶段失败都会先写入已有质量/可靠性报告和 failed `daily_run` 后再明确失败。
+
+定时运行入口：
+
+```bash
+uv run ashare scheduled-run --slot morning_collect --trade-date 2026-04-29
+uv run ashare scheduled-run --slot pre_market_brief --trade-date 2026-04-29
+uv run ashare scheduled-run --slot call_auction --trade-date 2026-04-29
+uv run ashare scheduled-run --slot intraday_decision --trade-date 2026-04-29
+uv run ashare scheduled-run --slot close_collect --trade-date 2026-04-29
+uv run ashare scheduled-run --slot post_market_brief --trade-date 2026-04-29
+```
+
+`scheduled-run` 是给 Codex 自动化或本机定时器调用的统一入口。每个 slot 会先检查交易日历，非交易日写 skipped 审计并退出。`morning_collect` 只采集昨晚/今早公告、新闻、政策、行情上下文并输出 `morning-collect.md`；`pre_market_brief` 调用现有 `pre-market` 并额外输出 `pre-market-brief.md`；`call_auction` 第一版默认 disabled，只写 skipped 审计；`intraday_decision` 调用 `intraday-watch`，只执行模拟买卖；`close_collect` 采集收盘行情和质量状态；`post_market_brief` 调用 `post-market-review` 并额外输出 `post-market-brief.md`。所有 slot 都会写 `pipeline_runs` 和 `artifacts` 审计，记录 provider、LLM provider、北京时间、报告路径和 `real_trading=false`。
 
 运行多日策略回放：
 
@@ -375,7 +399,7 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
   uv run uvicorn ashare_agent.api:app --host 127.0.0.1 --port 8000
 ```
 
-API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/stage-run-groups?limit=200`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/days/{trade_date}/stage-groups/{stage}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`、`/api/dashboard/strategy-insights?limit=50`、`/api/dashboard/strategy-insights/{insight_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。阶段组 DTO 按 `trade_date + stage` 合并 normal pipeline runs，列表按日期由近到远排序，同一天固定为盘前、盘中、复盘、策略优化；详情 DTO 保留所有成员 run 和每条业务数据的 `run_id`，用于追溯多次尝试。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径；策略优化 DTO 展示 LLM 假设、白名单编译结果、20/40/60 日 gate 结果和人工复核状态。
+API 只提供 GET：`/api/health`、`/api/dashboard/runs?limit=50`、`/api/dashboard/stage-run-groups?limit=200`、`/api/dashboard/days/{trade_date}`、`/api/dashboard/days/{trade_date}/stage-groups/{stage}`、`/api/dashboard/trends?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`、`/api/dashboard/backtests?limit=50`、`/api/dashboard/strategy-comparison?backtest_ids=id1,id2`、`/api/dashboard/strategy-evaluations?limit=50`、`/api/dashboard/strategy-evaluations/{evaluation_id}`、`/api/dashboard/strategy-insights?limit=50`、`/api/dashboard/strategy-insights/{insight_id}`。缺少 `DATABASE_URL` 时会明确失败，不做内存兜底。阶段组 DTO 按 `trade_date + stage` 合并 normal pipeline runs，列表按日期由近到远排序，同一天固定为早间采集、盘前、盘前简报、集合竞价、盘中、盘中决策、收盘采集、复盘、收盘简报、策略优化；详情 DTO 保留所有成员 run 和每条业务数据的 `run_id`，用于追溯多次尝试。日汇总 DTO 包含 `trading_calendar`、`data_quality_reports` 和 `data_reliability_reports`，用于展示每次 run 的质量状态、source 失败率、缺失行情、异常价格、source 健康和近 30 交易日缺口；趋势 DTO 覆盖资金曲线、信号、风控拒绝原因、数据质量趋势和运行可靠性趋势；策略对比 DTO 按 `backtest_id` 展示胜率、回撤、收益、拒绝率和数据质量失败率；策略评估 DTO 展示 evaluation 批次、variant 指标、推荐结论、不可推荐原因和 Markdown 报告路径；策略优化 DTO 展示 LLM 假设、白名单编译结果、20/40/60 日 gate 结果和人工复核状态。
 
 前端观察台：
 

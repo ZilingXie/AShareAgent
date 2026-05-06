@@ -13,7 +13,13 @@ from ashare_agent.domain import (
     MarketDataset,
 )
 
-_PRE_CLOSE_DAILY_BAR_STAGES = {"pre_market", "intraday_watch"}
+_PRE_CLOSE_DAILY_BAR_STAGES = {
+    "morning_collect",
+    "pre_market",
+    "pre_market_brief",
+    "intraday_watch",
+    "intraday_decision",
+}
 
 
 class DataQualityAgent:

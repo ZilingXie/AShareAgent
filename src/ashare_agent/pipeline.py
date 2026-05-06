@@ -110,11 +110,17 @@ class ASharePipeline:
             "strategy_params_snapshot": self.strategy_params.snapshot(),
         }
 
+    def strategy_params_payload(self) -> dict[str, Any]:
+        return self._strategy_params_payload()
+
     def _run_scope_payload(self) -> dict[str, Any]:
         return {
             "run_mode": self.run_mode,
             "backtest_id": self.backtest_id,
         }
+
+    def run_scope_payload(self) -> dict[str, Any]:
+        return self._run_scope_payload()
 
     def _context(self, trade_date: date) -> PipelineRunContext:
         return PipelineRunContext(
@@ -122,6 +128,9 @@ class ASharePipeline:
             run_mode=self.run_mode,
             backtest_id=self.backtest_id,
         )
+
+    def new_context(self, trade_date: date) -> PipelineRunContext:
+        return self._context(trade_date)
 
     def _restore_trader_state(self) -> None:
         if not self.trader.positions:
@@ -284,15 +293,22 @@ class ASharePipeline:
         self.repository.save_news_items(context, dataset.news)
         self.repository.save_policy_items(context, dataset.policy_items)
 
+    def save_dataset(self, context: PipelineRunContext, dataset: MarketDataset) -> None:
+        self._save_dataset(context, dataset)
+
     def _save_reliability_report(self, context: PipelineRunContext) -> None:
         report = self.data_reliability_agent.analyze(context.trade_date)
         self.repository.save_data_reliability_report(context, report)
+
+    def save_reliability_report(self, context: PipelineRunContext) -> None:
+        self._save_reliability_report(context)
 
     def _run_data_quality_gate(
         self,
         context: PipelineRunContext,
         stage: str,
         dataset: MarketDataset,
+        failure_payload_extra: Mapping[str, Any] | None = None,
     ) -> None:
         report = self.data_quality_agent.analyze(stage=stage, dataset=dataset)
         self.repository.save_data_quality_report(context, report)
@@ -304,12 +320,22 @@ class ASharePipeline:
         payload = {
             "run_id": context.run_id,
             "failure_reason": f"数据质量检查失败: {failure_detail}",
+            **(dict(failure_payload_extra) if failure_payload_extra is not None else {}),
             **self._run_scope_payload(),
             **self._strategy_params_payload(),
         }
         self.repository.save_artifact(context.trade_date, f"{stage}_failed", payload)
         self.repository.save_pipeline_run(context, stage, "failed", payload)
         raise DataProviderError(payload["failure_reason"])
+
+    def run_data_quality_gate(
+        self,
+        context: PipelineRunContext,
+        stage: str,
+        dataset: MarketDataset,
+        failure_payload_extra: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._run_data_quality_gate(context, stage, dataset, failure_payload_extra)
 
     def _dataset_for_stage(self, context: PipelineRunContext, stage: str) -> MarketDataset:
         if self._last_dataset is None:
@@ -550,6 +576,9 @@ class ASharePipeline:
         )
         payload: dict[str, Any] = {
             "run_id": context.run_id,
+            "trade_date": trade_date.isoformat(),
+            "market_regime": regime.status,
+            "market_reasons": regime.reasons,
             "signals": _to_dict_list(signal_result.signals),
             "watchlist": _to_dict_list(signal_result.watchlist),
             "risk_decisions": _to_dict_list(decisions),
@@ -568,6 +597,9 @@ class ASharePipeline:
             "success",
             {
                 "report_path": str(report_path),
+                "trade_date": trade_date.isoformat(),
+                "market_regime": regime.status,
+                "market_reasons": regime.reasons,
                 "watchlist_count": len(signal_result.watchlist),
                 "signal_count": len(signal_result.signals),
                 "risk_decision_count": len(decisions),
@@ -592,6 +624,7 @@ class ASharePipeline:
         report_path = self._write_intraday_report(trade_date, orders, execution_events)
         payload = {
             "run_id": context.run_id,
+            "trade_date": trade_date.isoformat(),
             "orders": _to_dict_list(orders),
             "execution_events": _to_dict_list(execution_events),
             "positions": _to_dict_list(self.trader.positions),
@@ -616,6 +649,7 @@ class ASharePipeline:
             "success",
             {
                 "report_path": str(report_path),
+                "trade_date": trade_date.isoformat(),
                 "real_trading": False,
                 "order_count": len(orders),
                 "buy_order_count": len([order for order in orders if order.side == "buy"]),
@@ -642,6 +676,7 @@ class ASharePipeline:
         )
         payload: dict[str, Any] = {
             "run_id": context.run_id,
+            "trade_date": trade_date.isoformat(),
             "reviewed_orders": _to_dict_list(reviewed_orders),
             "positions": _to_dict_list(self.trader.positions),
             "portfolio": asdict(snapshot),
@@ -660,6 +695,7 @@ class ASharePipeline:
             "success",
             {
                 "report_path": str(report_path),
+                "trade_date": trade_date.isoformat(),
                 "experiment_report_path": str(experiment_report_path),
                 "new_order_count": 0,
                 "reviewed_order_count": len(reviewed_orders),

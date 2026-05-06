@@ -64,17 +64,29 @@ import type {
 type ActiveView = "overview" | "execution" | "strategy" | "quality";
 
 const stageLabels: Record<string, string> = {
+  morning_collect: "早间采集",
   pre_market: "盘前",
+  pre_market_brief: "盘前简报",
+  call_auction: "集合竞价",
   intraday_watch: "盘中",
+  intraday_decision: "盘中决策",
+  close_collect: "收盘采集",
   post_market_review: "复盘",
+  post_market_brief: "收盘简报",
   strategy_insight: "策略优化",
 };
 
 const stageOrder: Record<string, number> = {
-  pre_market: 0,
-  intraday_watch: 1,
-  post_market_review: 2,
-  strategy_insight: 3,
+  morning_collect: 0,
+  pre_market: 1,
+  pre_market_brief: 2,
+  call_auction: 3,
+  intraday_watch: 4,
+  intraday_decision: 5,
+  close_collect: 6,
+  post_market_review: 7,
+  post_market_brief: 8,
+  strategy_insight: 9,
 };
 
 const statusLabels: Record<string, string> = {

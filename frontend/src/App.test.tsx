@@ -836,6 +836,41 @@ describe("dashboard", () => {
     expect(screen.queryByText("strategy_insight")).not.toBeInTheDocument();
   });
 
+  it("renders scheduled stage groups with Chinese labels", async () => {
+    mockFetch(
+      dayFixture,
+      trendsFixture,
+      strategyComparisonFixture,
+      backtestsFixture,
+      strategyEvaluationsFixture,
+      strategyEvaluationFixture,
+      strategyInsightsFixture,
+      strategyInsightFixture,
+      {
+        stage_run_groups: [
+          stageGroup("2026-04-30", "morning_collect", "success"),
+          stageGroup("2026-04-30", "pre_market_brief", "success"),
+          stageGroup("2026-04-30", "call_auction", "skipped"),
+          stageGroup("2026-04-30", "intraday_decision", "success"),
+          stageGroup("2026-04-30", "close_collect", "success"),
+          stageGroup("2026-04-30", "post_market_brief", "success"),
+        ],
+      }
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: /早间采集 成功/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /盘前简报 成功/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /集合竞价 跳过/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /盘中决策 成功/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /收盘采集 成功/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /收盘简报 成功/ })).toBeInTheDocument();
+    expect(screen.queryByText("morning_collect")).not.toBeInTheDocument();
+    expect(screen.queryByText("pre_market_brief")).not.toBeInTheDocument();
+    expect(screen.queryByText("intraday_decision")).not.toBeInTheDocument();
+  });
+
   it("groups sidebar stage runs by descending date and fixed stage order", async () => {
     mockFetch(
       dayFixture,
@@ -1176,6 +1211,28 @@ describe("dashboard", () => {
     expect(screen.getByText("暂无运行可靠性报告")).toBeInTheDocument();
   });
 });
+
+function stageGroup(
+  tradeDate: string,
+  stage: string,
+  status: DashboardStageRunGroup["status"]
+): DashboardStageRunGroup {
+  return {
+    group_id: `${tradeDate}:${stage}`,
+    trade_date: tradeDate,
+    stage,
+    status,
+    total_run_count: 1,
+    success_count: status === "success" ? 1 : 0,
+    failed_count: status === "failed" ? 1 : 0,
+    skipped_count: status === "skipped" ? 1 : 0,
+    latest_run_id: `${stage}-latest`,
+    latest_success_run_id: status === "success" ? `${stage}-latest` : null,
+    member_run_ids: [`${stage}-latest`],
+    failure_reasons: [],
+    created_at: `${tradeDate}T08:00:00+08:00`,
+  };
+}
 
 function mockFetch(
   day: DashboardDay,

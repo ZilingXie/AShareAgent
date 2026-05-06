@@ -2,7 +2,9 @@
 
 ## 当前正在做什么
 
-阶段化日线质量检查已完成：`pre_market` 和 `intraday_watch` 只要求日线覆盖到上一交易日，`post_market_review` 才要求当前交易日完整日线。
+定时 Agent 已完成：新增 `scheduled-run` 统一入口，用于 Codex 自动化按工作日 slot 运行早间采集、盘前简报、盘中模拟决策、收盘采集和收盘复盘简报。
+
+阶段化日线质量检查已完成：`morning_collect`、`pre_market`、`pre_market_brief`、`intraday_watch` 和 `intraday_decision` 只要求日线覆盖到上一交易日，`close_collect` 和 `post_market_review` 才要求当前交易日完整日线。
 
 2026-05-06 已用真实 AKShare provider + mock LLM 跑通 `pre-market -> intraday-watch`；两阶段最新 normal run 均为 success，`data_quality_reports` 没有再因缺少 2026-05-06 当天完整日线阻断。
 
@@ -75,6 +77,7 @@
 - 本轮已修复左侧阶段组排序：日期由近到远，每个日期内固定为 `盘前 -> 盘中 -> 复盘 -> 策略优化`，未知 stage 保留在已知 stage 之后。
 - 本轮已修复 DataQualityAgent 的日线质量窗口：盘前和盘中只检查原 30 日窗口中截至上一交易日的日线完整性，盘后才检查当天完整日线。
 - 2026-05-06 真实盘中验收已通过：`pre_market` 最新 normal run 为 success，`intraday_watch` 最新 normal run 为 success；两条 `data_quality_reports` 均为 warning，但 `missing_market_bar_count=0`、`abnormal_price_count=0`，没有缺 5/6 当日日线问题。最新 `raw_source_snapshots(source=intraday_bars)` 为 success，`intraday_source=akshare_em,akshare_sina`，本次 `akshare_em` 对 510300 返回 121 条分钟线。期间一次盘中重跑遇到 600000 Sina 日线代理 503，已按 failed run 和质量报告审计，随后重跑成功。
+- 本轮新增 `ScheduledRunAgent` 和 `ashare scheduled-run`：支持 `morning_collect`、`pre_market_brief`、`call_auction`、`intraday_decision`、`close_collect`、`post_market_brief` 六个 slot；每个 slot 先检查交易日历，非交易日写 skipped。`call_auction` 第一版 disabled，`pre_market_brief` / `intraday_decision` / `post_market_brief` 分别委托既有三阶段并额外生成分时 Markdown 简报。
 
 ## 近期关键决定和原因
 
@@ -105,6 +108,7 @@
 - dashboard 阶段组只是读取层聚合，不改变 pipeline 写入，不删除旧 `pipeline_runs`、订单或报告；日常总览仍用最新成功 run 作为 canonical 数据，阶段详情才展示全部尝试。
 - 交易日历现在保存为结构化 `trading_calendar` 事实表；DataCollector 从 provider 交易日列表展开连续日期行，并按 `calendar_date/source` upsert。
 - `daily-run` 遇到非交易日默认写 skipped 审计和可靠性报告，不进入策略分析，也不更新模拟订单或持仓。
+- `scheduled-run` 是 Codex 自动化和本机定时器的统一入口；它只编排已有阶段和分时简报，不绕过 DataQualityAgent、RiskManager 或 PaperTrader。10:00 `intraday_decision` 只执行模拟买卖，其他 slot 不允许新增 `paper_orders`。
 - 公告分析继续使用可解释规则，不引入 LLM 判断；误判追踪先落在固定样本 `case_id` 层，不改变运行时模型或落库边界。
 - 观察台只读，不直接连接 PostgreSQL，不提供交易操作入口；`PaperOrder.is_real_trade` 必须在 API DTO 和 UI 中显式展示，正常值为 `False`。
 - dashboard 第一版持有天数用自然日差计算，后续有结构化交易日历表后再替换为交易日口径。
@@ -119,6 +123,7 @@
 
 ## 下一步
 
+- 定时 Agent 合并到 `main` 后，需要配置 5 个 Codex 工作日自动化：08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`、15:15 `close_collect`、16:00 `post_market_brief`；09:25 `call_auction` 暂不启用。
 - 以 2026-05-06 成功盘前/盘中作为后续真实日常运行基线；当天 `post-market-review` 仍必须等完整日线可用后再跑。
 - 若后续真实外部源失败，只记录失败阶段、source、symbol 和错误原因；不切 Mock、不伪造行情。
 - 继续保持 v1 只做模拟交易：不接真实券商、不自动实盘下单、不自动修改生产策略参数。

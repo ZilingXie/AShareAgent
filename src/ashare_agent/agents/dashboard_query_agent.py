@@ -14,10 +14,16 @@ from ashare_agent.repository import PayloadRecord
 DashboardRowDto = TypeVar("DashboardRowDto")
 
 _STAGE_RUN_GROUP_ORDER = {
-    "pre_market": 0,
-    "intraday_watch": 1,
-    "post_market_review": 2,
-    "strategy_insight": 3,
+    "morning_collect": 0,
+    "pre_market": 1,
+    "pre_market_brief": 2,
+    "call_auction": 3,
+    "intraday_watch": 4,
+    "intraday_decision": 5,
+    "close_collect": 6,
+    "post_market_review": 7,
+    "post_market_brief": 8,
+    "strategy_insight": 9,
 }
 
 

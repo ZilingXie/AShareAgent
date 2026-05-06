@@ -1,6 +1,6 @@
 # AShareAgent 安全边界
 
-当前状态：已落地 Mock pipeline、真实数据入口、分钟线模拟成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run、完整 PaperTrader 模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、策略优化闭环和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
+当前状态：已落地 Mock pipeline、真实数据入口、分钟线模拟成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run、scheduled-run、完整 PaperTrader 模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、策略优化闭环和只读观察台。本文记录项目必须长期遵守的交易和数据安全边界。
 
 ## 交易边界
 
@@ -20,6 +20,8 @@
 - dashboard 的“策略评估”视图只读展示历史模拟评估结果、推荐结论和不可推荐原因；不提供参数写入、自动调参、模拟交易执行或真实交易入口，页面文案必须明确不构成投资建议。
 - dashboard 的“策略优化”视图只读展示 LLM 假设、policy reject 原因、三窗口评估结果和 `待复核` 状态；第一版不提供接受/拒绝写按钮，人工采纳必须另起配置变更。
 - `intraday-watch` 是唯一允许新增模拟订单的日内阶段，且必须依赖同日成功 `pre-market` 风控决策；缺失决策时必须显式失败并写 failed run。
+- `scheduled-run intraday_decision` 只能委托 `intraday-watch` 执行模拟订单，不允许直接写订单或绕过同日 `pre-market` 风控决策。
+- `scheduled-run` 的其他 slot 只能采集、生成简报或汇总复盘；`morning_collect`、`pre_market_brief`、`call_auction`、`close_collect` 和 `post_market_brief` 不允许新增 `paper_orders`。`call_auction` 第一版默认 disabled，不参与买卖决策。
 - 盘中模拟成交必须使用分钟线估价；不允许用日线 close 兜底成交。缺少分钟线、停牌、买入涨停或卖出跌停时不写失败订单，只写 rejected execution event。
 - `post-market-review` 不允许新增模拟订单，只能读取盘中订单，生成收盘持仓/组合快照、复盘和审计报告。
 - `DashboardQueryAgent` 和未来 dashboard/API/frontend 只能读取模拟交易数据，不允许提供真实下单入口；查询到 `paper_orders.is_real_trade=True` 时必须显式失败。
@@ -36,7 +38,7 @@
 - 每次 pipeline run、watchlist 和 signal 必须记录策略参数版本和参数快照，确保复盘能追溯当时使用的风控、模拟交易和信号参数。
 - 真实公开源模式下，`universe`、`market_bars`、`trade_calendar` 是必需源；失败时必须记录失败快照和质量报告并让流程失败，不能自动切回 Mock。
 - 盘中分钟线 provider 显式配置的 source chain 整体失败时必须记录 failed `raw_source_snapshots(source=intraday_bars)` 和 failed run，snapshot metadata 必须保留具体分钟线源、请求 symbol、timeout、retry、失败 symbol 和逐 source 的尝试结果；未显式配置链路时不能自动切换备用源。单个 symbol 无分钟线或无有效成交时只记录 rejected execution event，不能造价成交。
-- 必需源空数据、阶段要求窗口内缺失日线、OHLC 异常、成交量/成交额为负或相邻收盘价异常跳变时，必须阻断后续策略分析或模拟交易更新。`pre_market` 和 `intraday_watch` 的日线窗口只到上一交易日，`post_market_review` 才要求当天完整日线。
+- 必需源空数据、阶段要求窗口内缺失日线、OHLC 异常、成交量/成交额为负或相邻收盘价异常跳变时，必须阻断后续策略分析或模拟交易更新。`morning_collect`、`pre_market`、`pre_market_brief`、`intraday_watch` 和 `intraday_decision` 的日线窗口只到上一交易日，`close_collect` 和 `post_market_review` 要求当天完整日线。
 - 交易日内近 30 个交易日行情缺口必须进入质量门禁和运行可靠性报告；不能用旧行情、Mock 或空记录补齐。
 - 非交易日 `daily-run` 只记录 skipped 审计、结构化交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；非交易日不能伪造成交易日。
 - `strategy-evaluate` 使用真实 AKShare 时必须显式配置包含 `akshare_sina` 的分钟线 source chain，避免遗漏 Sina fallback 验收；真实源失败日只计入失败率并继续评估，不能切回 Mock、补数据或吞错。

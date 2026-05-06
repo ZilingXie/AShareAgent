@@ -1,6 +1,6 @@
 # AShareAgent 架构说明
 
-当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、分钟线成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run CLI、LLM adapter、PostgreSQL/Alembic schema、核心持久化接线、模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、策略优化闭环、复盘指标查询、策略实验 Markdown 报告，以及支持日期范围趋势、策略对比、策略评估和策略优化只读视图的观察台。
+当前状态：已落地 Python 后端骨架、Mock pipeline、真实 DataCollector 入口、分钟线成交估价、DataQualityAgent 质量门禁、DataReliabilityAgent 运行可靠性报告、结构化交易日历、daily-run CLI、scheduled-run CLI、LLM adapter、PostgreSQL/Alembic schema、核心持久化接线、模拟持仓生命周期、策略参数版本审计、多日 backtest 回放、策略参数评估、策略优化闭环、复盘指标查询、策略实验 Markdown 报告，以及支持日期范围趋势、策略对比、策略评估和策略优化只读视图的观察台。
 
 ## 目标架构
 
@@ -31,17 +31,18 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 | `StrategyEvaluationRunner` | 按显式 variants 配置批量调用 `BacktestRunner`，聚合信号、风控、成交失败、收益、命中率和回撤，输出 Markdown 评估报告和人工复核建议。 |
 | `StrategyInsightAgent` | 读取已落库事实并调用 LLM 生成结构化优化假设，只输出解释和建议，不修改配置。 |
 | `HypothesisVariantBuilder` | 将 LLM 假设按白名单和安全边界编译为 strategy-evaluate variants，非法建议标记为 `rejected_by_policy`。 |
+| `ScheduledRunAgent` | 按工作日 slot 检查交易日历、调用既有阶段、生成分时简报并写入调度审计。 |
 
 ## 当前边界
 
-- 当前入口是 CLI：`pre-market`、`intraday-watch`、`post-market-review`、`daily-run`、`backtest`、`strategy-evaluate`、`strategy-insight`。
+- 当前入口是 CLI：`pre-market`、`intraday-watch`、`post-market-review`、`daily-run`、`scheduled-run`、`backtest`、`strategy-evaluate`、`strategy-insight`。
 - 默认 provider 是 `MockProvider`；设置 `ASHARE_PROVIDER=akshare` 后，CLI 从 `configs/universe.yml` 读取 `enabled=true` 的固定 ETF/大盘股池，并使用 `AKShareProvider` 拉真实公开源。日线行情当前通过 AKShare 的 Sina 路径采集，ETF 使用 `fund_etf_hist_sina`，A 股使用 `stock_zh_a_daily`；盘中分钟线用于模拟成交估价，默认分钟线源为 `ASHARE_INTRADAY_SOURCE=akshare_em`，可显式配置 `akshare_em,akshare_sina` source chain。`akshare_em` 直连 EastMoney `trends2/get`，`akshare_sina` 直连 Sina `CN_MarketDataService.getKLineData`；timeout、重试次数和退避由 `ASHARE_INTRADAY_TIMEOUT_SECONDS`、`ASHARE_INTRADAY_RETRY_ATTEMPTS`、`ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS` 控制。
 - 默认 LLM 是 mock；`.env` 中设置 `ASHARE_LLM_PROVIDER=openai` 或 `deepseek` 后才调用真实 API。
 - 默认策略参数配置是 `configs/strategy_params.yml`；可通过 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向其他配置。`StrategyParamsAgent` 会在 pipeline 构建时显式校验 `risk`、`paper_trader` 和 `signal` 配置，并把版本和快照写入 `pipeline_runs`、watchlist 和 signals payload。
 - CLI 必须配置 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
 - 本地开发复用现有 Podman PostgreSQL 容器 `deployment_local_postgres_1` 的 `supportportal` 数据库；AShareAgent 只使用独立 `ashare_agent` schema。
 - PostgreSQL 通过 Alembic 创建 `ashare_agent` schema、`ashare_agent.alembic_version` 和业务表；DataCollector 的 universe、raw source snapshots、market bars、announcements、news items、policy items、结构化 `trading_calendar`、DataQualityAgent 的 data quality reports、DataReliabilityAgent 的 data reliability reports、technical indicators，以及 pipeline run、watchlist、signals、risk decisions、paper orders、positions、portfolio snapshots 和 review reports 已写入专表。
-- `DataQualityAgent` 在原始数据落库后、策略分析前运行；质量失败时保存 `data_quality_reports`、失败 artifact 和 failed pipeline run，然后阻断后续策略或模拟交易更新。交易日内按 stage 检查近 30 个交易日行情缺口：`pre_market` 和 `intraday_watch` 只要求到上一交易日，`post_market_review` 才要求当前交易日完整日线；非交易日运行只提示，不因缺失行情阻断。
+- `DataQualityAgent` 在原始数据落库后、策略分析前运行；质量失败时保存 `data_quality_reports`、失败 artifact 和 failed pipeline run，然后阻断后续策略或模拟交易更新。交易日内按 stage 检查近 30 个交易日行情缺口：`morning_collect`、`pre_market`、`pre_market_brief`、`intraday_watch` 和 `intraday_decision` 只要求到上一交易日，`close_collect` 和 `post_market_review` 要求当前交易日完整日线；非交易日运行只提示，不因缺失行情阻断。
 - `DataReliabilityAgent` 在 `daily-run` 和 dashboard 查询链路中读取已落库数据，生成 source 健康和近 30 个交易日行情缺口报告；交易日缺口为 failed，非交易日记录 skipped。
 - 交易日历由 DataCollector 从 provider 返回的交易日列表展开为连续日期行，写入结构化 `trading_calendar` 表；同一 `calendar_date/source` 使用 upsert。
 - `intraday-watch` 必须从 repository 恢复同日成功 `pre_market` 风控决策、开放持仓、最新现金和当日已有订单，采集相关标的 1 分钟 K 线，执行买入、盯市、退出评估、卖出、closed position 落库和盘中组合快照；重复运行同一交易日不重复成交。分钟线采集只写 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录具体分钟线源、请求/返回/缺失 symbol、period、timeout、retry 配置和逐 source/symbol 的 `source_attempts`；显式链路中的所有分钟线源都不可用时 failed run，至少一个源正常响应但单个 symbol 无分钟线时交给执行估价层生成 rejected `execution_events`。模拟成交由 `IntradayPriceEstimator` 选择首个有效分钟 K 线并叠加动态滑点；缺少分钟线、停牌、买入涨停或卖出跌停时只写 rejected `execution_events`，不写失败订单，也不允许日线 close 兜底。
@@ -53,6 +54,7 @@ DataCollector -> DataQualityAgent -> AnnouncementAnalyzer -> MarketRegimeAnalyze
 - `RiskManager` 同时负责买入前风控和退出决策；`PaperTrader` 只生成模拟订单，所有 `PaperOrder.is_real_trade` 固定为 `False`，成功订单必须记录成交来源、价格时间点、估价方法、参考价和 `used_daily_fallback=False`。
 - `ReviewMetricsAgent` 只读取截至所选交易日的 `paper_positions`、`paper_orders` 和 `portfolio_snapshots` payload，计算已实现盈亏、胜率、平均持仓天数、卖出原因分布和最大回撤；缺字段、非法数字或真实交易订单必须显式失败。
 - `daily-run` 先刷新交易日历；非交易日只写 skipped 审计和可靠性报告，不进入策略分析或模拟交易更新；交易日按盘前、盘中、复盘顺序运行，失败时先落库可靠性报告和 failed `daily_run`。
+- `scheduled-run` 是 Codex 自动化和本机定时器的统一入口。它支持 `morning_collect`、`pre_market_brief`、`call_auction`、`intraday_decision`、`close_collect` 和 `post_market_brief` 六个 slot；每个 slot 先检查交易日历，非交易日写 skipped 审计。`call_auction` 第一版默认 disabled，只写 skipped；`pre_market_brief`、`intraday_decision` 和 `post_market_brief` 分别委托既有 `pre_market`、`intraday_watch` 和 `post_market_review`，再额外生成分时 Markdown 简报。所有 slot 写入 `pipeline_runs` 和 `artifacts`，payload 保留 provider、LLM provider、北京时间、报告路径、underlying run 和 `real_trading=false`。
 - `DashboardQueryAgent` 只读封装 `pipeline_runs`、阶段运行组、观察名单、信号、盘前 LLM 分析、风控、盘中模拟订单、成交失败事件、分钟线源健康、持仓、组合快照、复盘、交易日历、数据源快照、数据质量、运行可靠性、日期范围趋势、策略版本对比、策略评估和策略优化查询，输出稳定 DTO。阶段运行组只在读取层按 `trade_date + stage` 合并 normal runs；组详情保留全部成员 run 和每条业务数据的 `run_id`。strategy evaluation 和 strategy insight 查询只读取已落库 payload，派生不可推荐原因或 gate 展示结构，不重新计算 backtest，也不读取 Markdown 文件内容。dashboard/API/frontend 后续应依赖该查询层，不直接解析 repository payload。
 - 只读 dashboard 由 `DashboardQueryAgent`、FastAPI GET API 和 React/Vite 前端组成。前端只读取稳定 DTO，不直接读 PostgreSQL payload，也不提供交易操作入口。
 - dashboard API 依赖 `DATABASE_URL`；缺失时明确失败，不做内存兜底。
@@ -74,6 +76,7 @@ src/ashare_agent/
 ├── indicators.py        # 基础技术指标
 ├── pipeline.py          # 三段流程、盘中成交、daily-run、数据质量门禁和可靠性报告编排
 ├── reports.py           # Markdown 输出
+├── scheduled.py         # 分时调度入口和简报生成
 ├── repository.py        # In-memory/PostgreSQL repository
 ├── strategy_evaluation.py # 多 variant 策略评估 runner、配置加载和 provider 缓存
 └── strategy_insights.py   # 策略优化 LLM 复盘、白名单 variant 编译和 gate
@@ -84,4 +87,4 @@ configs/
 
 `src/ashare_agent/agents/dashboard_query_agent.py` 属于只读查询适配层，不参与 pipeline 写入、不执行交易、不修改策略状态。`src/ashare_agent/dashboard.py` 是 API 使用的薄兼容层，避免前端/API 依赖内部 agent 文件路径。
 
-前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，提供 `总览 / 交易执行 / 策略 / 质量` 四大看板。`总览` 从账户视角展示总资产、区间盈亏、每日盈亏、权益曲线、交易摘要、当前持仓和收盘复盘摘要；左侧导航按阶段运行组展示，日期由近到远分段，同一天固定显示 `盘前 / 盘中 / 复盘 / 策略优化`，同一天同一阶段只显示一张卡片，成功和失败混合时显示“部分失败”。`交易执行` 展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘，并支持点击左侧阶段组打开只读详情抽屉，详情展示全部成员 run 及其尝试数据；`策略` 展示买入候选信号趋势、观察名单评分、风控拒绝原因、策略版本对比、evaluation 批次、variant 排名、推荐结论、不可推荐原因和策略优化，策略优化内容包括 LLM 假设、参数变更、policy reject 原因、20/40/60 日评估结果、gate 结论和人工复核状态；`质量` 展示数据质量趋势、DataQuality 报告、运行可靠性、分钟线源健康、数据源状态和运行详情。前端不新增写接口，不直接读 PostgreSQL，不提供交易操作或自动调参入口。
+前端代码位于 `frontend/`，使用 React、Vite、TypeScript 和 pnpm。当前页面是本地只读观察台，提供 `总览 / 交易执行 / 策略 / 质量` 四大看板。`总览` 从账户视角展示总资产、区间盈亏、每日盈亏、权益曲线、交易摘要、当前持仓和收盘复盘摘要；左侧导航按阶段运行组展示，日期由近到远分段，同一天固定显示 `早间采集 / 盘前 / 盘前简报 / 集合竞价 / 盘中 / 盘中决策 / 收盘采集 / 复盘 / 收盘简报 / 策略优化`，同一天同一阶段只显示一张卡片，成功和失败混合时显示“部分失败”。`交易执行` 展示盘前计划、风控结果、盘中模拟订单、成交失败、当前持仓和收盘复盘，并支持点击左侧阶段组打开只读详情抽屉，详情展示全部成员 run 及其尝试数据；`策略` 展示买入候选信号趋势、观察名单评分、风控拒绝原因、策略版本对比、evaluation 批次、variant 排名、推荐结论、不可推荐原因和策略优化，策略优化内容包括 LLM 假设、参数变更、policy reject 原因、20/40/60 日评估结果、gate 结论和人工复核状态；`质量` 展示数据质量趋势、DataQuality 报告、运行可靠性、分钟线源健康、数据源状态和运行详情。前端不新增写接口，不直接读 PostgreSQL，不提供交易操作或自动调参入口。

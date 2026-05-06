@@ -17,6 +17,7 @@ from ashare_agent.providers.akshare_provider import AKShareProvider
 from ashare_agent.providers.base import DataProvider, DataProviderError
 from ashare_agent.providers.mock import MockProvider
 from ashare_agent.repository import PostgresRepository
+from ashare_agent.scheduled import SCHEDULED_RUN_SLOTS, ScheduledRunAgent
 from ashare_agent.strategy_evaluation import (
     StrategyEvaluationRunner,
     load_strategy_evaluation_config,
@@ -63,8 +64,8 @@ def _build_provider(settings: Settings) -> tuple[DataProvider, set[str]]:
     raise typer.BadParameter(f"未知 ASHARE_PROVIDER: {provider_name}")
 
 
-def _build_pipeline() -> ASharePipeline:
-    settings = load_settings()
+def _build_pipeline(settings: Settings | None = None) -> ASharePipeline:
+    settings = settings or load_settings()
     if not settings.database_url:
         raise typer.BadParameter("持久化 CLI 需要 DATABASE_URL；请先配置 PostgreSQL 连接")
     provider, required_data_sources = _build_provider(settings)
@@ -146,6 +147,31 @@ def daily_run(trade_date: str = typer.Option(..., "--trade-date")) -> None:
         typer.echo(f"每日流程跳过: {result.payload['skipped_reason']}")
         return
     typer.echo(f"每日流程完成: {parsed_date.isoformat()}")
+
+
+@app.command()
+def scheduled_run(
+    slot: Annotated[str, typer.Option(..., "--slot")],
+    trade_date: str = typer.Option(..., "--trade-date"),
+) -> None:
+    parsed_date = _parse_trade_date(trade_date)
+    if slot not in SCHEDULED_RUN_SLOTS:
+        raise typer.BadParameter(
+            f"未知 scheduled-run slot: {slot}; 可选值: {', '.join(SCHEDULED_RUN_SLOTS)}"
+        )
+    settings = load_settings()
+    try:
+        result = ScheduledRunAgent(
+            pipeline=_build_pipeline(settings),
+            provider_name=settings.provider.lower(),
+            llm_provider=settings.llm_provider.lower(),
+        ).run(slot=slot, trade_date=parsed_date)
+    except (DataProviderError, RuntimeError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    if result.payload.get("status") == "skipped":
+        typer.echo(f"定时任务跳过: {slot}, {result.payload.get('skipped_reason')}")
+        return
+    typer.echo(f"定时任务完成: {slot}, 报告 {result.payload.get('report_path', '-')}")
 
 
 @app.command()

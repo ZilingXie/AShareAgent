@@ -276,7 +276,7 @@ ASHARE_INTRADAY_RETRY_ATTEMPTS=3
 ASHARE_INTRADAY_RETRY_BACKOFF_SECONDS=0.5
 ```
 
-`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败、必需源空数据、交易日缺失当日行情或行情价格异常时，CLI 会明确失败，并把失败原因写入 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`。公告、新闻和政策为空会作为质量警告记录，接口异常仍会记录失败快照。
+`akshare` 模式固定从 `configs/universe.yml` 读取 `enabled=true` 的 ETF/大盘股池。真实源下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败或必需源空数据时，CLI 会明确失败。日线完整性按阶段检查：`pre-market` 和 `intraday-watch` 只要求覆盖到上一交易日，`post-market-review` 才要求覆盖到当前交易日完整日线；对应窗口内缺失行情或行情价格异常时，失败原因会写入 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`。公告、新闻和政策为空会作为质量警告记录，接口异常仍会记录失败快照。
 
 策略参数默认从 `configs/strategy_params.yml` 读取，也可用 `ASHARE_STRATEGY_PARAMS_CONFIG` 指向另一份配置。配置包含 `risk`、`paper_trader` 和 `signal` 三组参数；`signal` 控制 SignalEngine 权重、最低分阈值和每日最大信号数。策略参数配置缺字段、百分比非法、持有期范围非法或每日最大信号数小于 1 时，CLI 会明确失败，不会使用代码里的静默默认值。
 
@@ -364,9 +364,9 @@ DATABASE_URL=postgresql+psycopg://supportportal:<password>@localhost:15432/suppo
 
 策略评估和策略优化复盘都不新增数据库迁移；聚合结果复用 `pipeline_runs` 和 `artifacts`，单个 variant 的明细复用 backtest 已有专表和 `backtest_id` 隔离。`configs/strategy_evaluation.yml` 的 `default_window_trade_days` 必须在 20 到 60 之间，显式 CLI 日期范围优先于该默认窗口。策略优化复盘 payload 会保留 LLM 假设、policy reject 原因、20/40/60 日评估窗口、gate 结果、报告路径和 `manual_status=pending_review`。
 
-`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录 `intraday_source`、请求/返回/缺失 symbol、period、timeout、retry 配置和 `source_attempts`。成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。显式链路中的所有分钟线源都不可用时写 failed snapshot 和 failed run；至少一个源正常响应但单个 symbol 无分钟线时 run 可成功，不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
+`intraday-watch` 必须找到同日成功的 `pre-market` 风控决策，才会恢复开放持仓、最新现金和当日已有模拟订单，执行允许的买入、盯市、退出评估和卖出。盘中数据质量门禁只要求日线覆盖到上一交易日，当天成交使用分钟线估价，不因当天完整日线尚未收齐而阻断。当日已有模拟订单只读取同日成功 `intraday_watch` run 生成的订单；旧流程遗留的 `post_market_review` 订单保留在数据库里，但不参与盘中幂等判断。执行前会按获批买入标的和当前开放持仓采集 1 分钟 K 线，并写入 `raw_source_snapshots(source=intraday_bars)` 审计，metadata 记录 `intraday_source`、请求/返回/缺失 symbol、period、timeout、retry 配置和 `source_attempts`。成交价使用首个有效 1 分钟 K 线加动态滑点估算，不允许用日线 close 兜底。显式链路中的所有分钟线源都不可用时写 failed snapshot 和 failed run；至少一个源正常响应但单个 symbol 无分钟线时 run 可成功，不写 `paper_orders`，只在 `intraday_watch` artifact / payload 的 `execution_events` 中记录 rejected 原因。成功买卖订单写入 `paper_orders`，并记录 `execution_source`、`execution_timestamp`、`execution_method`、`reference_price` 和 `used_daily_fallback=False`；持仓和组合快照写入 `paper_positions`、`portfolio_snapshots`。重复运行同一交易日不会重复买入或卖出。
 
-`post-market-review` 不新增 `paper_orders`，只恢复同日成功 `intraday_watch` run 生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。`reviewed_order_count` 和复盘报告里的订单列表只统计盘中订单，历史 `post_market_review` 订单不会污染新阶段语义。
+`post-market-review` 不新增 `paper_orders`，只恢复同日成功 `intraday_watch` run 生成的订单和持仓，执行收盘盯市，写入持仓快照、组合快照、复盘报告和策略实验报告。盘后数据质量门禁要求当前交易日完整日线；若当天日线缺失或异常，会写 failed run 和质量报告，不生成复盘结果。`reviewed_order_count` 和复盘报告里的订单列表只统计盘中订单，历史 `post_market_review` 订单不会污染新阶段语义。
 
 只读观察台 API：
 

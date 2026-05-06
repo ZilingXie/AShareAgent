@@ -100,7 +100,7 @@ Alembic 迁移创建以下表分组：
 
 策略评估中的“信号命中率”只统计已经 closed 的模拟持仓：`signal_hit_count` 为 closed position 盈利数量，`signal_hit_rate = signal_hit_count / closed_trade_count`；未关闭持仓不进分母，单独计入 `open_position_count` 和未实现收益。成交失败事件来自 `intraday_watch.pipeline_runs.payload.execution_events` 中的 rejected 事件，不把未写订单的失败静默忽略。
 
-真实 provider 下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败、必需源空数据、交易日缺失近 30 个交易日行情或行情价格异常时，`pre-market` 会先保存失败的 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`，再明确失败。
+真实 provider 下 `universe`、`market_bars`、`trade_calendar` 是必需源；这些源失败或必需源空数据时，pipeline 会先保存失败的 `raw_source_snapshots`、`data_quality_reports` 和失败的 `pipeline_runs`，再明确失败。日线完整性窗口按 stage 判断：`pre_market` 和 `intraday_watch` 只检查到上一交易日，`post_market_review` 和未知 stage 检查到 `trade_date`；窗口内缺失行情或行情价格异常会阻断当前阶段。
 
 `trading_calendar` 是结构化日历事实表，字段包含 `calendar_date`、`is_trade_date`、`source`、`collected_at` 和 `created_at`。DataCollector 会把 provider 返回的交易日列表展开为连续日期行，列表内日期标记为交易日，范围内其他日期标记为非交易日；同一 `calendar_date/source` 重复写入时 upsert。
 
@@ -114,8 +114,8 @@ Alembic 迁移创建以下表分组：
 
 - source 失败率为失败 source 数除以 source 总数。
 - 必需源失败或空数据为 error，非必需源失败或空数据为 warning。
-- 交易日内每个 enabled asset 必须存在近 30 个交易日的 `MarketBar`；非交易日跳过缺失行情失败检查，只记录 warning。
-- OHLC 必须为正，`high/low` 必须覆盖开收盘价格，成交量和成交额不能为负。
+- 交易日内每个 enabled asset 必须存在阶段要求窗口内的近 30 个交易日 `MarketBar`；`pre_market` 和 `intraday_watch` 的窗口截止上一交易日，`post_market_review` 和未知 stage 的窗口截止 `trade_date`。非交易日跳过缺失行情失败检查，只记录 warning。
+- OHLC 必须为正，`high/low` 必须覆盖开收盘价格，成交量和成交额不能为负；价格异常检查只覆盖当前 stage 要求的日线窗口，盘前和盘中不会因为当天未完成日线异常而阻断。
 - 同 symbol 相邻收盘价跳变超过 35% 记为异常价格。
 
 `artifacts` 仍保留为报告和聚合 payload 的审计表；专表 payload 是后续连续模拟交易和只读观察台的数据基础。

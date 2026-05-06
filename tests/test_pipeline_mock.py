@@ -164,6 +164,30 @@ class FallbackIntradayProvider(MockProvider):
         ]
 
 
+class MissingCurrentDailyBarProvider(MockProvider):
+    def get_market_bars(self, trade_date: date, lookback_days: int = 30) -> list[MarketBar]:
+        bars: list[MarketBar] = []
+        for asset_index, asset in enumerate(self.get_universe()):
+            base = Decimal("3.00") + Decimal(asset_index) * Decimal("0.40")
+            for idx in range(lookback_days):
+                day = trade_date - timedelta(days=lookback_days - idx)
+                close = base + Decimal(idx) * Decimal("0.01")
+                bars.append(
+                    MarketBar(
+                        symbol=asset.symbol,
+                        trade_date=day,
+                        open=close - Decimal("0.01"),
+                        high=close + Decimal("0.03"),
+                        low=close - Decimal("0.03"),
+                        close=close,
+                        volume=1_000_000,
+                        amount=(close * Decimal("1000000")).quantize(Decimal("0.01")),
+                        source="test",
+                    )
+                )
+        return bars
+
+
 def _write_strategy_params(
     path: Path,
     *,
@@ -475,6 +499,52 @@ def test_intraday_watch_fails_without_successful_pre_market_decisions(tmp_path: 
 
     latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
     assert latest_run["stage"] == "intraday_watch"
+    assert latest_run["status"] == "failed"
+
+
+def test_intraday_quality_allows_missing_current_daily_bar_but_post_market_requires_it(
+    tmp_path: Path,
+) -> None:
+    trade_date = date(2026, 5, 6)
+    repository = InMemoryRepository()
+    pipeline = ASharePipeline(
+        provider=MissingCurrentDailyBarProvider(),
+        llm_client=MockLLMClient(),
+        report_root=tmp_path,
+        repository=repository,
+    )
+
+    pre_market = pipeline.run_pre_market(trade_date)
+    intraday = pipeline.run_intraday_watch(trade_date)
+
+    assert pre_market.success is True
+    assert intraday.success is True
+    quality_reports = [row["payload"] for row in repository.records_for("data_quality_reports")]
+    assert quality_reports[-2]["stage"] == "pre_market"
+    assert quality_reports[-2]["status"] == "passed"
+    assert quality_reports[-2]["missing_market_bar_count"] == 0
+    assert quality_reports[-1]["stage"] == "intraday_watch"
+    assert quality_reports[-1]["status"] == "passed"
+    assert quality_reports[-1]["missing_market_bar_count"] == 0
+
+    try:
+        pipeline.run_post_market_review(trade_date)
+    except DataProviderError as exc:
+        assert "缺少 1 天行情" in str(exc)
+    else:
+        raise AssertionError("收盘复盘缺少当天完整日线时必须失败")
+
+    latest_quality_report = repository.records_for("data_quality_reports")[-1]["payload"]
+    assert latest_quality_report["stage"] == "post_market_review"
+    assert latest_quality_report["status"] == "failed"
+    assert latest_quality_report["missing_market_bar_count"] == 3
+    assert {
+        tuple(issue["metadata"]["missing_dates"])
+        for issue in latest_quality_report["issues"]
+        if issue["check_name"] == "missing_market_bar"
+    } == {("2026-05-06",)}
+    latest_run = repository.records_for("pipeline_runs")[-1]["payload"]
+    assert latest_run["stage"] == "post_market_review"
     assert latest_run["status"] == "failed"
 
 
@@ -791,18 +861,21 @@ def test_pipeline_records_required_source_failure_before_raising(tmp_path: Path)
 
 
 def test_pipeline_records_data_quality_failure_before_raising(tmp_path: Path) -> None:
-    class MissingLatestBarProvider(MockProvider):
+    class MissingPreviousBarProvider(MockProvider):
         def get_market_bars(self, trade_date: date, lookback_days: int = 30) -> list[MarketBar]:
             return [
                 bar
                 for bar in super().get_market_bars(trade_date, lookback_days)
-                if not (bar.symbol == "510300" and bar.trade_date == trade_date)
+                if not (
+                    bar.symbol == "510300"
+                    and bar.trade_date == trade_date - timedelta(days=1)
+                )
             ]
 
     trade_date = date(2026, 4, 29)
     repository = InMemoryRepository()
     pipeline = ASharePipeline(
-        provider=MissingLatestBarProvider(),
+        provider=MissingPreviousBarProvider(),
         llm_client=MockLLMClient(),
         report_root=tmp_path,
         repository=repository,

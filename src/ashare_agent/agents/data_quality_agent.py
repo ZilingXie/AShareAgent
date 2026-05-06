@@ -13,6 +13,8 @@ from ashare_agent.domain import (
     MarketDataset,
 )
 
+_PRE_CLOSE_DAILY_BAR_STAGES = {"pre_market", "intraday_watch"}
+
 
 class DataQualityAgent:
     def __init__(
@@ -37,9 +39,20 @@ class DataQualityAgent:
                     metadata={"trade_date": dataset.trade_date.isoformat()},
                 )
             )
+        expected_market_bar_dates = self._expected_market_bar_dates(stage, dataset)
+        market_bar_quality_cutoff = self._market_bar_quality_cutoff(stage, dataset)
         if is_trade_date is not False:
-            issues.extend(self._missing_market_bar_issues(dataset))
-        issues.extend(self._abnormal_price_issues(dataset.bars))
+            issues.extend(self._missing_market_bar_issues(dataset, expected_market_bar_dates))
+        issues.extend(
+            self._abnormal_price_issues(
+                [
+                    bar
+                    for bar in dataset.bars
+                    if market_bar_quality_cutoff is not None
+                    and bar.trade_date <= market_bar_quality_cutoff
+                ]
+            )
+        )
 
         total_sources = len(dataset.source_snapshots)
         failed_source_count = sum(
@@ -119,8 +132,11 @@ class DataQualityAgent:
             return dataset.trade_date in set(dataset.trade_calendar_dates)
         return None
 
-    def _missing_market_bar_issues(self, dataset: MarketDataset) -> list[DataQualityIssue]:
-        expected_dates = self._expected_market_bar_dates(dataset)
+    def _missing_market_bar_issues(
+        self,
+        dataset: MarketDataset,
+        expected_dates: list[date],
+    ) -> list[DataQualityIssue]:
         bars_by_symbol = {
             (bar.symbol, bar.trade_date)
             for bar in dataset.bars
@@ -155,7 +171,7 @@ class DataQualityAgent:
             )
         return issues
 
-    def _expected_market_bar_dates(self, dataset: MarketDataset) -> list[date]:
+    def _expected_market_bar_dates(self, stage: str, dataset: MarketDataset) -> list[date]:
         calendar_dates = [
             day.calendar_date
             for day in dataset.trade_calendar_days
@@ -167,7 +183,30 @@ class DataQualityAgent:
             ]
         if not calendar_dates:
             return [dataset.trade_date]
-        return sorted(set(calendar_dates))[-30:]
+        calendar_dates = sorted(set(calendar_dates))[-30:]
+        if stage in _PRE_CLOSE_DAILY_BAR_STAGES:
+            calendar_dates = [item for item in calendar_dates if item < dataset.trade_date]
+        return calendar_dates
+
+    def _market_bar_quality_cutoff(self, stage: str, dataset: MarketDataset) -> date | None:
+        if stage not in _PRE_CLOSE_DAILY_BAR_STAGES:
+            return dataset.trade_date
+        calendar_dates = [
+            day.calendar_date
+            for day in dataset.trade_calendar_days
+            if day.is_trade_date and day.calendar_date < dataset.trade_date
+        ]
+        if not calendar_dates:
+            calendar_dates = [
+                item for item in dataset.trade_calendar_dates if item < dataset.trade_date
+            ]
+        if not calendar_dates and (
+            dataset.trade_calendar_days or dataset.trade_calendar_dates
+        ):
+            return None
+        if not calendar_dates:
+            return dataset.trade_date
+        return max(calendar_dates)
 
     def _abnormal_price_issues(self, bars: list[MarketBar]) -> list[DataQualityIssue]:
         issues: list[DataQualityIssue] = []

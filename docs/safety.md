@@ -36,7 +36,7 @@
 - 每次 pipeline run、watchlist 和 signal 必须记录策略参数版本和参数快照，确保复盘能追溯当时使用的风控、模拟交易和信号参数。
 - 真实公开源模式下，`universe`、`market_bars`、`trade_calendar` 是必需源；失败时必须记录失败快照和质量报告并让流程失败，不能自动切回 Mock。
 - 盘中分钟线 provider 显式配置的 source chain 整体失败时必须记录 failed `raw_source_snapshots(source=intraday_bars)` 和 failed run，snapshot metadata 必须保留具体分钟线源、请求 symbol、timeout、retry、失败 symbol 和逐 source 的尝试结果；未显式配置链路时不能自动切换备用源。单个 symbol 无分钟线或无有效成交时只记录 rejected execution event，不能造价成交。
-- 必需源空数据、交易日缺失当日行情、OHLC 异常、成交量/成交额为负或相邻收盘价异常跳变时，必须阻断后续策略分析或模拟交易更新。
+- 必需源空数据、阶段要求窗口内缺失日线、OHLC 异常、成交量/成交额为负或相邻收盘价异常跳变时，必须阻断后续策略分析或模拟交易更新。`pre_market` 和 `intraday_watch` 的日线窗口只到上一交易日，`post_market_review` 才要求当天完整日线。
 - 交易日内近 30 个交易日行情缺口必须进入质量门禁和运行可靠性报告；不能用旧行情、Mock 或空记录补齐。
 - 非交易日 `daily-run` 只记录 skipped 审计、结构化交易日历和运行可靠性报告，不进入策略分析，也不更新模拟订单或持仓；非交易日不能伪造成交易日。
 - `strategy-evaluate` 使用真实 AKShare 时必须显式配置包含 `akshare_sina` 的分钟线 source chain，避免遗漏 Sina fallback 验收；真实源失败日只计入失败率并继续评估，不能切回 Mock、补数据或吞错。

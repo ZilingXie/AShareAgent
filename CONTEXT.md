@@ -2,9 +2,9 @@
 
 ## 当前正在做什么
 
-dashboard 左侧阶段组展示正在收尾：阶段组继续按 `trade_date + stage` 合并 normal pipeline runs，同时改为按日期由近到远分段展示；每个日期内固定为 `盘前 -> 盘中 -> 复盘 -> 策略优化`。
+阶段化日线质量检查已完成：`pre_market` 和 `intraday_watch` 只要求日线覆盖到上一交易日，`post_market_review` 才要求当前交易日完整日线。
 
-`strategy_insight` stage 在 UI 中显示为“策略优化”，内部 API 和落库枚举仍保持 `strategy_insight` 不变。
+2026-05-06 已用真实 AKShare provider + mock LLM 跑通 `pre-market -> intraday-watch`；两阶段最新 normal run 均为 success，`data_quality_reports` 没有再因缺少 2026-05-06 当天完整日线阻断。
 
 ## 上次停在哪
 
@@ -72,7 +72,9 @@ dashboard 左侧阶段组展示正在收尾：阶段组继续按 `trade_date + s
 - dashboard/API/frontend 已新增“策略优化”只读视图，展示 LLM 假设、参数变更、policy reject 原因、三窗口评估结果、gate 结论和 `待复核` 状态；不提供接受/拒绝按钮，不自动修改生产策略配置。
 - 本轮新增 dashboard 阶段运行组：`DashboardQueryAgent.list_stage_run_groups()` 和 `stage_run_group_detail()` 按 `trade_date + stage` 聚合 normal runs，混合成功/失败显示 `partial_failure`，详情保留全部成员 run 和每条业务数据的 `run_id`。
 - 前端左侧列表已改为阶段组卡片；点击 `盘前 / 盘中 / 复盘 / 策略优化` 阶段组打开只读详情抽屉，盘前展示观察名单/信号/LLM/风控，盘中展示订单/成交失败/分钟线源健康/持仓/资金快照，复盘展示复盘报告和报告路径。
-- 本轮正在修复左侧阶段组排序：日期由近到远，每个日期内固定为 `盘前 -> 盘中 -> 复盘 -> 策略优化`，未知 stage 保留在已知 stage 之后。
+- 本轮已修复左侧阶段组排序：日期由近到远，每个日期内固定为 `盘前 -> 盘中 -> 复盘 -> 策略优化`，未知 stage 保留在已知 stage 之后。
+- 本轮已修复 DataQualityAgent 的日线质量窗口：盘前和盘中只检查原 30 日窗口中截至上一交易日的日线完整性，盘后才检查当天完整日线。
+- 2026-05-06 真实盘中验收已通过：`pre_market` 最新 normal run 为 success，`intraday_watch` 最新 normal run 为 success；两条 `data_quality_reports` 均为 warning，但 `missing_market_bar_count=0`、`abnormal_price_count=0`，没有缺 5/6 当日日线问题。最新 `raw_source_snapshots(source=intraday_bars)` 为 success，`intraday_source=akshare_em,akshare_sina`，本次 `akshare_em` 对 510300 返回 121 条分钟线。期间一次盘中重跑遇到 600000 Sina 日线代理 503，已按 failed run 和质量报告审计，随后重跑成功。
 
 ## 近期关键决定和原因
 
@@ -82,7 +84,7 @@ dashboard 左侧阶段组展示正在收尾：阶段组继续按 `trade_date + s
 - CLI 现在必须配置 `DATABASE_URL`；缺失时明确失败，不做静默内存兜底。
 - 本地数据库复用共享 PostgreSQL，但 AShareAgent 只使用 `ashare_agent` schema 和 `ashare_agent.alembic_version`，不在 `public` 或 `supportportal` schema 建业务表。
 - 真实公开源下 `universe`、`market_bars`、`trade_calendar` 是必需源；失败时流程明确失败，不能自动切回 Mock。
-- 数据质量门禁按“严重阻断”执行：必需源失败/空数据、交易日缺失近 30 个交易日行情和异常价格会阻断 pipeline；非交易日运行只提示。
+- 数据质量门禁按“严重阻断”执行：必需源失败/空数据、阶段要求窗口内缺失近 30 个交易日行情和异常价格会阻断 pipeline；非交易日运行只提示。日线窗口按 stage 判定：`pre_market` / `intraday_watch` 到上一交易日，`post_market_review` 到当天。
 - EastMoney 历史 K 线端点在本机代理和直连下都会断开；当前真实日线行情统一使用 AKShare/Sina 路径，不使用 Mock 兜底。
 - 单日最大亏损按账户总资产回撤口径：用最新 `portfolio_snapshots.total_value` 对比当前盯市总资产，回撤超过 2% 后拒绝新买入。
 - PaperTrader 仍是唯一交易执行模块；所有 `PaperOrder.is_real_trade` 必须为 `False`。
@@ -117,6 +119,6 @@ dashboard 左侧阶段组展示正在收尾：阶段组继续按 `trade_date + s
 
 ## 下一步
 
-- 当前 `codex/dashboard-sidebar-stage-order` 正在修复 dashboard 左侧阶段组顺序；目标是 2026-04-30 先于 2026-04-29，并在每个日期下按 `盘前 / 盘中 / 复盘 / 策略优化` 展示。
-- 下一步用真实 provider 观察 2026-04-29、2026-04-30 等历史日期的阶段组展示，确认日期分段、部分失败和阶段详情里的全部尝试数据符合人工排查习惯。
+- 以 2026-05-06 成功盘前/盘中作为后续真实日常运行基线；当天 `post-market-review` 仍必须等完整日线可用后再跑。
+- 若后续真实外部源失败，只记录失败阶段、source、symbol 和错误原因；不切 Mock、不伪造行情。
 - 继续保持 v1 只做模拟交易：不接真实券商、不自动实盘下单、不自动修改生产策略参数。

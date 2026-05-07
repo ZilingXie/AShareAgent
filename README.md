@@ -318,7 +318,19 @@ uv run ashare scheduled-run --slot close_collect --trade-date 2026-04-29
 uv run ashare scheduled-run --slot post_market_brief --trade-date 2026-04-29
 ```
 
-`scheduled-run` 是给 Codex 自动化或本机定时器调用的统一入口。每个 slot 会先检查交易日历，非交易日写 skipped 审计并退出。`morning_collect` 只采集昨晚/今早公告、新闻、政策、行情上下文并输出 `morning-collect.md`；`pre_market_brief` 调用现有 `pre-market` 并额外输出 `pre-market-brief.md`；`call_auction` 第一版默认 disabled，只写 skipped 审计；`intraday_decision` 调用 `intraday-watch`，只执行模拟买卖；`close_collect` 采集收盘行情和质量状态；`post_market_brief` 调用 `post-market-review` 并额外输出 `post-market-brief.md`。所有 slot 都会写 `pipeline_runs` 和 `artifacts` 审计，记录 provider、LLM provider、北京时间、报告路径和 `real_trading=false`。
+`scheduled-run` 是给本机定时器调用的统一入口。每个 slot 会先检查交易日历，非交易日写 skipped 审计并退出。`morning_collect` 只采集昨晚/今早公告、新闻、政策、行情上下文并输出 `morning-collect.md`；`pre_market_brief` 调用现有 `pre-market` 并额外输出 `pre-market-brief.md`；`call_auction` 第一版默认 disabled，只写 skipped 审计；`intraday_decision` 调用 `intraday-watch`，只执行模拟买卖；`close_collect` 采集收盘行情和质量状态；`post_market_brief` 调用 `post-market-review` 并额外输出 `post-market-brief.md`。所有 slot 都会写 `pipeline_runs` 和 `artifacts` 审计，记录 provider、LLM provider、北京时间、报告路径和 `real_trading=false`。
+
+本机 PostgreSQL 使用 `localhost:15432` 时，优先用 macOS `launchd` 运行定时任务，而不是 Codex cron 自动化。Codex cron 的任务沙箱可能无法访问宿主机 loopback TCP，表现为连接 `.env` 中 `DATABASE_URL` 时报 `Operation not permitted`；`launchd` 由宿主机直接执行，可以访问本机 Podman 暴露的 PostgreSQL 端口。安装工作日定时任务：
+
+```bash
+scripts/install_launchd_schedules.sh
+```
+
+该脚本会安装 5 个 LaunchAgent：08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`、15:15 `close_collect`、16:00 `post_market_brief`。日志写入 `~/Library/Logs/AShareAgent/`。如需移除：
+
+```bash
+scripts/uninstall_launchd_schedules.sh
+```
 
 运行多日策略回放：
 

@@ -326,7 +326,7 @@ uv run ashare scheduled-run --slot post_market_brief --trade-date 2026-04-29
 scripts/install_launchd_schedules.sh
 ```
 
-该脚本会安装 5 个 LaunchAgent：08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`、15:15 `close_collect`、16:00 `post_market_brief`。日志写入 `~/Library/Logs/AShareAgent/`。如需移除：
+该脚本会安装 5 个 LaunchAgent：08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`、15:15 `close_collect`、16:00 `post_market_brief`。如果仓库位于 macOS 隐私保护目录（例如 `~/Desktop`、`~/Documents`、`~/Downloads`），安装脚本会先把运行副本同步到 `~/Library/Application Support/AShareAgent/runtime/`，再让 launchd 从该目录执行，避免 `/bin/bash` 直接访问 Desktop 时出现 `Operation not permitted`。重新安装会刷新这份运行副本；本机 `.env` 会被复制过去，`.git`、`.venv`、`reports` 和缓存目录不会复制。日志写入 `~/Library/Logs/AShareAgent/`。如需移除：
 
 ```bash
 scripts/uninstall_launchd_schedules.sh

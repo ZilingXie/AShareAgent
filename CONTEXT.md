@@ -4,6 +4,8 @@
 
 定时 Agent 已完成：新增 `scheduled-run` 统一入口，用于本机定时器按工作日 slot 运行早间采集、盘前简报、盘中模拟决策、收盘采集和收盘复盘简报。因 Codex cron 自动化沙箱无法访问本机 PostgreSQL `localhost:15432`，本机日常调度改为 macOS `launchd`。
 
+launchd `Operation not permitted` 修复已完成：仓库位于 `~/Desktop`、`~/Documents` 或 `~/Downloads` 时，安装脚本会把运行副本同步到 `~/Library/Application Support/AShareAgent/runtime/`，plist 从该 runtime 执行，避免 macOS 隐私保护阻止 `/bin/bash` 读取项目目录。
+
 阶段化日线质量检查已完成：`morning_collect`、`pre_market`、`pre_market_brief`、`intraday_watch` 和 `intraday_decision` 只要求日线覆盖到上一交易日，`close_collect` 和 `post_market_review` 才要求当前交易日完整日线。
 
 2026-05-06 已用真实 AKShare provider + mock LLM 跑通 `pre-market -> intraday-watch`；两阶段最新 normal run 均为 success，`data_quality_reports` 没有再因缺少 2026-05-06 当天完整日线阻断。
@@ -79,6 +81,7 @@
 - 2026-05-06 真实盘中验收已通过：`pre_market` 最新 normal run 为 success，`intraday_watch` 最新 normal run 为 success；两条 `data_quality_reports` 均为 warning，但 `missing_market_bar_count=0`、`abnormal_price_count=0`，没有缺 5/6 当日日线问题。最新 `raw_source_snapshots(source=intraday_bars)` 为 success，`intraday_source=akshare_em,akshare_sina`，本次 `akshare_em` 对 510300 返回 121 条分钟线。期间一次盘中重跑遇到 600000 Sina 日线代理 503，已按 failed run 和质量报告审计，随后重跑成功。
 - 本轮新增 `ScheduledRunAgent` 和 `ashare scheduled-run`：支持 `morning_collect`、`pre_market_brief`、`call_auction`、`intraday_decision`、`close_collect`、`post_market_brief` 六个 slot；每个 slot 先检查交易日历，非交易日写 skipped。`call_auction` 第一版 disabled，`pre_market_brief` / `intraday_decision` / `post_market_brief` 分别委托既有三阶段并额外生成分时 Markdown 简报。
 - 本轮新增宿主机定时脚本：`scripts/scheduled_run.sh` 固定 `PATH` 和 `UV_CACHE_DIR` 后调用 `ashare scheduled-run`，`scripts/install_launchd_schedules.sh` 安装工作日 08:30、09:00、10:00、15:15、16:00 五个 macOS LaunchAgent，绕开 Codex cron 对 `localhost:15432` 的 loopback TCP 沙箱限制。
+- 本轮修复 launchd 在 `~/Desktop` 仓库下无法执行 `scripts/scheduled_run.sh` 的 `Operation not permitted`：新增 `launchd_installer`，安装时对受保护目录使用 `~/Library/Application Support/AShareAgent/runtime/` 运行副本，并让 plist 的 `WorkingDirectory` 和 runner 都指向该副本。
 
 ## 近期关键决定和原因
 

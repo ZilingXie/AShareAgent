@@ -33,6 +33,22 @@ def test_desktop_repo_uses_application_support_runtime_for_launchd() -> None:
     ]
 
 
+def test_launchd_calendar_interval_uses_monday_to_friday_weekdays() -> None:
+    home = Path("/Users/tester")
+    repo_root = home / "Projects" / "AShareAgent"
+    installation = build_launchd_installation(repo_root=repo_root, home=home)
+
+    payload = render_plist_payload(
+        installation=installation,
+        slot="close_collect",
+        hour=15,
+        minute=15,
+    )
+
+    intervals = payload["StartCalendarInterval"]
+    assert [item["Weekday"] for item in intervals] == [1, 2, 3, 4, 5]
+
+
 def test_unprotected_repo_can_be_used_directly_by_launchd() -> None:
     home = Path("/Users/tester")
     repo_root = home / "Projects" / "AShareAgent"

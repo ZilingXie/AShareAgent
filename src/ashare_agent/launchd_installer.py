@@ -104,7 +104,7 @@ def render_plist_payload(
         },
         "StartCalendarInterval": [
             {"Weekday": weekday, "Hour": int(hour), "Minute": int(minute)}
-            for weekday in range(2, 7)
+            for weekday in range(1, 6)
         ],
     }
 

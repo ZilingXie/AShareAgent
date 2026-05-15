@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from ashare_agent.cli import app
+from ashare_agent.cli import app, resolve_scheduled_trade_date
 from ashare_agent.domain import MarketBar
 from ashare_agent.llm.mock import MockLLMClient
 from ashare_agent.pipeline import ASharePipeline
@@ -251,4 +251,85 @@ signal:
     assert "定时任务完成: morning_collect" in result.output
     assert created_repositories[0].records_for("pipeline_runs")[-1]["payload"]["stage"] == (
         "morning_collect"
+    )
+
+
+def test_cli_scheduled_run_resolves_previous_trade_date_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created_repositories: list[InMemoryRepository] = []
+    strategy_config = tmp_path / "strategy_params.yml"
+    strategy_config.write_text(
+        """
+version: "scheduled-cli-test"
+risk:
+  max_positions: 5
+  target_position_pct: "0.10"
+  min_cash: "100"
+  max_daily_loss_pct: "0.02"
+  stop_loss_pct: "0.05"
+  price_limit_pct: "0.098"
+  min_holding_trade_days: 2
+  max_holding_trade_days: 10
+  blacklist: []
+paper_trader:
+  initial_cash: "100000"
+  position_size_pct: "0.10"
+  slippage_pct: "0.001"
+signal:
+  min_score: "0.55"
+  max_daily_signals: 1
+  weights:
+    technical: "0.45"
+    market: "0.25"
+    event: "0.20"
+    risk_penalty: "0.10"
+""",
+        encoding="utf-8",
+    )
+
+    class FakePostgresRepository(InMemoryRepository):
+        def __init__(self, database_url: str) -> None:
+            super().__init__()
+            created_repositories.append(self)
+
+    monkeypatch.setenv("ASHARE_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("ASHARE_REPORT_ROOT", str(tmp_path / "reports"))
+    monkeypatch.setenv("ASHARE_STRATEGY_PARAMS_CONFIG", str(strategy_config))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/ashare")
+    monkeypatch.setattr("ashare_agent.cli.PostgresRepository", FakePostgresRepository)
+    monkeypatch.setattr("ashare_agent.cli._beijing_today", lambda: date(2026, 5, 15))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "scheduled-run",
+            "--slot",
+            "close_collect",
+            "--trade-date",
+            "previous-trade-date",
+        ],
+    )
+
+    assert result.exit_code == 0
+    latest_run = created_repositories[0].records_for("pipeline_runs")[-1]
+    assert latest_run["trade_date"] == date(2026, 5, 14)
+    assert latest_run["payload"]["stage"] == "close_collect"
+
+
+def test_previous_trade_date_token_returns_today_when_today_is_not_trade_date(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class HolidayProvider(MockProvider):
+        def get_trade_calendar(self) -> list[date]:
+            return [date(2026, 5, 14)]
+
+    monkeypatch.setattr("ashare_agent.cli._beijing_today", lambda: date(2026, 5, 15))
+
+    assert resolve_scheduled_trade_date("previous-trade-date", HolidayProvider()) == date(
+        2026,
+        5,
+        15,
     )

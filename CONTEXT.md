@@ -8,6 +8,8 @@ launchd `Operation not permitted` 修复已完成：仓库位于 `~/Desktop`、`
 
 launchd 工作日配置修复已完成：`StartCalendarInterval.Weekday` 使用 `1..5` 表示周一到周五，避免旧配置 `2..6` 导致周一不触发、周六误触发。
 
+收盘阶段连续失败根因已确认：15:15/16:00 时 AKShare 日线仍只返回上一交易日为止的 30 根日线，目标交易日完整日线通常到次日早上才可用。本轮将本机 launchd 的 `close_collect` 和 `post_market_brief` 改为次交易日上午分别 08:10、08:20 以 `previous-trade-date` 补跑上一交易日，数据质量门禁仍要求目标交易日完整日线。
+
 阶段化日线质量检查已完成：`morning_collect`、`pre_market`、`pre_market_brief`、`intraday_watch` 和 `intraday_decision` 只要求日线覆盖到上一交易日，`close_collect` 和 `post_market_review` 才要求当前交易日完整日线。
 
 2026-05-06 已用真实 AKShare provider + mock LLM 跑通 `pre-market -> intraday-watch`；两阶段最新 normal run 均为 success，`data_quality_reports` 没有再因缺少 2026-05-06 当天完整日线阻断。
@@ -85,6 +87,7 @@ launchd 工作日配置修复已完成：`StartCalendarInterval.Weekday` 使用 
 - 本轮新增宿主机定时脚本：`scripts/scheduled_run.sh` 固定 `PATH` 和 `UV_CACHE_DIR` 后调用 `ashare scheduled-run`，`scripts/install_launchd_schedules.sh` 安装工作日 08:30、09:00、10:00、15:15、16:00 五个 macOS LaunchAgent，绕开 Codex cron 对 `localhost:15432` 的 loopback TCP 沙箱限制。
 - 本轮修复 launchd 在 `~/Desktop` 仓库下无法执行 `scripts/scheduled_run.sh` 的 `Operation not permitted`：新增 `launchd_installer`，安装时对受保护目录使用 `~/Library/Application Support/AShareAgent/runtime/` 运行副本，并让 plist 的 `WorkingDirectory` 和 runner 都指向该副本。
 - 本轮修复 launchd 工作日误配：安装器生成 `Weekday=1..5`，匹配 launchd 的周一到周五语义，不再漏跑周一或误跑周六。
+- 本轮调查并修复收盘阶段连续失败：数据库证据显示 2026-05-12 至 2026-05-14 的 15:15/16:00 运行均只拿到上一交易日为止的日线，目标交易日完整日线到次日 08:30 才首次落库；因此 launchd 改为次交易日上午补跑上一交易日收盘采集和复盘简报。
 
 ## 近期关键决定和原因
 
@@ -130,7 +133,7 @@ launchd 工作日配置修复已完成：`StartCalendarInterval.Weekday` 使用 
 
 ## 下一步
 
-- 使用 `scripts/install_launchd_schedules.sh` 在宿主机安装 5 个工作日定时任务：08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`、15:15 `close_collect`、16:00 `post_market_brief`；09:25 `call_auction` 暂不启用。旧 Codex cron 自动化应保持暂停，避免继续被沙箱阻断本机 PostgreSQL 连接。
+- 使用 `scripts/install_launchd_schedules.sh` 在宿主机安装 5 个工作日定时任务：08:10 `close_collect previous-trade-date`、08:20 `post_market_brief previous-trade-date`、08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`；09:25 `call_auction` 暂不启用。旧 Codex cron 自动化应保持暂停，避免继续被沙箱阻断本机 PostgreSQL 连接。
 - 以 2026-05-06 成功盘前/盘中作为后续真实日常运行基线；当天 `post-market-review` 仍必须等完整日线可用后再跑。
 - 若后续真实外部源失败，只记录失败阶段、source、symbol 和错误原因；不切 Mock、不伪造行情。
 - 继续保持 v1 只做模拟交易：不接真实券商、不自动实盘下单、不自动修改生产策略参数。

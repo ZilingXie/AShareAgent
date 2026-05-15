@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import typer
 
@@ -25,6 +26,12 @@ from ashare_agent.strategy_evaluation import (
 from ashare_agent.strategy_insights import StrategyInsightRunner
 
 app = typer.Typer(no_args_is_help=True)
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+PREVIOUS_TRADE_DATE_TOKEN = "previous-trade-date"
+
+
+def _beijing_today() -> date:
+    return datetime.now(BEIJING_TZ).date()
 
 
 def _parse_trade_date(value: str) -> date:
@@ -38,6 +45,19 @@ def _parse_optional_trade_date(value: str | None) -> date | None:
     if value is None:
         return None
     return _parse_trade_date(value)
+
+
+def resolve_scheduled_trade_date(value: str, provider: DataProvider) -> date:
+    if value != PREVIOUS_TRADE_DATE_TOKEN:
+        return _parse_trade_date(value)
+    today = _beijing_today()
+    trade_days = sorted(set(provider.get_trade_calendar()))
+    if today not in set(trade_days):
+        return today
+    previous_trade_days = [trade_day for trade_day in trade_days if trade_day < today]
+    if not previous_trade_days:
+        raise typer.BadParameter("交易日历中找不到上一交易日")
+    return previous_trade_days[-1]
 
 
 def _build_provider(settings: Settings) -> tuple[DataProvider, set[str]]:
@@ -154,13 +174,14 @@ def scheduled_run(
     slot: Annotated[str, typer.Option(..., "--slot")],
     trade_date: str = typer.Option(..., "--trade-date"),
 ) -> None:
-    parsed_date = _parse_trade_date(trade_date)
     if slot not in SCHEDULED_RUN_SLOTS:
         raise typer.BadParameter(
             f"未知 scheduled-run slot: {slot}; 可选值: {', '.join(SCHEDULED_RUN_SLOTS)}"
         )
     settings = load_settings()
+    provider, _ = _build_provider(settings)
     try:
+        parsed_date = resolve_scheduled_trade_date(trade_date, provider)
         result = ScheduledRunAgent(
             pipeline=_build_pipeline(settings),
             provider_name=settings.provider.lower(),

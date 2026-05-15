@@ -10,12 +10,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-SCHEDULED_SLOTS: tuple[tuple[str, int, int], ...] = (
-    ("morning_collect", 8, 30),
-    ("pre_market_brief", 9, 0),
-    ("intraday_decision", 10, 0),
-    ("close_collect", 15, 15),
-    ("post_market_brief", 16, 0),
+SCHEDULED_SLOTS: tuple[tuple[str, int, int, str | None], ...] = (
+    ("close_collect", 8, 10, "previous-trade-date"),
+    ("post_market_brief", 8, 20, "previous-trade-date"),
+    ("morning_collect", 8, 30, None),
+    ("pre_market_brief", 9, 0, None),
+    ("intraday_decision", 10, 0, None),
 )
 
 PROTECTED_USER_DIRS = ("Desktop", "Documents", "Downloads")
@@ -90,11 +90,15 @@ def render_plist_payload(
     slot: str,
     hour: int,
     minute: int,
+    trade_date_arg: str | None = None,
 ) -> dict[str, Any]:
     label = _label_for_slot(slot)
+    program_arguments = ["/bin/bash", str(installation.runner), slot]
+    if trade_date_arg is not None:
+        program_arguments.append(trade_date_arg)
     return {
         "Label": label,
-        "ProgramArguments": ["/bin/bash", str(installation.runner), slot],
+        "ProgramArguments": program_arguments,
         "WorkingDirectory": str(installation.execution_root),
         "StandardOutPath": str(installation.log_dir / f"{slot}.out.log"),
         "StandardErrorPath": str(installation.log_dir / f"{slot}.err.log"),
@@ -124,13 +128,14 @@ def install_launchd_schedules(
     if installation.requires_runtime_copy and installation.execution_root.exists():
         installation.execution_root.chmod(0o700)
 
-    for slot, hour, minute in SCHEDULED_SLOTS:
+    for slot, hour, minute, trade_date_arg in SCHEDULED_SLOTS:
         label = _label_for_slot(slot)
         plist_path = _write_plist(
             installation=installation,
             slot=slot,
             hour=hour,
             minute=minute,
+            trade_date_arg=trade_date_arg,
         )
         if not dry_run:
             _reload_launch_agent(label=label, plist_path=plist_path)
@@ -213,6 +218,7 @@ def _write_plist(
     slot: str,
     hour: int,
     minute: int,
+    trade_date_arg: str | None,
 ) -> Path:
     plist_path = installation.launch_agents_dir / f"{_label_for_slot(slot)}.plist"
     payload = render_plist_payload(
@@ -220,6 +226,7 @@ def _write_plist(
         slot=slot,
         hour=hour,
         minute=minute,
+        trade_date_arg=trade_date_arg,
     )
     plist_path.write_bytes(plistlib.dumps(payload, sort_keys=False))
     return plist_path

@@ -316,9 +316,10 @@ uv run ashare scheduled-run --slot call_auction --trade-date 2026-04-29
 uv run ashare scheduled-run --slot intraday_decision --trade-date 2026-04-29
 uv run ashare scheduled-run --slot close_collect --trade-date 2026-04-29
 uv run ashare scheduled-run --slot post_market_brief --trade-date 2026-04-29
+uv run ashare scheduled-run --slot close_collect --trade-date previous-trade-date
 ```
 
-`scheduled-run` 是给本机定时器调用的统一入口。每个 slot 会先检查交易日历，非交易日写 skipped 审计并退出。`morning_collect` 只采集昨晚/今早公告、新闻、政策、行情上下文并输出 `morning-collect.md`；`pre_market_brief` 调用现有 `pre-market` 并额外输出 `pre-market-brief.md`；`call_auction` 第一版默认 disabled，只写 skipped 审计；`intraday_decision` 调用 `intraday-watch`，只执行模拟买卖；`close_collect` 采集收盘行情和质量状态；`post_market_brief` 调用 `post-market-review` 并额外输出 `post-market-brief.md`。所有 slot 都会写 `pipeline_runs` 和 `artifacts` 审计，记录 provider、LLM provider、北京时间、报告路径和 `real_trading=false`。
+`scheduled-run` 是给本机定时器调用的统一入口。每个 slot 会先检查交易日历，非交易日写 skipped 审计并退出。`morning_collect` 只采集昨晚/今早公告、新闻、政策、行情上下文并输出 `morning-collect.md`；`pre_market_brief` 调用现有 `pre-market` 并额外输出 `pre-market-brief.md`；`call_auction` 第一版默认 disabled，只写 skipped 审计；`intraday_decision` 调用 `intraday-watch`，只执行模拟买卖；`close_collect` 采集收盘行情和质量状态；`post_market_brief` 调用 `post-market-review` 并额外输出 `post-market-brief.md`。`previous-trade-date` 只用于定时补跑，会解析为北京时间今天之前的最近交易日；若今天不是交易日，则按今天写 skipped 审计，避免假期里重复补跑。所有 slot 都会写 `pipeline_runs` 和 `artifacts` 审计，记录 provider、LLM provider、北京时间、报告路径和 `real_trading=false`。
 
 本机 PostgreSQL 使用 `localhost:15432` 时，优先用 macOS `launchd` 运行定时任务，而不是 Codex cron 自动化。Codex cron 的任务沙箱可能无法访问宿主机 loopback TCP，表现为连接 `.env` 中 `DATABASE_URL` 时报 `Operation not permitted`；`launchd` 由宿主机直接执行，可以访问本机 Podman 暴露的 PostgreSQL 端口。安装工作日定时任务：
 
@@ -326,7 +327,7 @@ uv run ashare scheduled-run --slot post_market_brief --trade-date 2026-04-29
 scripts/install_launchd_schedules.sh
 ```
 
-该脚本会安装 5 个 LaunchAgent：08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`、15:15 `close_collect`、16:00 `post_market_brief`。如果仓库位于 macOS 隐私保护目录（例如 `~/Desktop`、`~/Documents`、`~/Downloads`），安装脚本会先把运行副本同步到 `~/Library/Application Support/AShareAgent/runtime/`，再让 launchd 从该目录执行，避免 `/bin/bash` 直接访问 Desktop 时出现 `Operation not permitted`。重新安装会刷新这份运行副本；本机 `.env` 会被复制过去，`.git`、`.venv`、`reports` 和缓存目录不会复制。日志写入 `~/Library/Logs/AShareAgent/`。如需移除：
+该脚本会安装 5 个 LaunchAgent：08:10 `close_collect previous-trade-date`、08:20 `post_market_brief previous-trade-date`、08:30 `morning_collect`、09:00 `pre_market_brief`、10:00 `intraday_decision`。收盘采集和盘后简报安排在次交易日上午补跑上一交易日，原因是当前 AKShare 日线通常在次日早上才稳定包含上一交易日完整行情；数据质量门禁仍要求目标交易日完整日线，缺失时继续明确失败。如果仓库位于 macOS 隐私保护目录（例如 `~/Desktop`、`~/Documents`、`~/Downloads`），安装脚本会先把运行副本同步到 `~/Library/Application Support/AShareAgent/runtime/`，再让 launchd 从该目录执行，避免 `/bin/bash` 直接访问 Desktop 时出现 `Operation not permitted`。重新安装会刷新这份运行副本；本机 `.env` 会被复制过去，`.git`、`.venv`、`reports` 和缓存目录不会复制。日志写入 `~/Library/Logs/AShareAgent/`。如需移除：
 
 ```bash
 scripts/uninstall_launchd_schedules.sh

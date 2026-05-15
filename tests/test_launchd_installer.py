@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ashare_agent.launchd_installer import (
+    SCHEDULED_SLOTS,
     build_launchd_installation,
     install_launchd_schedules,
     render_plist_payload,
@@ -47,6 +48,56 @@ def test_launchd_calendar_interval_uses_monday_to_friday_weekdays() -> None:
 
     intervals = payload["StartCalendarInterval"]
     assert [item["Weekday"] for item in intervals] == [1, 2, 3, 4, 5]
+
+
+def test_post_close_launchd_slots_run_next_morning_for_previous_trade_date() -> None:
+    home = Path("/Users/tester")
+    repo_root = home / "Projects" / "AShareAgent"
+    installation = build_launchd_installation(repo_root=repo_root, home=home)
+    schedules = {
+        slot: (hour, minute, trade_date_arg)
+        for slot, hour, minute, trade_date_arg in SCHEDULED_SLOTS
+    }
+
+    close_hour, close_minute, close_trade_date_arg = schedules["close_collect"]
+    close_payload = render_plist_payload(
+        installation=installation,
+        slot="close_collect",
+        hour=close_hour,
+        minute=close_minute,
+        trade_date_arg=close_trade_date_arg,
+    )
+    post_hour, post_minute, post_trade_date_arg = schedules["post_market_brief"]
+    post_payload = render_plist_payload(
+        installation=installation,
+        slot="post_market_brief",
+        hour=post_hour,
+        minute=post_minute,
+        trade_date_arg=post_trade_date_arg,
+    )
+
+    assert (close_hour, close_minute, close_trade_date_arg) == (
+        8,
+        10,
+        "previous-trade-date",
+    )
+    assert (post_hour, post_minute, post_trade_date_arg) == (
+        8,
+        20,
+        "previous-trade-date",
+    )
+    assert close_payload["ProgramArguments"] == [
+        "/bin/bash",
+        str(installation.runner),
+        "close_collect",
+        "previous-trade-date",
+    ]
+    assert post_payload["ProgramArguments"] == [
+        "/bin/bash",
+        str(installation.runner),
+        "post_market_brief",
+        "previous-trade-date",
+    ]
 
 
 def test_unprotected_repo_can_be_used_directly_by_launchd() -> None:
